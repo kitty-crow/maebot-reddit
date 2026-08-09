@@ -1,0 +1,1 @@
+moderators = ("catgirlcoin", "Astartee_jg", "nonfungibleneko", "ItsRingleader", "CatGirlLilee")

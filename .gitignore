@@ -1,0 +1,56 @@
+# Maebot Reddit
+#
+# Source-only allowlist. Runtime data, credentials, logs and
+# user-generated content remain local.
+
+# Ignore everything by default
+*
+
+# Allow traversal
+!*/
+
+# Python source
+!*.py
+
+# Dependency/project metadata
+!.gitignore
+!Pipfile
+!Pipfile.lock
+!pyproject.toml
+!poetry.lock
+!README
+!README.md
+!readme
+
+# Runtime databases/state
+*.db
+*.db.*
+database*
+*.json
+
+# Logs
+*.log
+log.txt
+
+# User/generated content
+Haikus/
+
+# Data withheld until code audit
+pairs.csv
+*.csv
+
+# Secrets/environment
+.env
+.env.*
+*.key
+*.pem
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Historical copies
+*.bak
+*.bak-*
+*.old
+*.save
