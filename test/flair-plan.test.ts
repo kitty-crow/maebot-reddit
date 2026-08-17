@@ -91,7 +91,7 @@ describe('flair migration dry-run planner', () => {
     expect(plan.postTemplates[0]?.targetCandidates).toEqual(['target-a', 'target-b']);
   });
 
-  test('surfaces unmapped source templates and already-correct target assignments', () => {
+  test('surfaces unmapped source templates and recognises a target assignment without a template ID by unique visible semantics', () => {
     const mapped = template('source-catgirl', 'Catgirl', 'h');
     const unmapped = template('source-other', 'Other', 'x');
     const target = template('target-catgirl', 'Catgirl', 'h');
@@ -101,7 +101,7 @@ describe('flair migration dry-run planner', () => {
       sourceAssignments: [assignment('Alice', mapped.id, mapped.text, mapped.cssClass)],
       targetUserTemplates: [target],
       targetPostTemplates: [],
-      targetAssignments: [assignment('alice', target.id, target.text, target.cssClass)],
+      targetAssignments: [assignment('alice', null, target.text, target.cssClass)],
       mappings: [mapping('user', 'user:community:catgirl', mapped.id)],
       warnedUsers: new Set(),
       bannedUsers: new Set(),
@@ -111,7 +111,7 @@ describe('flair migration dry-run planner', () => {
     expect(plan.assignments[0]?.action).toBe('already_correct');
   });
 
-  test('reports local warned and banned state disagreements instead of hiding them in flair mapping', () => {
+  test('reports local warned and banned state disagreements case-insensitively instead of hiding them in flair mapping', () => {
     const plan = planFlairMigration({
       sourceUserTemplates: [],
       sourcePostTemplates: [],
@@ -124,8 +124,8 @@ describe('flair migration dry-run planner', () => {
       targetPostTemplates: [],
       targetAssignments: [],
       mappings: [],
-      warnedUsers: new Set(['alice']),
-      bannedUsers: new Set(['bob']),
+      warnedUsers: new Set(['Alice']),
+      bannedUsers: new Set(['BOB']),
     });
 
     expect(plan.moderationMismatches).toContainEqual({ username: 'alice', kind: 'warned', localState: true, visibleFlairState: false });

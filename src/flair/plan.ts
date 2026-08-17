@@ -43,6 +43,8 @@ export type FlairMigrationPlan = {
 };
 
 const norm = (value: string | null): string => value ?? '';
+const lowerSet = (values: ReadonlySet<string>): ReadonlySet<string> =>
+  new Set([...values].map(value => value.toLowerCase()));
 
 const samePresentation = (left: RedditFlairTemplate, right: RedditFlairTemplate): boolean =>
   left.text === right.text
@@ -135,6 +137,7 @@ const planAssignments = (
   sourceAssignments: readonly RedditFlairAssignment[],
   sourceTemplates: readonly RedditFlairTemplate[],
   targetAssignments: readonly RedditFlairAssignment[],
+  targetTemplates: readonly RedditFlairTemplate[],
   mappings: readonly LogicalFlairMapping[],
   templatePlans: readonly FlairTemplatePlan[],
 ): readonly FlairAssignmentPlan[] => {
@@ -164,21 +167,24 @@ const planAssignments = (
       };
     }
     const current = targetByUser.get(source.username.toLowerCase());
+    const currentTemplateId = current === undefined ? null : assignmentTemplate(current, targetTemplates);
     return {
       username: source.username,
       logicalId: mapping.logicalId,
       sourceTemplateId,
       targetTemplateId: plan.targetTemplateId,
-      action: current?.templateId === plan.targetTemplateId ? 'already_correct' as const : 'assign' as const,
+      action: currentTemplateId === plan.targetTemplateId ? 'already_correct' as const : 'assign' as const,
     };
   });
 };
 
 const moderationMismatches = (
   assignments: readonly RedditFlairAssignment[],
-  warned: ReadonlySet<string>,
-  banned: ReadonlySet<string>,
+  warnedInput: ReadonlySet<string>,
+  bannedInput: ReadonlySet<string>,
 ): readonly ModerationStatusMismatch[] => {
+  const warned = lowerSet(warnedInput);
+  const banned = lowerSet(bannedInput);
   const byUser = new Map(assignments.map(item => [item.username.toLowerCase(), item]));
   const users = new Set<string>([
     ...assignments.map(item => item.username.toLowerCase()),
@@ -223,6 +229,7 @@ export const planFlairMigration = (input: {
       input.sourceAssignments,
       input.sourceUserTemplates,
       input.targetAssignments,
+      input.targetUserTemplates,
       input.mappings,
       userTemplates,
     ),
