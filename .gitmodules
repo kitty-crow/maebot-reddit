@@ -1,0 +1,9 @@
+[submodule "vendor/server"]
+	path = vendor/server
+	url = https://github.com/kittyCrypto-gg/server.git
+[submodule "vendor/openai-schema"]
+	path = vendor/openai-schema
+	url = https://github.com/kitty-crow/openai-schema.git
+[submodule "vendor/maebot-twitter"]
+	path = vendor/maebot-twitter
+	url = https://github.com/kitty-crow/maebot-twitter.git
