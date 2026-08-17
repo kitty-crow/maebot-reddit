@@ -22,6 +22,10 @@
 !README.md
 !readme
 
+# Audit and engineering documentation
+!docs/*.md
+!docs/**/*.md
+
 # Runtime databases/state
 *.db
 *.db.*
