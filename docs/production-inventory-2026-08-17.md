@@ -15,7 +15,16 @@ Two independent legacy Python processes are live:
 | comment/community bot | `2006106` | `python` | `/home/kitty/server/mae/reddit` | virtualenv present |
 | submission moderation bot | `2334136` | `python` | `/home/kitty/server/mae/reddit/submission_moderation` | virtualenv present |
 
-The environment-name inventory exposed `PWD`, `HOME`, `PYTHONDONTWRITEBYTECODE` and `VIRTUAL_ENV`, but no `REDDIT_*`, `CATGIRL_*` or `MAE_*` variable names. This strongly suggests that legacy Reddit credentials/configuration are not supplied through those environment-variable families. Their source must still be located without printing secret values.
+The first environment-name inventory filtered only conventional prefixes such as `REDDIT_*`, `CATGIRL_*` and `MAE_*`, so it did not show the credential variables used by the legacy Python source.
+
+The checked-in legacy source establishes the actual credential arrangement without revealing secret values:
+
+- Reddit OAuth client ID is a hard-coded public client identifier;
+- the OAuth client secret is read from an environment variable whose **name is the client ID itself**;
+- the Reddit username is hard-coded as `this_is_the_mae`;
+- the Reddit password is read from an environment variable named `this_is_the_mae`.
+
+Therefore the absence of `REDDIT_*` variables in the first shell inventory does **not** imply file-based or hard-coded secrets. The TypeScript replacement will deliberately normalise these to conventional deployment-local names such as `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME` and `REDDIT_PASSWORD`; no real secret value is to be copied into Git or audit output.
 
 No Reddit-specific tmux session and no matching systemd service were found. Existing relevant tmux sessions were:
 
@@ -53,8 +62,6 @@ The two stores must be migrated independently and semantically merged only where
 
 ## Additional Reddit state and legacy copies
 
-The following artefacts were found:
-
 | Path | Size | mtime | SHA-256 / status |
 | --- | ---: | --- | --- |
 | `/home/kitty/server/mae/reddit/database_backup.db` | `6675` B | 2023-04-02 | `50db4b3f2811495f3d6e54d04a4721bec30e02556f3abf3cb2143a2a24f97d9d` |
@@ -63,7 +70,7 @@ The following artefacts were found:
 | `/home/kitty/server/mae/reddit/pairs.csv` | `190` B | 2022-02-28 | `5ae97d1494e9a16782289eac7a1ac45d9e6a905f2cbc6c32e122fe7a7eaf7c55` |
 | `/home/kitty/server/mae/reddit/Haikus/` | 13 files / about `100K` | n/a | directory inventory required |
 
-The old backup/copy databases are evidence and possible rollback/reference material. They are not migration inputs unless a semantic audit proves that the active store lost data that production behaviour still depends on.
+The old backup/copy databases are evidence and possible rollback/reference material. They are not canonical migration inputs unless a semantic audit proves that the active store lost data that production behaviour still depends on.
 
 ## Previously missing production module confirmed
 
@@ -77,11 +84,7 @@ Its absence from Git is explained by the source-only ignore rule matching `datab
 
 ## Shared `common` dependency confirmed
 
-The legacy sibling dependency exists at:
-
-`/home/kitty/server/mae/common`
-
-Relevant files discovered:
+The legacy sibling dependency exists at `/home/kitty/server/mae/common`.
 
 ### `/home/kitty/server/mae/common/database.db`
 
@@ -95,7 +98,7 @@ Relevant files discovered:
 - mtime: `2023-08-26 12:38:18.873531607 +0100`
 - SHA-256: `0a08ffac6486e8437e0db0a6b93c023e7c85e641cbc06ed31324c6b073b472e8`
 
-The `common` directory is therefore a real production dependency, not a stale import assumption. Its Reddit-relevant API surface must be frozen before implementation.
+The `common` directory is therefore a real production dependency, not a stale import assumption. Its Reddit-relevant API surface must be frozen before implementation of the legacy-state parser.
 
 ## Unrelated database artefacts
 
@@ -121,11 +124,11 @@ The inventory resolves these earlier unknowns:
 6. **`pairs.csv` exists and has a stable source hash.**
 7. **`Haikus/` exists with 13 files.**
 8. **Reddit is not visibly managed by a Reddit-named tmux session or systemd service.**
-9. **Legacy Reddit credentials are not exposed through the obvious `REDDIT_*`/`CATGIRL_*`/`MAE_*` environment-name families.**
+9. **The legacy credential variable names are known from source, without exposing their values.**
 
-## Still required before migration code
+## Still required before migration code that parses legacy state
 
-The following discovery remains read-only and must be completed before writing deterministic migration code:
+The following discovery remains read-only:
 
 - exact command lines and parent process/launcher for both running Python processes;
 - exact virtualenv/interpreter paths and dependency versions actually used;
@@ -134,7 +137,6 @@ The following discovery remains read-only and must be completed before writing d
 - Reddit-relevant contents/API surface of `/home/kitty/server/mae/common`;
 - contents of `pairs.csv`;
 - names/hashes and semantic role of the 13 `Haikus/` files;
-- source of Reddit credentials/configuration, identifying only location and key names, never secret values;
 - live subreddit moderator list and permissions;
 - live user/post flair templates and current assignments required for migration;
 - whether the old database copies contain still-relevant records absent from the active stores;
