@@ -44,12 +44,14 @@ export type TwitterDelivery = {
 
 export type TwitterFanout = {
   readonly tweetId: string;
+  readonly account: string;
   readonly sourceUrl: string;
   readonly sourceAt: number;
   readonly createdAt: number;
   readonly lifecycle: 'pending' | 'complete' | 'cancelled';
   readonly primary: TwitterDelivery;
   readonly legacy: TwitterDelivery;
+  readonly worthy: boolean | null;
   readonly reviewKey: string | null;
   readonly reviewDecision: 'approve' | 'reject' | null;
   readonly primaryPinApplied: boolean;
@@ -95,6 +97,7 @@ const child = (parent: JsonMap, key: string): JsonMap => {
 const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
 const number = (value: Json | undefined): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 const boolean = (value: Json | undefined): boolean => value === true;
+const maybeBoolean = (value: Json | undefined): boolean | null => typeof value === 'boolean' ? value : null;
 
 const action = (value: Json | undefined): RedditAction | null => {
   if (!isMap(value)) return null;
@@ -181,12 +184,14 @@ const fanout = (value: Json | undefined): TwitterFanout | null => {
   const decision = value['reviewDecision'];
   return {
     tweetId,
+    account: text(value['account']),
     sourceUrl,
     sourceAt: number(value['sourceAt']),
     createdAt: number(value['createdAt']),
     lifecycle,
     primary: delivery(value['primary']),
     legacy: delivery(value['legacy']),
+    worthy: maybeBoolean(value['worthy']),
     reviewKey: reviewKey.length === 0 ? null : reviewKey,
     reviewDecision: decision === 'approve' || decision === 'reject' ? decision : null,
     primaryPinApplied: boolean(value['primaryPinApplied']),
@@ -197,12 +202,14 @@ const fanout = (value: Json | undefined): TwitterFanout | null => {
 
 const fanoutJson = (value: TwitterFanout): JsonMap => ({
   tweetId: value.tweetId,
+  account: value.account,
   sourceUrl: value.sourceUrl,
   sourceAt: value.sourceAt,
   createdAt: value.createdAt,
   lifecycle: value.lifecycle,
   primary: deliveryJson(value.primary),
   legacy: deliveryJson(value.legacy),
+  worthy: value.worthy,
   reviewKey: value.reviewKey ?? '',
   reviewDecision: value.reviewDecision ?? '',
   primaryPinApplied: value.primaryPinApplied,
@@ -297,25 +304,40 @@ export class RedditStateStore {
     return out;
   }
 
-  public async ensureTwitter(tweetId: string, sourceUrl: string, sourceAt: number, createdAt: number): Promise<TwitterFanout> {
+  public async ensureTwitter(
+    tweetId: string,
+    sourceUrl: string,
+    sourceAt: number,
+    createdAt: number,
+    account = '',
+    worthy: boolean | null = null,
+  ): Promise<TwitterFanout> {
     let out: TwitterFanout | null = null;
     await this.store.edit(current => {
       const value = root(current);
       const twitter = child(value, 'twitter');
       const existing = fanout(twitter[tweetId]);
       if (existing !== null) {
-        out = existing;
+        const next = {
+          ...existing,
+          account: existing.account.length > 0 ? existing.account : account,
+          worthy: worthy ?? existing.worthy,
+        };
+        twitter[tweetId] = fanoutJson(next);
+        out = next;
         return value;
       }
       const empty: TwitterDelivery = { state: 'pending', postId: null, mode: null, updatedAt: createdAt, lastError: null };
       const next: TwitterFanout = {
         tweetId,
+        account,
         sourceUrl,
         sourceAt,
         createdAt,
         lifecycle: 'pending',
         primary: empty,
         legacy: empty,
+        worthy,
         reviewKey: null,
         reviewDecision: null,
         primaryPinApplied: false,
@@ -330,12 +352,27 @@ export class RedditStateStore {
     return out;
   }
 
-  public async pendingTwitter(): Promise<readonly TwitterFanout[]> {
+  public async twitter(tweetId: string): Promise<TwitterFanout | null> {
     const value = root(await this.store.read());
-    return Object.values(child(value, 'twitter'))
-      .map(fanout)
-      .filter((item): item is TwitterFanout => item !== null && item.lifecycle === 'pending')
-      .sort((a, b) => a.createdAt - b.createdAt || a.tweetId.localeCompare(b.tweetId));
+    return fanout(child(value, 'twitter')[tweetId]);
+  }
+
+  public async pendingTwitter(): Promise<readonly TwitterFanout[]> {
+    return await this.twitterWhere(item => item.lifecycle === 'pending');
+  }
+
+  public async unacknowledgedTwitter(): Promise<readonly TwitterFanout[]> {
+    return await this.twitterWhere(item => item.lifecycle === 'complete' && !item.acknowledged);
+  }
+
+  public async twitterReviewCandidates(): Promise<readonly TwitterFanout[]> {
+    return await this.twitterWhere(item =>
+      item.lifecycle === 'complete'
+      && item.worthy !== false
+      && (
+        item.reviewDecision === null
+        || (item.reviewDecision === 'approve' && (!item.primaryPinApplied || !item.legacyPinApplied))
+      ));
   }
 
   public async markTwitterDelivery(
@@ -360,6 +397,39 @@ export class RedditStateStore {
       return value;
     });
     return out;
+  }
+
+  public async markTwitterDeliveryFailed(
+    tweetId: string,
+    target: 'primary' | 'legacy',
+    safeMessage: string,
+    at: number,
+  ): Promise<TwitterFanout | null> {
+    return await this.editTwitter(tweetId, current => {
+      if (current.lifecycle !== 'pending' || current[target].state === 'applied') return current;
+      const failed: TwitterDelivery = {
+        state: 'failed',
+        postId: current[target].postId,
+        mode: current[target].mode,
+        updatedAt: at,
+        lastError: safeMessage.slice(0, 500),
+      };
+      return { ...current, [target]: failed };
+    });
+  }
+
+  public async syncTwitterCanonical(
+    tweetId: string,
+    account: string,
+    worthy: boolean | null,
+    reviewKey: string | null,
+  ): Promise<TwitterFanout | null> {
+    return await this.editTwitter(tweetId, current => ({
+      ...current,
+      account: account.length > 0 ? account : current.account,
+      worthy: worthy ?? current.worthy,
+      reviewKey: reviewKey ?? current.reviewKey,
+    }));
   }
 
   public async attachTwitterReview(tweetId: string, reviewKey: string): Promise<TwitterFanout | null> {
@@ -397,6 +467,14 @@ export class RedditStateStore {
       };
       return value;
     });
+  }
+
+  private async twitterWhere(predicate: (item: TwitterFanout) => boolean): Promise<readonly TwitterFanout[]> {
+    const value = root(await this.store.read());
+    return Object.values(child(value, 'twitter'))
+      .map(fanout)
+      .filter((item): item is TwitterFanout => item !== null && predicate(item))
+      .sort((a, b) => a.createdAt - b.createdAt || a.tweetId.localeCompare(b.tweetId));
   }
 
   private async editTwitter(

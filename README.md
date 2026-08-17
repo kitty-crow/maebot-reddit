@@ -12,17 +12,22 @@ The TypeScript/Bun overhaul is being developed on `agent/ts-overhaul`. The legac
 - explicit rate-limit/error classification without logging secret-bearing request objects;
 - protobuf-backed Reddit state foundation using the shared mutex/atomic store;
 - idempotent action and Twitter fanout lifecycle primitives;
+- canonical Twitter consumer orchestration with independent primary/crosspost checkpoints and crash-safe acknowledgement recovery;
+- read-only canonical Daily Task review client with durable independent pin checkpoints;
 - frozen deterministic parity helpers for legacy commands, questions, canned replies, "this is the Mae", moderation signals and haiku syllable corrections;
 - copy-only legacy-state snapshot tooling.
+
+The Twitter bridge currently depends on an abstract Reddit publisher only. No concrete live Reddit writer is connected to `src/main.ts`, so fanout and pinning behaviour can be tested without creating or changing Reddit content.
 
 ## Ownership
 
 - Reddit owns Reddit.
 - Twitter ingestion/classification remains owned by `maebot-twitter`.
+- Telegram owns the canonical Daily Task review decision store and exposes only the minimal read contract Reddit needs.
 - Telegram and Discord remain presentation/review adapters.
 - Reddit must not open Twitter or Telegram canonical stores.
 
-See `docs/architecture.md`, `docs/legacy-parity.md`, `docs/state-migration.md` and `docs/flair-migration.md` for the current engineering contracts.
+See `docs/architecture.md`, `docs/legacy-parity.md`, `docs/state-migration.md`, `docs/flair-migration.md` and `docs/twitter-bridge.md` for the current engineering contracts.
 
 ## Setup
 
@@ -33,7 +38,7 @@ git submodule update --init --recursive
 bun install
 ```
 
-Copy `.env.example` to a deployment-local `.env` and supply the Reddit script-app credentials. Never commit the populated file.
+Copy `.env.example` to a deployment-local `.env` and supply the Reddit script-app credentials plus the loopback Twitter and Daily Review API tokens. Never commit the populated file.
 
 ## Read-only Reddit audit
 
@@ -65,4 +70,4 @@ CI runs strict TypeScript checks, loose-type and ownership-boundary checks, then
 
 ## Production status
 
-Do not replace or stop the legacy Python writers from this branch. Live writes, flair migration, Twitter fanout, moderation application and final cutover remain gated on the staged validation plan in the docs.
+Do not replace or stop the legacy Python writers from this branch. The concrete Reddit writer, flair migration, moderation application, sticky policy and final cutover remain gated on the staged live-read validation plan in the docs.

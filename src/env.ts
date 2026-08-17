@@ -30,6 +30,11 @@ export type RedditCfg = {
   readonly stateFile: string;
 };
 
+export type LoopbackApiCfg = {
+  readonly base: string;
+  readonly token: string;
+};
+
 export const redditConfig = (): RedditCfg => ({
   auth: {
     clientId: req('REDDIT_CLIENT_ID'),
@@ -41,4 +46,14 @@ export const redditConfig = (): RedditCfg => ({
   sourceSubreddit: community('REDDIT_SOURCE_SUBREDDIT', 'catgirlcoin'),
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
   stateFile: resolve(process.cwd(), opt('REDDIT_STATE_FILE', 'data/reddit.pb')),
+});
+
+export const twitterApiConfig = (): LoopbackApiCfg => ({
+  base: req('TWITTER_API_URL'),
+  token: req('TWITTER_API_TOKEN'),
+});
+
+export const dailyReviewApiConfig = (): LoopbackApiCfg => ({
+  base: req('DAILY_REVIEW_API_URL'),
+  token: req('DAILY_REVIEW_API_TOKEN'),
 });
