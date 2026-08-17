@@ -2,21 +2,23 @@
 
 ## Purpose
 
-This document records the durable state visible from source and the production-only state that must be located before migration. Migration is copy-first, rerunnable and auditable. No production store is to be overwritten during discovery.
+This document records the durable state visible from source and the production state that must be migrated. Migration is copy-first, rerunnable and auditable. No production store is to be overwritten during discovery.
+
+The first live production inventory was frozen on 17 August 2026 in `docs/production-inventory-2026-08-17.md`.
 
 ## Known legacy state
 
 | Legacy datum | Observed source access | Meaning | Target ownership | Migration status |
 | --- | --- | --- | --- | --- |
-| `warned_users` | legacy Reddit database | Users escalated to warned/restricted state | Reddit | Production values required |
-| `banned_users` | legacy Reddit database | Users escalated to banned/uncivil state | Reddit | Production values required |
-| `questions` | legacy Reddit database | Reddit submission ID to bot best-answer marker comment ID | Reddit | Production values required |
-| per-submission question records | submission moderation database | Stored question title/history for similarity | Reddit | Physical store/path unresolved |
-| `titm` | legacy Reddit database | Global "this is the Mae" count | Reddit community state | Production value required |
-| `leaderboard` | legacy Reddit database | Per-user "this is the Mae" counts | Reddit community state | Production value required |
-| `Haikus` | legacy Reddit database | Haiku history keyed by author | Reddit community state | Production value required |
-| `Haikus/` | local filesystem | Historical generated `.haiku` files | Reddit/archive policy | Production inventory required |
-| `pairs.csv` | local filesystem | Canned phrase/reply pairs | Reddit typed config/data | Production file required |
+| `warned_users` | comment/community Reddit DB and parent DB reads from submission process | Users escalated to warned/restricted state | Reddit | Active physical source confirmed; values still need snapshot parsing |
+| `banned_users` | comment/community Reddit DB and parent DB reads from submission process | Users escalated to banned/uncivil state | Reddit | Active physical source confirmed; values still need snapshot parsing |
+| `questions` | comment/community Reddit DB | Reddit submission ID to bot best-answer marker comment ID | Reddit | Active physical source confirmed; values still need snapshot parsing |
+| per-submission question records | submission moderation DB | Stored question title/history for similarity | Reddit | Active store confirmed at `submission_moderation/database.db`; values still need snapshot parsing |
+| `titm` | comment/community Reddit DB | Global "this is the Mae" count | Reddit community state | Active physical source confirmed; value still needs snapshot parsing |
+| `leaderboard` | comment/community Reddit DB | Per-user "this is the Mae" counts | Reddit community state | Active physical source confirmed; values still need snapshot parsing |
+| `Haikus` | comment/community Reddit DB | Haiku history keyed by author | Reddit community state | Active physical source confirmed; values still need snapshot parsing |
+| `Haikus/` | local filesystem | Historical generated `.haiku` files | Reddit/archive policy | Confirmed: 13 files, about 100K; per-file inventory still required |
+| `pairs.csv` | local filesystem | Canned phrase/reply pairs | Reddit typed config/data | Confirmed at `/home/kitty/server/mae/reddit/pairs.csv`, SHA-256 frozen in production inventory |
 | special-response cooldown | process memory | Last public canned-response timestamps | Reddit | No durable legacy value to migrate |
 | warned/banned flair assignments | Reddit plus local DB | User moderation/reputation presentation | Reddit | Reconcile local state with live Reddit |
 | current user flair assignments | `r/catgirlcoin` | Community identity/reputation/flair | Reddit | Live export required |
@@ -24,27 +26,51 @@ This document records the durable state visible from source and the production-o
 | user flair templates | `r/catgirlcoin` | User identity/status semantics | Reddit | Live export required |
 | Discord Reddit-question pointer | Discord `MaeDb.questions` | Reddit submission ID to Discord presentation message ID | Discord | Preserve as presentation state |
 
-## Physical-store ambiguity
+## Physical stores: resolved production layout
 
-The imported source does not prove that all references to `database.db` are the same file.
+The first production inventory confirmed two live Python processes with different working directories and therefore two distinct relative `database.db` files.
 
-- The main comment bot and helpers open `database.db` relative to their process working directory.
-- `submission_moderation/main.py` explicitly opens a database in the parent directory for warned/banned state.
-- `submission_moderation/post_moderation.py` opens `database.db` relative to its process working directory.
+### Comment/community process
 
-The production launcher inventory must therefore capture each process working directory and resolve every database path to an absolute path before any migration tooling is written.
+- PID at inventory: `2006106`
+- CWD: `/home/kitty/server/mae/reddit`
+- active store: `/home/kitty/server/mae/reddit/database.db`
+- size: `6172` bytes
+- SHA-256: `cd6f3fe825d95fe83c7a09a71aa954eb1d570acb1531326b4dc79d4a626d2d19`
+
+### Submission moderation process
+
+- PID at inventory: `2334136`
+- CWD: `/home/kitty/server/mae/reddit/submission_moderation`
+- active store: `/home/kitty/server/mae/reddit/submission_moderation/database.db`
+- size: `4090` bytes
+- SHA-256: `8c786e8ca672b4c7be0ae45c83a6aaf9272f231744ffe1843d856e5a6cad3807`
+
+`submission_moderation/main.py` also explicitly opens the parent Reddit database for shared warned/banned state, while helpers in the submission process may open the submission-local database through the current working directory.
+
+Migration tooling must therefore model these as two independently hashed source snapshots. It must not concatenate or merge them mechanically. Each key is mapped according to its legacy semantic owner and access path.
+
+## Legacy copies are evidence, not automatic migration inputs
+
+Additional Reddit database copies were found:
+
+- `/home/kitty/server/mae/reddit/database_backup.db`
+- `/home/kitty/server/mae/reddit/database - Copy.db`
+- `/home/kitty/server/mae/reddit/submission_moderation/database - Copy.db`
+
+Their hashes and metadata are frozen in the production inventory. They are not canonical migration inputs unless a later semantic comparison proves that production behaviour depends on records absent from the active stores.
 
 ## Source intentionally excluded from Git
 
 The repository ignore rules deliberately exclude runtime databases, files matching `database*`, CSVs, `Haikus/`, logs and environment files. Therefore absence from Git is not proof that a production artefact is missing.
 
-In particular, `submission_moderation/main.py` imports `database_reduild`. Because the ignore rules exclude `database*`, the production audit must check whether that module exists alongside the deployed bot and record its behaviour without modifying it.
+`/home/kitty/server/mae/reddit/submission_moderation/database_reduild.py` is now confirmed to exist in production with SHA-256 `d859fdd6795ee0d06550b2861871ca88abfdea62a207deb2c4a13c84a0ab4554`. Its contents and import behaviour still require a read-only audit.
 
-The sibling `common` directory imported by legacy code is also outside this repository and must be inventoried.
+The sibling production dependency `/home/kitty/server/mae/common` is also confirmed. Its `database.py` and `database.db` hashes are frozen in the production inventory. Only the Reddit-relevant API/state surface is in scope.
 
 ## Target durable model
 
-Exact protobuf field names remain implementation details until the production audit is complete, but the TypeScript service must have explicit durable records for these logical domains.
+Exact protobuf field names remain implementation details until the state and live Reddit audits are complete, but the TypeScript service must have explicit durable records for these logical domains.
 
 ### Reddit object processing
 
@@ -139,25 +165,36 @@ The migration must ensure pre-existing historical tweets do not become fresh Red
 
 Only after Reddit has durably completed both required subreddit deliveries should it acknowledge the canonical Twitter item for platform `reddit`.
 
-## Production inventory requirements
+## Production inventory status
 
-For every deployed Reddit process, record without mutation:
+Already confirmed without mutation:
 
-- absolute checkout/runtime path;
-- current Git/source revision if available;
-- process manager and launcher command;
-- process working directory;
-- Python environment/dependency source;
-- absolute paths for every database;
-- absolute path and hash/size for `pairs.csv`;
-- absolute path and count/size for `Haikus/`;
-- location and source role of the sibling `common` directory;
-- presence and source hash of `database_reduild` or similarly named modules;
-- environment variable names used, without printing secret values;
-- Reddit username/client identity metadata without secret values;
-- current logs only where required to establish active wiring.
+- absolute runtime paths for both live Reddit processes;
+- process working directories;
+- separate active database paths and hashes;
+- presence/hash of `pairs.csv`;
+- presence/count/size of `Haikus/`;
+- presence/hash of `database_reduild.py`;
+- presence/hash of the sibling `common` database module/store;
+- absence of a Reddit-named systemd service or tmux session in the initial scan;
+- environment variable names only, with no secret values printed.
 
-For each discovered state store, create a copy or snapshot before parsing it for migration. Preserve timestamps and hashes so migration inputs can be verified later.
+Still required:
+
+- exact launcher command/parent process for both live Python processes;
+- exact virtualenv/interpreter path and dependency versions actually used;
+- parsed schema/content of both active Reddit databases;
+- read-only contents/behaviour of `database_reduild.py`;
+- Reddit-relevant contents/API surface of `/home/kitty/server/mae/common`;
+- exact `pairs.csv` configuration;
+- per-file Haiku inventory and hashes;
+- credential/configuration source location and key names without exposing values;
+- live subreddit moderator list/permissions;
+- live user/post flair templates and current assignments needed for migration;
+- comparison of active stores against old copies only where needed to prove data continuity;
+- logs only if required to establish active legacy branches.
+
+For each state store used as a migration input, create a copy or snapshot before parsing it for migration. Preserve timestamps and hashes so migration inputs can be verified later.
 
 ## Migration manifest fields
 
