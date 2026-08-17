@@ -68,7 +68,7 @@ export const auditReddit = async (
 ): Promise<RedditAudit> => {
   const account = await client.me();
   const sourceAudit = await one(client, source, true);
-  const primaryAudit = await one(client, primary, false);
+  const primaryAudit = await one(client, primary, true);
   return {
     generatedAt: new Date().toISOString(),
     account,
