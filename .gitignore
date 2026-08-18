@@ -1,56 +1,67 @@
-# Maebot Reddit
-#
-# Source-only allowlist. Runtime data, credentials, logs and
-# user-generated content remain local.
+# Source-only repository. Runtime data, credentials, logs and generated
+# community content remain local.
 
-# Ignore everything by default
+# Ignore everything by default, then allow source/project artefacts below.
 *
-
-# Allow traversal
 !*/
 
-# Python source
+# Legacy Python source remains the frozen behaviour oracle.
 !*.py
 
-# Dependency/project metadata
-!.gitignore
-!Pipfile
-!Pipfile.lock
-!pyproject.toml
-!poetry.lock
-!README
-!README.md
-!readme
-
-# Runtime databases/state
+# Runtime databases/state and withheld legacy modules.
 *.db
 *.db.*
 database*
 *.json
 
-# Logs
+# Logs and generated/community content.
 *.log
 log.txt
-
-# User/generated content
 Haikus/
-
-# Data withheld until code audit
 pairs.csv
 *.csv
 
-# Secrets/environment
+# Secrets/environment.
 .env
 .env.*
 *.key
 *.pem
 
-# Python cache
+# Caches/build output.
 __pycache__/
 *.pyc
+node_modules/
+dist/
+coverage/
+data/
+.check-shims.d.ts
 
-# Historical copies
+# Historical copies.
 *.bak
 *.bak-*
 *.old
 *.save
+
+# Modern TypeScript source and project metadata.
+!*.ts
+!.gitignore
+!.gitmodules
+!package.json
+!bun.lock
+!tsconfig.json
+!README
+!README.md
+!readme
+!.env.example
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!docs/
+!docs/*.md
+!src/
+!scripts/
+!test/
+!vendor/
+!vendor/server
+!vendor/openai-schema
+!vendor/maebot-twitter
