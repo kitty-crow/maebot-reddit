@@ -1,5 +1,5 @@
 import type { RedditAuthCfg } from '../env.ts';
-import type { Json, JsonMap } from '../types/json.ts';
+import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
