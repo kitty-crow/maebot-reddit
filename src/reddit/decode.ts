@@ -16,6 +16,12 @@ export type RedditListing<T> = {
   readonly after: string | null;
 };
 
+export type RedditRelationshipUser = {
+  readonly username: string;
+  readonly note: string | null;
+  readonly date: number | null;
+};
+
 const nullableName = (v: Json | undefined): string | null => typeof v === 'string' && v !== '[deleted]' ? v : null;
 
 const rows = (raw: Json, name: string): { readonly data: JsonMap; readonly after: string | null }[] => {
@@ -59,6 +65,13 @@ export const moderators = (raw: Json): RedditListing<RedditModerator> => listing
     ? row['mod_permissions'].filter((v): v is string => typeof v === 'string')
     : [],
 }));
+
+export const relationshipUsers = (raw: Json, name = 'relationship users'): RedditListing<RedditRelationshipUser> =>
+  listing(raw, name, row => ({
+    username: strVal(row['name'], `${name}.name`),
+    note: optStr(row['note']),
+    date: optNum(row['date']),
+  }));
 
 const flairTemplate = (row: JsonMap, index: number): RedditFlairTemplate => ({
   id: strVal(row['id'], `flair[${index}].id`),
