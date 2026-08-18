@@ -52,4 +52,11 @@ export const isMap = (v: Json | undefined): v is JsonMap =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export const parseJson = (raw: string): Json => JSON.parse(quoteWideInts(raw)) as Json;
+
+export const parseMap = (raw: string): JsonMap => {
+  const value = parseJson(raw);
+  if (!isMap(value)) throw new Error('JSON root must be an object');
+  return value;
+};
+
 export const clone = (v: Json): Json => JSON.parse(JSON.stringify(v)) as Json;

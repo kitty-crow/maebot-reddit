@@ -90,7 +90,10 @@ const questionTitles = (value: JsonMap): ReadonlyMap<string, string> => {
 
 const jsonObject = (entries: ReadonlyMap<string, string | number | readonly string[]>): JsonMap => {
   const out: JsonMap = {};
-  for (const [key, value] of entries) out[key] = Array.isArray(value) ? [...value] : value;
+  for (const [key, value] of entries) {
+    if (typeof value === 'string' || typeof value === 'number') out[key] = value;
+    else out[key] = [...value];
+  }
   return out;
 };
 
