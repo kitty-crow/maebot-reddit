@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { flairAssignments, flairTemplates, moderators, rules } from '../src/reddit/decode.ts';
 
 describe('Reddit API decoders', () => {
-  test('decodes moderator listings', () => {
+  test('decodes wrapped moderator listings', () => {
     const page = moderators({
       kind: 'UserList',
       data: {
@@ -11,6 +11,24 @@ describe('Reddit API decoders', () => {
       },
     });
     expect(page.items).toEqual([{ name: 'mod', id: 'abc', permissions: ['all'] }]);
+  });
+
+  test('decodes live direct-child moderator listings', () => {
+    const page = moderators({
+      kind: 'UserList',
+      data: {
+        after: 'next',
+        children: [
+          { name: 'mod', id: 'abc', mod_permissions: ['posts', 'flair'] },
+          { name: 'owner', id: null, mod_permissions: ['all'] },
+        ],
+      },
+    });
+    expect(page.items).toEqual([
+      { name: 'mod', id: 'abc', permissions: ['posts', 'flair'] },
+      { name: 'owner', id: null, permissions: ['all'] },
+    ]);
+    expect(page.after).toBe('next');
   });
 
   test('decodes v2 flair templates with migration-relevant semantics', () => {
