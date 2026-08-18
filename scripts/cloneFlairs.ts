@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { redditConfig } from '../src/env.ts';
 import { FlairCloner } from '../src/flair/clone.ts';
+import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import type { RedditFlairAssignment, RedditFlairTemplate } from '../src/reddit/types.ts';
@@ -64,6 +65,20 @@ const mappings = (kind: 'user' | 'post', sourceTemplates: readonly RedditFlairTe
       cssClass: template.cssClass,
     } as const;
   });
+
+const userFlairMappings = mappings('user', sourceUserTemplates, targetUserTemplates);
+const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTemplates);
+
+console.log(`Cloning sticky posts with mapped post flairs: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
+const stickyPosts = await cloneStickyPosts(
+  read,
+  write,
+  cfg.sourceSubreddit,
+  cfg.primarySubreddit,
+  sourcePostTemplates,
+  targetPostTemplates,
+  postFlairMappings,
+);
 
 const legacyDbFile = resolve(
   process.cwd(),
@@ -147,13 +162,14 @@ const catalogue = {
   userTemplates: {
     source: sourceUserTemplates,
     target: targetUserTemplates,
-    mapping: mappings('user', sourceUserTemplates, targetUserTemplates),
+    mapping: userFlairMappings,
   },
   postTemplates: {
     source: sourcePostTemplates,
     target: targetPostTemplates,
-    mapping: mappings('post', sourcePostTemplates, targetPostTemplates),
+    mapping: postFlairMappings,
   },
+  stickyPosts,
   userAssignments: {
     source: sourceAssignments,
     target: targetAssignments,
@@ -178,7 +194,11 @@ console.log(`user templates created=${result.userTemplatesCreated}`);
 console.log(`post templates created=${result.postTemplatesCreated}`);
 console.log(`user assignments applied=${result.userAssignmentsApplied}`);
 console.log(`user assignments already correct=${result.userAssignmentsAlreadyCorrect}`);
+console.log(`sticky posts cloned/reused=${stickyPosts.length}`);
+for (const sticky of stickyPosts) {
+  console.log(`sticky slot ${sticky.slot}: ${sticky.sourceFullname} -> t3_${sticky.targetPostId} mode=${sticky.mode}`);
+}
 console.log(`legacy/source moderation users migrated=${statusByUser.size}`);
 console.log(`target bans before=${targetBansBefore.length} after=${targetBansAfter.length}`);
 console.log(`canonical flair catalogue=${catalogueFile}`);
-console.log('Flair and moderation-state clone complete.');
+console.log('Flair, sticky and moderation-state clone complete.');

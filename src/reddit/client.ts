@@ -119,6 +119,11 @@ export class RedditReadClient {
     }
   }
 
+  public async hotPosts(name: string, limit = 100): Promise<readonly RedditPost[]> {
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    return decode.posts(await this.get(`${pathFor(name, '/hot')}?limit=${safeLimit}`), 'hot posts').items;
+  }
+
   public async newPosts(name: string, limit = 25): Promise<readonly RedditPost[]> {
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     return decode.posts(await this.get(`${pathFor(name, '/new')}?limit=${safeLimit}`)).items;
