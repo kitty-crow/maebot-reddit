@@ -58,13 +58,28 @@ export const account = (raw: Json): RedditAccount => {
   };
 };
 
-export const moderators = (raw: Json): RedditListing<RedditModerator> => listing(raw, 'moderators', row => ({
-  name: strVal(row['name'], 'moderator.name'),
-  id: optStr(row['id']),
-  permissions: Array.isArray(row['mod_permissions'])
-    ? row['mod_permissions'].filter((v): v is string => typeof v === 'string')
-    : [],
-}));
+export const moderators = (raw: Json): RedditListing<RedditModerator> => {
+  const root = mapVal(raw, 'moderators');
+  const data = mapVal(root['data'], 'moderators.data');
+  const children = arrVal(data['children'], 'moderators.data.children');
+  return {
+    items: children.map((child, index): RedditModerator => {
+      const item = mapVal(child, `moderators.children[${index}]`);
+      const nested = item['data'];
+      const row = nested === undefined
+        ? item
+        : mapVal(nested, `moderators.children[${index}].data`);
+      return {
+        name: strVal(row['name'], `moderators.children[${index}].name`),
+        id: optStr(row['id']),
+        permissions: Array.isArray(row['mod_permissions'])
+          ? row['mod_permissions'].filter((v): v is string => typeof v === 'string')
+          : [],
+      };
+    }),
+    after: optStr(data['after']),
+  };
+};
 
 export const relationshipUsers = (raw: Json, name = 'relationship users'): RedditListing<RedditRelationshipUser> =>
   listing(raw, name, row => ({
