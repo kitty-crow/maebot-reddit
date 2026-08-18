@@ -25,13 +25,27 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
   }
 
   public async publishLegacy(tweet: Tweet, primaryPostId: string): Promise<RedditLegacyPost> {
+    const primaryFullname = primaryPostId.startsWith('t3_') ? primaryPostId : `t3_${primaryPostId}`;
+    const primaryUrl = redditPostUrl(this.cfg.primarySubreddit, primaryPostId);
+    const existing = (await this.read.newPosts(this.cfg.sourceSubreddit, 100)).find(post =>
+      post.crosspostParent === primaryFullname
+      || post.selfText.includes(`mae-mirror:v2:${this.cfg.primarySubreddit}:${primaryFullname}`)
+      || post.selfText.includes(`mae-mirror:${primaryFullname}`)
+      || post.selfText.includes(`Primary Reddit post: ${primaryUrl}`));
+    if (existing !== undefined) {
+      return {
+        postId: existing.id,
+        mode: existing.crosspostParent === primaryFullname ? 'crosspost' : 'fallback',
+      };
+    }
+
     const title = renderTweetForReddit(tweet).title;
     try {
       const created = await this.write.crosspost(this.cfg.sourceSubreddit, primaryPostId, title);
       return { postId: created.id, mode: 'crosspost' };
     } catch (crosspostError) {
       console.error(`[Reddit Twitter publisher] native crosspost failed; using self-post fallback: ${String(crosspostError)}`);
-      const fallback = renderLegacyFallback(tweet, redditPostUrl(this.cfg.primarySubreddit, primaryPostId));
+      const fallback = renderLegacyFallback(tweet, primaryUrl);
       const created = await this.write.submitSelf(this.cfg.sourceSubreddit, fallback.title, fallback.body);
       return { postId: created.id, mode: 'fallback' };
     }
