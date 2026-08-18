@@ -15,7 +15,7 @@ const sourceUrl = (permalink: string): string => permalink.startsWith('http')
   : `https://www.reddit.com${permalink.startsWith('/') ? '' : '/'}${permalink}`;
 const fallbackBody = (item: MirrorRecord): string =>
   `Mirrored from r/nyaonearth.\n\n[Open the original post](${sourceUrl(item.permalink)})\n\n${tag(item.sourceFullname)}`;
-const safeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const safeError = <T>(error: T): string => error instanceof Error ? error.message : String(error);
 
 export class PrimaryPostMirror {
   public constructor(
