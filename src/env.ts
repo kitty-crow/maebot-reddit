@@ -13,6 +13,7 @@ const maybe = (name: string): string | null => {
 };
 
 const opt = (name: string, fallback: string): string => process.env[name]?.trim() || fallback;
+const alias = (name: string, legacy: string): string => maybe(name) ?? req(legacy);
 
 const community = (name: string, fallback: string): string => {
   const value = opt(name, fallback).replace(/^r\//iu, '').trim();
@@ -56,11 +57,13 @@ export type InternalApiCfg = {
 
 export const redditConfig = (): RedditCfg => ({
   auth: {
-    clientId: req('REDDIT_CLIENT_ID'),
-    clientSecret: req('REDDIT_CLIENT_SECRET'),
-    username: req('REDDIT_USERNAME'),
-    password: req('REDDIT_PASSWORD'),
-    userAgent: req('REDDIT_USER_AGENT'),
+    // Preserve the production Python deployment's credential names so the
+    // cutover does not require copying secrets into Git or re-entering them.
+    clientId: maybe('REDDIT_CLIENT_ID') ?? 'GPs6wxXUncfEVH6wAn2KSQ',
+    clientSecret: alias('REDDIT_CLIENT_SECRET', 'GPs6wxXUncfEVH6wAn2KSQ'),
+    username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
+    password: alias('REDDIT_PASSWORD', 'this_is_the_mae'),
+    userAgent: maybe('REDDIT_USER_AGENT') ?? 'linux:com.kittycrow.maebot-reddit:0.1.0 (by /u/this_is_the_mae)',
   },
   sourceSubreddit: community('REDDIT_SOURCE_SUBREDDIT', 'catgirlcoin'),
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
