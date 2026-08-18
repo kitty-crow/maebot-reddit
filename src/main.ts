@@ -9,7 +9,7 @@ import {
   twitterApiConfig,
 } from './env.ts';
 import { RedditInternalHttpServer } from './http/server.ts';
-import { PrimaryPostMirror } from './mirror/service.ts';
+import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { QuestionEventStore } from './questions/events.ts';
@@ -29,7 +29,7 @@ const state = new RedditStateStore(redditCfg.stateFile);
 const reviews = new DailyReviewClient(reviewCfg);
 const publisher = new LiveTwitterRedditPublisher(redditCfg);
 const bridge = new TwitterRedditBridge(twitter, state, reviews, publisher);
-const postMirror = new PrimaryPostMirror(
+const postMirror = new BidirectionalPostMirror(
   new RedditReadClient(redditCfg.auth),
   new RedditMutationClient(redditCfg.auth),
   new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb')),
@@ -110,11 +110,11 @@ const startupSmoke = async (): Promise<void> => {
   console.log(`[Reddit startup smoke] ${id} delivered through the real Reddit fanout pipeline; marker=${marker}`);
 };
 
-console.log(`Mae Reddit live Twitter consumer and all-user post mirror starting for r/${redditCfg.primarySubreddit} -> r/${redditCfg.sourceSubreddit}.`);
+console.log(`Mae Reddit Twitter consumer and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
 console.log('Legacy comment/submission moderation ingestion is intentionally offline during this cutover window.');
 
-// Establish the all-user mirror baseline before the controlled startup smoke so
-// existing r/nyaonearth history is not backfilled into the legacy subreddit.
+// Establish both subreddit baselines before the controlled startup smoke. This
+// avoids historical backfill; only posts appearing after cutover are mirrored.
 await postMirror.tick();
 await startupSmoke();
 await tick();
