@@ -2,6 +2,7 @@ import type { Tweet } from '../../vendor/maebot-twitter/src/index.ts';
 import type { RedditCfg } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
+import { readStickySlots } from '../reddit/stickySlots.ts';
 import { renderLegacyFallback, renderTweetForReddit } from './render.ts';
 import { planSticky } from './sticky.ts';
 import type { RedditLegacyPost, RedditPrimaryPost, TwitterRedditPublisher } from './bridge.ts';
@@ -53,8 +54,7 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
 
   public async pin(target: 'primary' | 'legacy', postId: string): Promise<void> {
     const subreddit = target === 'primary' ? this.cfg.primarySubreddit : this.cfg.sourceSubreddit;
-    const first = await this.read.sticky(subreddit, 1);
-    const second = await this.read.sticky(subreddit, 2);
+    const [first, second] = await readStickySlots(this.read, subreddit);
     const plan = planSticky([first, second], postId);
     if (plan.action === 'already_sticky') return;
     if (plan.action === 'blocked') {
