@@ -39,6 +39,7 @@ export class TwitterRedditBridge {
     private readonly reviews: DailyReviewApi,
     private readonly publisher: TwitterRedditPublisher,
     private readonly now: () => number = () => Math.floor(Date.now() / 1_000),
+    private readonly singleTarget = false,
   ) {}
 
   public async deliverPending(): Promise<TwitterBridgeResult> {
@@ -144,13 +145,17 @@ export class TwitterRedditBridge {
     if (primaryPostId === null) throw new Error('Primary Reddit delivery is missing its post ID');
 
     if (fanout.legacy.state !== 'applied') {
-      try {
-        const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId);
-        if (legacy.postId.length === 0) throw new Error('Legacy Reddit publisher returned an empty post ID');
-        fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', legacy.postId, legacy.mode, this.now())) ?? fanout;
-      } catch (error) {
-        await this.state.markTwitterDeliveryFailed(item.tweet.id, 'legacy', safeMessage(error), this.now());
-        throw error;
+      if (this.singleTarget) {
+        fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', primaryPostId, 'primary', this.now())) ?? fanout;
+      } else {
+        try {
+          const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId);
+          if (legacy.postId.length === 0) throw new Error('Legacy Reddit publisher returned an empty post ID');
+          fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', legacy.postId, legacy.mode, this.now())) ?? fanout;
+        } catch (error) {
+          await this.state.markTwitterDeliveryFailed(item.tweet.id, 'legacy', safeMessage(error), this.now());
+          throw error;
+        }
       }
     }
 
@@ -190,6 +195,22 @@ export class TwitterRedditBridge {
   private async applyPins(fanout: TwitterFanout): Promise<{ readonly complete: boolean; readonly failed: number }> {
     let failed = 0;
     let current = fanout;
+
+    if (this.singleTarget) {
+      if (!current.primaryPinApplied && current.primary.postId !== null) {
+        try {
+          await this.publisher.pin('primary', current.primary.postId);
+          current = (await this.state.markTwitterPin(current.tweetId, 'primary')) ?? current;
+        } catch (error) {
+          failed += 1;
+          console.error(`[Reddit Twitter bridge] primary pin failed for tweet ${current.tweetId}: ${safeMessage(error)}`);
+        }
+      }
+      if (current.primaryPinApplied && !current.legacyPinApplied) {
+        current = (await this.state.markTwitterPin(current.tweetId, 'legacy')) ?? current;
+      }
+      return { complete: current.primaryPinApplied && current.legacyPinApplied, failed };
+    }
 
     if (!current.primaryPinApplied && current.primary.postId !== null) {
       try {

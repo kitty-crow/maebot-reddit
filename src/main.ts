@@ -24,18 +24,21 @@ const redditCfg = redditConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
+const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
 const reviews = new DailyReviewClient(reviewCfg);
 const publisher = new LiveTwitterRedditPublisher(redditCfg);
-const bridge = new TwitterRedditBridge(twitter, state, reviews, publisher);
-const postMirror = new BidirectionalPostMirror(
-  new RedditReadClient(redditCfg.auth),
-  new RedditMutationClient(redditCfg.auth),
-  new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb')),
-  redditCfg.primarySubreddit,
-  redditCfg.sourceSubreddit,
-);
+const bridge = new TwitterRedditBridge(twitter, state, reviews, publisher, undefined, singleTarget);
+const postMirror = singleTarget
+  ? null
+  : new BidirectionalPostMirror(
+      new RedditReadClient(redditCfg.auth),
+      new RedditMutationClient(redditCfg.auth),
+      new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb')),
+      redditCfg.primarySubreddit,
+      redditCfg.sourceSubreddit,
+    );
 
 const pollMs = (() => {
   const raw = process.env['REDDIT_TWITTER_POLL_MS']?.trim() || '5000';
@@ -55,13 +58,10 @@ const tick = async (): Promise<void> => {
   if (ticking) return;
   ticking = true;
   try {
-    // Canonical Twitter delivery gets first refusal. If it is recovering from a
-    // partial primary-only delivery, it can complete/recognise the legacy half
-    // before the generic all-user mirror considers the same post.
     const delivery = await bridge.deliverPending();
-    const mirror = await postMirror.tick();
+    const mirror = postMirror === null ? null : await postMirror.tick();
     const review = await bridge.syncReviews();
-    if (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0) {
+    if (mirror !== null && (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0)) {
       console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
     }
     if (delivery.inspected > 0 || delivery.completed > 0 || delivery.failed > 0) {
@@ -107,18 +107,21 @@ const startupSmoke = async (): Promise<void> => {
 
   await tick();
   const item = await twitter.item(id);
-  if (item?.redditDone !== true) throw new Error(`Reddit startup smoke ${id} did not complete both subreddit deliveries`);
+  if (item?.redditDone !== true) throw new Error(`Reddit startup smoke ${id} did not complete Reddit delivery`);
   await mkdir(dirname(marker), { recursive: true });
   await writeFile(marker, `${new Date().toISOString()} ${id}\n`, { flag: 'wx', mode: 0o600 });
-  console.log(`[Reddit startup smoke] ${id} delivered through the real Reddit fanout pipeline; marker=${marker}`);
+  console.log(`[Reddit startup smoke] ${id} delivered through the real Reddit pipeline; marker=${marker}`);
 };
 
-console.log(`Mae Reddit Twitter consumer and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
+if (singleTarget) {
+  console.log(`Mae Reddit single-subreddit mode starting for r/${redditCfg.primarySubreddit}.`);
+  console.log('Cross-subreddit mirroring and migration are disabled until distinct source/primary subreddits are configured.');
+} else {
+  console.log(`Mae Reddit Twitter consumer and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
+}
 console.log('Legacy comment/submission moderation ingestion is intentionally offline during this cutover window.');
 
-// Establish both subreddit baselines before the controlled startup smoke. This
-// avoids historical backfill; only posts appearing after cutover are mirrored.
-await postMirror.tick();
+if (postMirror !== null) await postMirror.tick();
 await startupSmoke();
 await tick();
 const timer = setInterval(() => {
