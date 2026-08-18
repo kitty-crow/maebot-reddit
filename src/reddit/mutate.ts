@@ -195,6 +195,22 @@ export class RedditMutationClient {
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
   }
 
+  public async banUser(
+    subreddit: string,
+    username: string,
+    reason: string,
+    note: string,
+  ): Promise<void> {
+    const form = new URLSearchParams({
+      api_type: 'json',
+      name: username,
+      type: 'banned',
+      ban_reason: reason.slice(0, 100),
+      note: note.slice(0, 300),
+    });
+    await this.form(pathFor(subreddit, '/api/friend'), form);
+  }
+
   public async sticky(postId: string, slot: 1 | 2): Promise<void> {
     const form = new URLSearchParams({
       api_type: 'json',
