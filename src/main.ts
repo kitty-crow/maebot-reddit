@@ -9,8 +9,12 @@ import {
   twitterApiConfig,
 } from './env.ts';
 import { RedditInternalHttpServer } from './http/server.ts';
+import { PrimaryPostMirror } from './mirror/service.ts';
+import { PostMirrorStore } from './mirror/store.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import { RedditReadClient } from './reddit/client.ts';
+import { RedditMutationClient } from './reddit/mutate.ts';
 import { DailyReviewClient } from './review/client.ts';
 import { RedditStateStore } from './store/state.ts';
 import { TwitterRedditBridge } from './twitter/bridge.ts';
@@ -25,6 +29,13 @@ const state = new RedditStateStore(redditCfg.stateFile);
 const reviews = new DailyReviewClient(reviewCfg);
 const publisher = new LiveTwitterRedditPublisher(redditCfg);
 const bridge = new TwitterRedditBridge(twitter, state, reviews, publisher);
+const postMirror = new PrimaryPostMirror(
+  new RedditReadClient(redditCfg.auth),
+  new RedditMutationClient(redditCfg.auth),
+  new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb')),
+  redditCfg.primarySubreddit,
+  redditCfg.sourceSubreddit,
+);
 
 const pollMs = (() => {
   const raw = process.env['REDDIT_TWITTER_POLL_MS']?.trim() || '5000';
@@ -44,8 +55,12 @@ const tick = async (): Promise<void> => {
   if (ticking) return;
   ticking = true;
   try {
+    const mirror = await postMirror.tick();
     const delivery = await bridge.deliverPending();
     const review = await bridge.syncReviews();
+    if (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0) {
+      console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
+    }
     if (delivery.inspected > 0 || delivery.completed > 0 || delivery.failed > 0) {
       console.log(`[Reddit Twitter bridge] delivery inspected=${delivery.inspected} completed=${delivery.completed} failed=${delivery.failed}`);
     }
@@ -95,13 +110,16 @@ const startupSmoke = async (): Promise<void> => {
   console.log(`[Reddit startup smoke] ${id} delivered through the real Reddit fanout pipeline; marker=${marker}`);
 };
 
-console.log(`Mae Reddit live Twitter consumer starting for r/${redditCfg.primarySubreddit} + r/${redditCfg.sourceSubreddit}.`);
+console.log(`Mae Reddit live Twitter consumer and all-user post mirror starting for r/${redditCfg.primarySubreddit} -> r/${redditCfg.sourceSubreddit}.`);
 console.log('Legacy comment/submission moderation ingestion is intentionally offline during this cutover window.');
 
+// Establish the all-user mirror baseline before the controlled startup smoke so
+// existing r/nyaonearth history is not backfilled into the legacy subreddit.
+await postMirror.tick();
 await startupSmoke();
 await tick();
 const timer = setInterval(() => {
-  void tick().catch(error => console.error('[Reddit Twitter bridge] periodic tick failed:', error));
+  void tick().catch(error => console.error('[Reddit runtime] periodic tick failed:', error));
 }, pollMs);
 
 let stopping = false;
