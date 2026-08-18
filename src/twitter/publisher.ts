@@ -39,11 +39,9 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
 
   public async pin(target: 'primary' | 'legacy', postId: string): Promise<void> {
     const subreddit = target === 'primary' ? this.cfg.primarySubreddit : this.cfg.sourceSubreddit;
-    const stickies = await Promise.all([
-      this.read.sticky(subreddit, 1),
-      this.read.sticky(subreddit, 2),
-    ]) as [Awaited<ReturnType<RedditReadClient['sticky']>>, Awaited<ReturnType<RedditReadClient['sticky']>>];
-    const plan = planSticky(stickies, postId);
+    const first = await this.read.sticky(subreddit, 1);
+    const second = await this.read.sticky(subreddit, 2);
+    const plan = planSticky([first, second], postId);
     if (plan.action === 'already_sticky') return;
     if (plan.action === 'blocked') {
       throw new Error(`Both sticky slots in r/${subreddit} are occupied; refusing to evict an unrelated post`);
