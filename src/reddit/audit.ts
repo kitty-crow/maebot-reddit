@@ -1,4 +1,5 @@
 import type { RedditReadClient } from './client.ts';
+import { readStickySlots } from './stickySlots.ts';
 import type {
   RedditAccount,
   RedditComment,
@@ -35,14 +36,13 @@ const one = async (
   name: string,
   includeAssignments: boolean,
 ): Promise<RedditAuditSubreddit> => {
-  const [subreddit, moderators, userFlairTemplates, postFlairTemplates, rules, sticky1, sticky2, recentPosts, recentComments] = await Promise.all([
+  const [subreddit, moderators, userFlairTemplates, postFlairTemplates, rules, stickies, recentPosts, recentComments] = await Promise.all([
     client.subreddit(name),
     client.moderators(name),
     client.userFlairTemplates(name),
     client.postFlairTemplates(name),
     client.rules(name),
-    client.sticky(name, 1),
-    client.sticky(name, 2),
+    readStickySlots(client, name),
     client.newPosts(name, 25),
     client.newComments(name, 25),
   ]);
@@ -55,7 +55,7 @@ const one = async (
     userFlairAssignments: assignments,
     rules: rules.rules,
     siteRules: rules.siteRules,
-    stickies: [sticky1, sticky2],
+    stickies,
     recentPosts,
     recentComments,
   };
