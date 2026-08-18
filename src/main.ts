@@ -55,8 +55,11 @@ const tick = async (): Promise<void> => {
   if (ticking) return;
   ticking = true;
   try {
-    const mirror = await postMirror.tick();
+    // Canonical Twitter delivery gets first refusal. If it is recovering from a
+    // partial primary-only delivery, it can complete/recognise the legacy half
+    // before the generic all-user mirror considers the same post.
     const delivery = await bridge.deliverPending();
+    const mirror = await postMirror.tick();
     const review = await bridge.syncReviews();
     if (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0) {
       console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
