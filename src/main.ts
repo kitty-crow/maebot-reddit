@@ -1,6 +1,7 @@
 import 'dotenv/config';
-import { RedditInternalHttpServer } from './http/server.ts';
 import { internalApiConfig } from './env.ts';
+import { RedditInternalHttpServer } from './http/server.ts';
+import { ModerationReviewStore } from './mod/review.ts';
 import { QuestionEventStore } from './questions/events.ts';
 
 const cfg = internalApiConfig();
@@ -12,7 +13,8 @@ if (cfg === null) {
   console.log('Reddit internal event API is disabled. Configure REDDIT_INTERNAL_API_TOKEN and REDDIT_INTERNAL_API_PORT together to enable it.');
 } else {
   const questions = new QuestionEventStore();
-  const api = new RedditInternalHttpServer(cfg, questions);
+  const moderation = new ModerationReviewStore();
+  const api = new RedditInternalHttpServer(cfg, questions, moderation);
   api.start();
   console.log(`Reddit internal event API listening on ${api.address()}.`);
 
