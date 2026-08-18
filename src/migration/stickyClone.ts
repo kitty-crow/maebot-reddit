@@ -70,7 +70,7 @@ export const cloneStickyPosts = async (
   const records: StickyCloneRecord[] = [];
 
   for (const slot of [1, 2] as const) {
-    const source = sourceSlots[slot - 1];
+    const source = slot === 1 ? sourceSlots[0] : sourceSlots[1];
     if (source === null) continue;
 
     const existing = targetRecent.find(post =>
