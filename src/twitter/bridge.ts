@@ -12,8 +12,8 @@ export type RedditLegacyPost = {
 };
 
 export type TwitterRedditPublisher = {
-  publishPrimary(tweet: Tweet): Promise<RedditPrimaryPost>;
-  publishLegacy(tweet: Tweet, primaryPostId: string): Promise<RedditLegacyPost>;
+  publishPrimary(tweet: Tweet, worthy: boolean | null): Promise<RedditPrimaryPost>;
+  publishLegacy(tweet: Tweet, primaryPostId: string, worthy: boolean | null): Promise<RedditLegacyPost>;
   pin(target: 'primary' | 'legacy', postId: string): Promise<void>;
 };
 
@@ -132,7 +132,7 @@ export class TwitterRedditBridge {
 
     if (fanout.primary.state !== 'applied') {
       try {
-        const primary = await this.publisher.publishPrimary(item.tweet);
+        const primary = await this.publisher.publishPrimary(item.tweet, item.worthy);
         if (primary.postId.length === 0) throw new Error('Primary Reddit publisher returned an empty post ID');
         fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'primary', primary.postId, 'primary', this.now())) ?? fanout;
       } catch (error) {
@@ -149,7 +149,7 @@ export class TwitterRedditBridge {
         fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', primaryPostId, 'primary', this.now())) ?? fanout;
       } else {
         try {
-          const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId);
+          const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId, item.worthy);
           if (legacy.postId.length === 0) throw new Error('Legacy Reddit publisher returned an empty post ID');
           fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', legacy.postId, legacy.mode, this.now())) ?? fanout;
         } catch (error) {

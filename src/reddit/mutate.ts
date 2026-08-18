@@ -98,7 +98,12 @@ export class RedditMutationClient {
     return this.latestRate;
   }
 
-  public async submitSelf(subreddit: string, title: string, body: string): Promise<RedditCreatedPost> {
+  public async submitSelf(
+    subreddit: string,
+    title: string,
+    body: string,
+    flairTemplateId: string | null = null,
+  ): Promise<RedditCreatedPost> {
     const form = new URLSearchParams({
       api_type: 'json',
       kind: 'self',
@@ -108,10 +113,16 @@ export class RedditMutationClient {
       text: body,
       title,
     });
+    add(form, 'flair_id', flairTemplateId);
     return createdPost(await this.form('/api/submit', form));
   }
 
-  public async crosspost(subreddit: string, sourcePostId: string, title: string): Promise<RedditCreatedPost> {
+  public async crosspost(
+    subreddit: string,
+    sourcePostId: string,
+    title: string,
+    flairTemplateId: string | null = null,
+  ): Promise<RedditCreatedPost> {
     const fullname = sourcePostId.startsWith('t3_') ? sourcePostId : `t3_${sourcePostId}`;
     const form = new URLSearchParams({
       api_type: 'json',
@@ -123,6 +134,7 @@ export class RedditMutationClient {
       sr: subreddit,
       title,
     });
+    add(form, 'flair_id', flairTemplateId);
     return createdPost(await this.form('/api/submit', form));
   }
 
