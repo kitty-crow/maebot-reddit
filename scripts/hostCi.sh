@@ -59,9 +59,8 @@ git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
 git -C "$repo" submodule update --init --recursive
 
 cd "$repo"
-# Reddit does not yet commit bun.lock. Keep dependency resolution inside this
-# disposable checkout and refuse to save a generated lockfile.
-bun install --no-save
+# Install exactly the dependency graph committed in bun.lock.
+bun ci
 
 # Copy legacy production state into /tmp. No live file is opened for writing.
 run_clean bun run scripts/legacySnapshot.ts "$live" "$snapshot" "$common"

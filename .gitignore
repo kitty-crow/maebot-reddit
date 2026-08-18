@@ -47,6 +47,7 @@ data/
 !.gitignore
 !.gitmodules
 !package.json
+!bun.lock
 !tsconfig.json
 !README
 !README.md
