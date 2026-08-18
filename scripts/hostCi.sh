@@ -9,7 +9,7 @@ live="${MAE_LIVE_DIR:-/home/kitty/server/mae/reddit}"
 common="${MAE_COMMON_DIR:-/home/kitty/server/mae/common}"
 remote="${MAE_CI_REMOTE:-}"
 
-for command in git bun sha256sum; do
+for command in git bun; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 2; }
 done
 [ -d "$live" ] || { echo "Live Reddit directory not found: $live" >&2; exit 2; }
@@ -24,7 +24,9 @@ root="$(mktemp -d "/tmp/mae-${platform}-ci.XXXXXXXX")"
 repo="$root/repo"
 snapshot="$root/live-snapshot"
 build="$root/build"
+tmp="$root/tmp"
 ephemeral="ci/${platform}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir -p "$tmp"
 
 cleanup() {
   status=$?
@@ -33,6 +35,17 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT INT TERM
+
+run_clean() {
+  env -i \
+    HOME="${HOME:-/tmp}" \
+    PATH="$PATH" \
+    USER="${USER:-mae-ci}" \
+    LANG="${LANG:-C.UTF-8}" \
+    CI=1 \
+    TMPDIR="$tmp" \
+    "$@"
+}
 
 printf 'Mae %s host CI\n' "$platform"
 printf '  ref: %s\n' "$ref"
@@ -46,23 +59,26 @@ git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
 git -C "$repo" submodule update --init --recursive
 
 cd "$repo"
-# These branches do not yet commit bun.lock. --no-save keeps dependency
-# resolution entirely inside the disposable clone and does not create one.
+# Reddit does not yet commit bun.lock. Keep dependency resolution inside this
+# disposable checkout and refuse to save a generated lockfile.
 bun install --no-save
 
-# Copy legacy production state into /tmp through the branch-owned copier.
-bun run scripts/legacySnapshot.ts "$live" "$snapshot" "$common"
-bun run scripts/hostSnapshotProbe.ts "$snapshot"
+# Copy legacy production state into /tmp. No live file is opened for writing.
+run_clean bun run scripts/legacySnapshot.ts "$live" "$snapshot" "$common"
+run_clean bun run scripts/hostSnapshotProbe.ts "$snapshot"
 
-# Unit/parity/architecture checks and an actual Bun bundle build.
-bun run ci
+# Deterministic source checks, tests and a real Bun runtime bundle.
+run_clean bun run ci
 mkdir -p "$build"
-bun build ./src/main.ts --target=bun --outdir "$build"
+run_clean bun build ./src/main.ts --target=bun --outdir "$build"
 test -s "$build/main.js"
 
-# CI must not alter tracked source or submodule pins.
-git diff --exit-code -- .
-git diff --cached --exit-code -- .
+# CI must not alter source, create tracked candidates, or move submodules.
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+  echo 'Disposable CI checkout was modified by validation.' >&2
+  git status --short >&2
+  exit 1
+fi
 if git submodule status --recursive | grep -Eq '^[+-]'; then
   echo 'A submodule moved away from its pinned commit during CI.' >&2
   exit 1
