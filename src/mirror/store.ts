@@ -19,9 +19,15 @@ export type MirrorPending = {
 };
 
 export type MirrorDiscovery = Omit<MirrorPending, 'key' | 'attempts' | 'lastError'>;
+export type MirrorObservedIdentity = {
+  readonly subreddit: string;
+  readonly postId: string;
+  readonly fullname: string;
+};
 
 const maxSeen = 4000;
 const maxCompleted = 4000;
+const maxKnown = 4000;
 
 export const mirrorKey = (subreddit: string, postId: string): string =>
   `${subreddit.toLowerCase()}:${postId}`;
@@ -32,6 +38,8 @@ const initial = (): JsonMap => ({
   seen: [],
   completed: {},
   completedOrder: [],
+  known: {},
+  knownOrder: [],
   pending: {},
 });
 
@@ -111,14 +119,21 @@ const map = (value: JsonMap, key: string): JsonMap => {
 const prependBounded = (items: readonly string[], value: string, limit: number): string[] =>
   [value, ...items.filter(item => item !== value)].slice(0, limit);
 
-const trimCompleted = (state: JsonMap): void => {
-  const completed = map(state, 'completed');
-  const order = strings(state['completedOrder']).slice(0, maxCompleted);
+const trimMap = (state: JsonMap, mapKey: string, orderKey: string, limit: number): void => {
+  const values = map(state, mapKey);
+  const order = strings(state[orderKey]).slice(0, limit);
   const keep = new Set(order);
-  for (const key of Object.keys(completed)) {
-    if (!keep.has(key)) delete completed[key];
+  for (const key of Object.keys(values)) {
+    if (!keep.has(key)) delete values[key];
   }
-  state['completedOrder'] = order;
+  state[orderKey] = order;
+};
+
+const remember = (state: JsonMap, key: string, fullname: string): void => {
+  const known = map(state, 'known');
+  known[fullname] = key;
+  state['knownOrder'] = prependBounded(strings(state['knownOrder']), fullname, maxKnown);
+  trimMap(state, 'known', 'knownOrder', maxKnown);
 };
 
 export class PostMirrorStore {
@@ -132,13 +147,18 @@ export class PostMirrorStore {
     return bool(root(await this.store.read())['seeded']);
   }
 
-  public async seed(keys: readonly string[]): Promise<boolean> {
+  public async seed(items: readonly MirrorObservedIdentity[]): Promise<boolean> {
     let changed = false;
     await this.store.edit(current => {
       const value = root(current);
       if (bool(value['seeded'])) return value;
       value['seeded'] = true;
-      value['seen'] = [...new Set(keys)].slice(0, maxSeen);
+      value['seen'] = [];
+      for (const item of items) {
+        const key = mirrorKey(item.subreddit, item.postId);
+        value['seen'] = prependBounded(strings(value['seen']), key, maxSeen);
+        remember(value, key, item.fullname);
+      }
       changed = true;
       return value;
     });
@@ -157,6 +177,7 @@ export class PostMirrorStore {
 
       for (const item of items) {
         const key = mirrorKey(item.sourceSubreddit, item.sourcePostId);
+        remember(value, key, item.sourceFullname);
         if (seenSet.has(key) || typeof completed[key] === 'string' || pending(pendingMap[key]) !== null) continue;
         const next: MirrorPending = {
           ...item,
@@ -202,7 +223,12 @@ export class PostMirrorStore {
     return out;
   }
 
-  public async completePair(sourceKey: string, targetKey: string): Promise<void> {
+  public async completePair(
+    sourceKey: string,
+    sourceFullname: string,
+    targetKey: string,
+    targetFullname: string,
+  ): Promise<void> {
     await this.store.edit(current => {
       const value = root(current);
       const completed = map(value, 'completed');
@@ -217,11 +243,20 @@ export class PostMirrorStore {
       seen = prependBounded(seen, sourceKey, maxSeen);
       seen = prependBounded(seen, targetKey, maxSeen);
       value['seen'] = seen;
+      remember(value, sourceKey, sourceFullname);
+      remember(value, targetKey, targetFullname);
       delete pendingMap[sourceKey];
       delete pendingMap[targetKey];
-      trimCompleted(value);
+      trimMap(value, 'completed', 'completedOrder', maxCompleted);
       return value;
     });
+  }
+
+  public async knownKey(fullname: string): Promise<string | null> {
+    const value = root(await this.store.read());
+    const known = map(value, 'known');
+    const key = known[fullname];
+    return typeof key === 'string' && key.length > 0 ? key : null;
   }
 
   public async counterpart(key: string): Promise<string | null> {
