@@ -7,6 +7,7 @@ import {
   PAWSOME_FLAIR_TEXT,
   PAWSOME_POINTS,
   REPUTATION_FLOOR,
+  UNCIVIL_CEILING,
   chooseFlairForTier,
   chooseTierOneFlair,
   clampReputationPoints,
@@ -62,7 +63,7 @@ describe('Reddit reputation tier policy', () => {
 
   test('maps the live blank-text moderation flairs by css class onto reputation states', () => {
     expect(moderationStatus(assignment(' ', 'w'), false)).toEqual({ status: 'warned', points: -1 });
-    expect(moderationStatus(assignment(' ', 'u'), false)).toEqual({ status: 'uncivil', points: -2 });
+    expect(moderationStatus(assignment(' ', 'u'), false)).toEqual({ status: 'uncivil', points: UNCIVIL_CEILING });
     expect(moderationStatus(assignment('SCAM', 's'), true)).toEqual({ status: 'scam', points: REPUTATION_FLOOR });
     expect(moderationStatus(assignment(':mae:'), true)).toEqual({ status: 'banned', points: REPUTATION_FLOOR });
   });
