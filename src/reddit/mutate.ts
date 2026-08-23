@@ -207,6 +207,15 @@ export class RedditMutationClient {
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
   }
 
+  public async remove(fullname: string): Promise<void> {
+    const form = new URLSearchParams({
+      api_type: 'json',
+      id: fullname,
+      spam: 'false',
+    });
+    await this.form('/api/remove', form);
+  }
+
   public async banUser(
     subreddit: string,
     username: string,
