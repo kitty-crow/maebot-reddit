@@ -414,6 +414,7 @@ const desiredFor = (
     return { id: previous.currentFlairTemplateId, text: previous.currentFlairText };
   }
   if (nextTier === 0 || nextPoints <= 0) return { id: previous.currentFlairTemplateId, text: previous.currentFlairText };
+  if (nextTier === 9) throw new Error('Moderator tier cannot receive an ordinary member flair');
   if (nextTier === previous.tier && previous.desiredFlairTemplateId !== null) {
     return { id: previous.desiredFlairTemplateId, text: previous.desiredFlairText };
   }
