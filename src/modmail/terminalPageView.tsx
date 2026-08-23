@@ -1,8 +1,10 @@
 import { render2Mkup } from './web/staticUi.tsx';
 import { modmailBubbleStyles } from './web/bubbles.ts';
 import { modmailTerminalRuntime } from './web/runtime.ts';
+import { modmailTerminalScrollRuntime } from './web/scroll.ts';
 import { modmailTerminalStyles } from './web/styles.ts';
 import { modmailTerminalThemeBoot, modmailTerminalThemeRuntime } from './web/theme.ts';
+import { modmailTerminalViewportStyles } from './web/viewport.ts';
 
 const documentMarkup = render2Mkup(
   <html lang="en">
@@ -15,7 +17,7 @@ const documentMarkup = render2Mkup(
       <meta name="color-scheme" content="dark light" />
       <meta name="theme-color" content="#f7f5fb" />
       <title>Mae · Reddit Modmail</title>
-      <style dangerouslySetInnerHTML={{ __html: `${modmailTerminalStyles}\n${modmailBubbleStyles}` }} />
+      <style dangerouslySetInnerHTML={{ __html: `${modmailTerminalStyles}\n${modmailBubbleStyles}\n${modmailTerminalViewportStyles}` }} />
       <script dangerouslySetInnerHTML={{ __html: modmailTerminalThemeBoot }} />
     </head>
     <body>
@@ -85,7 +87,7 @@ const documentMarkup = render2Mkup(
           </div>
         </footer>
       </main>
-      <script dangerouslySetInnerHTML={{ __html: `${modmailTerminalThemeRuntime}\n${modmailTerminalRuntime}` }} />
+      <script dangerouslySetInnerHTML={{ __html: `${modmailTerminalThemeRuntime}\n${modmailTerminalRuntime}\n${modmailTerminalScrollRuntime}` }} />
     </body>
   </html>,
 );
