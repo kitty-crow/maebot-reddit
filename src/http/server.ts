@@ -1,5 +1,7 @@
 import type { ModerationReviewStore } from '../mod/review.ts';
+import type { ModmailReplyOutbox } from '../modmail/outbox.ts';
 import type { ModmailStore } from '../modmail/store.ts';
+import type { ModmailTerminalServer } from '../modmail/terminalServer.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
@@ -25,9 +27,34 @@ const nonNegativeInt = (value: string | null, fallback: number): number | null =
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 };
 
+const bodyMap = async (req: Request): Promise<ReturnType<typeof parseJson> | null> => {
+  try {
+    return parseJson(await req.text());
+  } catch {
+    return null;
+  }
+};
+
+const platform = (value: unknown): 'telegram' | 'discord' | null =>
+  value === 'telegram' || value === 'discord' ? value : null;
+
+const simpleKey = (value: unknown): string | null =>
+  typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value) ? value : null;
+
+const conversationId = (value: unknown): string | null =>
+  typeof value === 'string' && /^[A-Za-z0-9]+$/u.test(value) ? value : null;
+
+const nonEmptyText = (value: unknown, max: number): string | null => {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length > 0 && text.length <= max ? text : null;
+};
+
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
+  private modmailReplies: ModmailReplyOutbox | null = null;
+  private modmailTerminal: ModmailTerminalServer | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -36,9 +63,15 @@ export class RedditInternalHttpServer {
     private readonly logger: RedditInternalHttpLogger = defaultLogger,
   ) {}
 
-  public useModmail(store: ModmailStore): void {
-    if (this.server !== null) throw new Error('Modmail store must be attached before the Reddit internal API starts');
+  public useModmail(
+    store: ModmailStore,
+    replies: ModmailReplyOutbox,
+    terminal: ModmailTerminalServer | null,
+  ): void {
+    if (this.server !== null) throw new Error('Modmail services must be attached before the Reddit internal API starts');
     this.modmail = store;
+    this.modmailReplies = replies;
+    this.modmailTerminal = terminal;
   }
 
   public start(): void {
@@ -70,6 +103,56 @@ export class RedditInternalHttpServer {
     const suffix = detail.length === 0 ? '' : ` ${detail}`;
     this.logger(`[Reddit internal API] ${new Date().toISOString()} ${req.method} ${url.pathname} -> ${response.status}${suffix}`);
     return response;
+  }
+
+  private async reply(req: Request, url: URL): Promise<Response> {
+    if (this.modmail === null || this.modmailReplies === null) {
+      return this.record(req, url, json({ error: 'modmail unavailable' }, 503));
+    }
+    const raw = await bodyMap(req);
+    if (!isMap(raw)) return this.record(req, url, json({ error: 'invalid reply body' }, 400));
+    const key = simpleKey(raw['key']);
+    const id = conversationId(raw['conversationId']);
+    const source = platform(raw['platform']);
+    const userId = nonEmptyText(raw['userId'], 128);
+    const handle = nonEmptyText(raw['handle'], 128);
+    const text = nonEmptyText(raw['text'], 10_000);
+    if (key === null || id === null || source === null || userId === null || handle === null || text === null) {
+      return this.record(req, url, json({ error: 'invalid reply body' }, 400));
+    }
+    const conversation = await this.modmail.conversation(id);
+    if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
+    if (conversation.state === 'archived') return this.record(req, url, json({ error: 'conversation archived' }, 409));
+    const queued = await this.modmailReplies.queue({
+      key,
+      conversationId: id,
+      moderator: { platform: source, userId, handle },
+      text,
+    });
+    return this.record(req, url, json({ queued: true, reply: queued }, 202), `conversation=${id} key=${key}`);
+  }
+
+  private async terminal(req: Request, url: URL): Promise<Response> {
+    if (this.modmailTerminal === null) {
+      return this.record(req, url, json({ error: 'focused modmail terminal unavailable' }, 503));
+    }
+    const raw = await bodyMap(req);
+    if (!isMap(raw)) return this.record(req, url, json({ error: 'invalid terminal request' }, 400));
+    const id = conversationId(raw['conversationId']);
+    const source = platform(raw['platform']);
+    const userId = nonEmptyText(raw['userId'], 128);
+    const handle = nonEmptyText(raw['handle'], 128);
+    if (id === null || source === null || userId === null || handle === null) {
+      return this.record(req, url, json({ error: 'invalid terminal request' }, 400));
+    }
+    try {
+      const link = await this.modmailTerminal.issue(id, { platform: source, userId, handle });
+      return this.record(req, url, json(link, 201), `conversation=${id} platform=${source}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'terminal unavailable';
+      const status = message.includes('Unknown modmail conversation') ? 404 : message.includes('archived') ? 409 : 400;
+      return this.record(req, url, json({ error: message }, status), `conversation=${id}`);
+    }
   }
 
   private async route(req: Request): Promise<Response> {
@@ -109,29 +192,32 @@ export class RedditInternalHttpServer {
       return this.record(req, url, json({ conversation }), `conversation=${id} messages=${conversation.messages.length}`);
     }
 
+    if (req.method === 'POST' && url.pathname === '/v1/modmail/replies') return await this.reply(req, url);
+    if (req.method === 'POST' && url.pathname === '/v1/modmail/terminal-sessions') return await this.terminal(req, url);
+
     if (req.method === 'GET' && url.pathname === '/v1/moderation/reviews/pending') {
       const reviews = await this.moderation.pending();
       return this.record(req, url, json({ reviews }), `reviews=${reviews.length}`);
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/moderation/reviews/decision') {
-      const body = parseJson(await req.text());
+      const body = await bodyMap(req);
       if (!isMap(body)) return this.record(req, url, json({ error: 'invalid decision body' }, 400));
       const key = body['key'];
       const choice = body['choice'];
-      const platform = body['platform'];
+      const source = body['platform'];
       const userId = body['userId'];
       const userName = body['userName'];
       const at = body['at'];
       if (
         typeof key !== 'string' || key.length === 0
         || (choice !== 'approve' && choice !== 'reject')
-        || (platform !== 'telegram' && platform !== 'discord')
+        || (source !== 'telegram' && source !== 'discord')
         || typeof userId !== 'string' || userId.length === 0
         || typeof userName !== 'string'
         || typeof at !== 'number' || !Number.isSafeInteger(at) || at < 0
       ) return this.record(req, url, json({ error: 'invalid decision body' }, 400));
-      const claim = await this.moderation.decide(key, { choice, platform, userId, userName, at });
+      const claim = await this.moderation.decide(key, { choice, platform: source, userId, userName, at });
       if (claim === null) return this.record(req, url, json({ error: 'review not found' }, 404), `review=${key}`);
       return this.record(req, url, json(claim), `review=${key} choice=${claim.review.decision?.choice ?? 'none'} won=${claim.won}`);
     }
