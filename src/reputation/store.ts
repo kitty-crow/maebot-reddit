@@ -53,6 +53,8 @@ const initial = (): JsonMap => ({
   bootstrappedAt: 0,
   flairCatalog: { user: [], post: [] },
   users: {},
+  contributions: {},
+  reputationJournal: {},
   coverage: {},
 });
 
