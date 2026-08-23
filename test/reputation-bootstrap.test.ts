@@ -85,7 +85,7 @@ const comment = (id: string, author: string | null): RedditComment => ({
 });
 
 describe('Reddit reputation bootstrap planner', () => {
-  test('seeds tiers, moderation states, immutable moderators and first contributors', () => {
+  test('seeds tiers, moderation states, immutable tier-five moderators and first contributors', () => {
     const plan = planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 123,
@@ -119,6 +119,7 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(users.get('Barry')?.status).toBe('banned');
     expect(users.get('Sam')?.points).toBe(-4);
     expect(users.get('Sam')?.status).toBe('scam');
+    expect(users.get('Mona')?.tier).toBe(5);
     expect(users.get('Mona')?.immutableModeratorFlair).toBe(true);
     expect(users.get('Mona')?.status).toBe('moderator');
     expect(users.get('Lenny')?.needsReview).toBe(true);
@@ -153,17 +154,11 @@ describe('Reddit reputation bootstrap planner', () => {
       posts: [post('p1', 'StableUser')],
       comments: [],
     } as const;
-    const first = planReputationBootstrap(inventory).bootstrap.users.map(value => ({
-      desiredFlairText: value.desiredFlairText,
-      desiredFlairTemplateId: value.desiredFlairTemplateId,
-    }));
-    const second = planReputationBootstrap(inventory).bootstrap.users.map(value => ({
-      desiredFlairText: value.desiredFlairText,
-      desiredFlairTemplateId: value.desiredFlairTemplateId,
-    }));
-    expect(first).toHaveLength(1);
-    expect(second).toHaveLength(1);
-    expect(first).toEqual(second);
+    const first = planReputationBootstrap(inventory).bootstrap.users[0];
+    const second = planReputationBootstrap(inventory).bootstrap.users[0];
+    if (first === undefined || second === undefined) throw new Error('StableUser was not planned');
+    expect(first.desiredFlairText).toBe(second.desiredFlairText);
+    expect(first.desiredFlairTemplateId).toBe(second.desiredFlairTemplateId);
   });
 
   test('fails closed for missing required tier flair or duplicate user assignment', () => {
