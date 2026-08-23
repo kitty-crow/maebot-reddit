@@ -1,14 +1,27 @@
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 
-export type ReputationTier = 0 | 1 | 2 | 3 | 4 | 5;
+export const REPUTATION_CEILING = 999_999_999;
+export const REPUTATION_FLOOR = -999_999_999;
+export const PAWSOME_POINTS = 9_999;
+export const MODERATOR_POINTS = REPUTATION_CEILING;
+
+export type ReputationTier = 0 | 1 | 2 | 3 | 4 | 5 | 9;
 export type ReputationStatus = 'ordinary' | 'warned' | 'uncivil' | 'banned' | 'scam' | 'moderator' | 'unmapped';
-export type OrdinaryTier = 1 | 2 | 3 | 4;
-export type TierFlairText = ':mae:' | ':lisa:' | ':kita:' | ':aoi:' | ':hana:' | ':rin:' | ':celeste:';
+export type OrdinaryTier = 1 | 2 | 3 | 4 | 5;
+export type TierFlairText =
+  | ':mae:'
+  | ':lisa:'
+  | ':kita:'
+  | ':aoi:'
+  | ':hana:'
+  | ':rin:'
+  | ':celeste:'
+  | 'Pawsome Contributor';
 
 export type TierFlair = {
   readonly tier: OrdinaryTier;
   readonly text: TierFlairText;
-  readonly seedPoints: 1 | 10 | 100 | 1000;
+  readonly seedPoints: 1 | 10 | 100 | 1000 | 9999;
 };
 
 export const TIER_FLAIRS: readonly TierFlair[] = [
@@ -19,21 +32,28 @@ export const TIER_FLAIRS: readonly TierFlair[] = [
   { tier: 3, text: ':hana:', seedPoints: 100 },
   { tier: 3, text: ':rin:', seedPoints: 100 },
   { tier: 4, text: ':celeste:', seedPoints: 1000 },
+  { tier: 5, text: 'Pawsome Contributor', seedPoints: PAWSOME_POINTS },
 ] as const;
 
 const normalise = (value: string | null): string => value?.trim().toLowerCase() ?? '';
+
+export const clampReputationPoints = (points: number): number => {
+  if (!Number.isSafeInteger(points)) throw new Error('Reputation points must be a safe integer');
+  return Math.max(REPUTATION_FLOOR, Math.min(REPUTATION_CEILING, points));
+};
 
 export const tierForPoints = (points: number): ReputationTier => {
   if (!Number.isSafeInteger(points) || points <= 0) return 0;
   if (points <= 9) return 1;
   if (points <= 99) return 2;
   if (points <= 999) return 3;
-  return 4;
+  if (points < PAWSOME_POINTS) return 4;
+  return 5;
 };
 
 export const tierFlair = (assignment: RedditFlairAssignment): TierFlair | null => {
   const text = normalise(assignment.text);
-  return TIER_FLAIRS.find(value => value.text === text) ?? null;
+  return TIER_FLAIRS.find(value => normalise(value.text) === text) ?? null;
 };
 
 export const moderationStatus = (
@@ -44,9 +64,9 @@ export const moderationStatus = (
   const css = normalise(assignment.cssClass);
 
   if (text === 'scam' || text.includes('scam') || css === 's') {
-    return { status: 'scam', points: -4 };
+    return { status: 'scam', points: REPUTATION_FLOOR };
   }
-  if (redditBanned) return { status: 'banned', points: -3 };
+  if (redditBanned) return { status: 'banned', points: REPUTATION_FLOOR };
   if (text === 'uncivil' || text.includes('uncivil') || css === 'u') {
     return { status: 'uncivil', points: -2 };
   }
@@ -60,6 +80,7 @@ export const chooseFlairForTier = (
   tier: OrdinaryTier,
   random: () => number = Math.random,
 ): TierFlairText => {
+  if (tier === 5) return 'Pawsome Contributor';
   const roll = random();
   if (!Number.isFinite(roll) || roll < 0 || roll >= 1) throw new Error('Reputation flair random source must return [0, 1)');
   if (tier === 1) return roll < 0.01 ? ':lisa:' : ':mae:';
