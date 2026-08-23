@@ -41,6 +41,8 @@ const post = (
   locked: false,
   over18: false,
   crosspostParent: options.crosspostParent ?? null,
+  score: 0,
+  mediaUrls: [],
 });
 
 describe('sticky post migration', () => {
