@@ -5,6 +5,7 @@ export const PAWSOME_POINTS = 9_999;
 export const MEMBER_REPUTATION_CEILING = PAWSOME_POINTS;
 export const MODERATOR_REPUTATION_CEILING = 999_999_999;
 export const MODERATOR_POINTS = MODERATOR_REPUTATION_CEILING;
+export const PAWSOME_FLAIR_TEXT = 'Pawsome contributor :catgirl-moon:';
 
 export type ReputationTier = 0 | 1 | 2 | 3 | 4 | 5 | 9;
 export type ReputationStatus = 'ordinary' | 'warned' | 'uncivil' | 'banned' | 'scam' | 'moderator' | 'unmapped';
@@ -17,7 +18,7 @@ export type TierFlairText =
   | ':hana:'
   | ':rin:'
   | ':celeste:'
-  | 'Pawsome Contributor';
+  | typeof PAWSOME_FLAIR_TEXT;
 
 export type TierFlair = {
   readonly tier: OrdinaryTier;
@@ -33,7 +34,7 @@ export const TIER_FLAIRS: readonly TierFlair[] = [
   { tier: 3, text: ':hana:', seedPoints: 100 },
   { tier: 3, text: ':rin:', seedPoints: 100 },
   { tier: 4, text: ':celeste:', seedPoints: 1000 },
-  { tier: 5, text: 'Pawsome Contributor', seedPoints: PAWSOME_POINTS },
+  { tier: 5, text: PAWSOME_FLAIR_TEXT, seedPoints: PAWSOME_POINTS },
 ] as const;
 
 const normalise = (value: string | null): string => value?.trim().toLowerCase() ?? '';
@@ -82,7 +83,7 @@ export const chooseFlairForTier = (
   tier: OrdinaryTier,
   random: () => number = Math.random,
 ): TierFlairText => {
-  if (tier === 5) return 'Pawsome Contributor';
+  if (tier === 5) return PAWSOME_FLAIR_TEXT;
   const roll = random();
   if (!Number.isFinite(roll) || roll < 0 || roll >= 1) throw new Error('Reputation flair random source must return [0, 1)');
   if (tier === 1) return roll < 0.01 ? ':lisa:' : ':mae:';
