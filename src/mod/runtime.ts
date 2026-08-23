@@ -1,4 +1,5 @@
 import type { RedditModerationCfg } from '../env.ts';
+import { scoreInventoryFullnames } from '../reputation/inventory.ts';
 import { ReputationStore, type ReputationContributionKind } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
@@ -11,7 +12,7 @@ import {
 } from './classifier.ts';
 import { moderationExemption, moderatorSet } from './exemption.ts';
 
-export type ModerationReader = Pick<RedditReadClient, 'me' | 'moderators' | 'newPosts' | 'newComments'>;
+export type ModerationReader = Pick<RedditReadClient, 'me' | 'moderators' | 'newPosts' | 'newComments' | 'scores'>;
 export type ModerationWriter = Pick<RedditMutationClient, 'setUserFlairTemplate' | 'remove' | 'banUser'>;
 
 export type RedditModerationTick = {
@@ -75,6 +76,7 @@ export class RedditModerationRuntime {
   private readonly classifier: ModerationClassifier;
   private privilegeCache: Privileges | null = null;
   private privilegeUntil = 0;
+  private scoreCursor = 0;
 
   public constructor(
     private readonly subreddit: string,
@@ -128,6 +130,31 @@ export class RedditModerationRuntime {
       moderatedAt: Math.floor(Date.now() / 1_000),
     });
     return 'audited';
+  }
+
+  private nextScoreBatch(fullnames: readonly string[]): readonly string[] {
+    if (fullnames.length === 0) return [];
+    const size = Math.min(this.cfg.scoreBatchSize, fullnames.length);
+    const start = this.scoreCursor % fullnames.length;
+    const out: string[] = [];
+    for (let offset = 0; offset < size; offset += 1) {
+      const index = (start + offset) % fullnames.length;
+      const fullname = fullnames[index];
+      if (fullname !== undefined) out.push(fullname);
+    }
+    this.scoreCursor = (start + size) % fullnames.length;
+    return out;
+  }
+
+  private async sampleScores(): Promise<number> {
+    const inventory = scoreInventoryFullnames(await this.reputation.raw());
+    const batch = this.nextScoreBatch(inventory);
+    if (batch.length === 0) return 0;
+    const values = await this.reader.scores(batch);
+    const at = Math.floor(Date.now() / 1_000);
+    let credited = 0;
+    for (const value of values) credited += await this.reputation.observeScore(value.fullname, value.score, at);
+    return credited;
   }
 
   private async applyEffects(): Promise<{ readonly applied: number; readonly failed: number }> {
@@ -191,26 +218,26 @@ export class RedditModerationRuntime {
 
     let audited = 0;
     let exempt = 0;
-    let scoreCredits = 0;
     let failed = 0;
     for (const item of items) {
       try {
-        const existed = await this.reputation.hasContribution(item.fullname);
         const result = await this.process(item, privileges);
         if (result === 'audited') audited += 1;
         if (result === 'exempt') exempt += 1;
-        if (existed) {
-          scoreCredits += await this.reputation.observeScore(
-            item.fullname,
-            item.score,
-            Math.floor(Date.now() / 1_000),
-          );
-        }
       } catch (error) {
         failed += 1;
         console.error(`[Reddit moderation] ${item.fullname} failed: ${safeError(error)}`);
       }
     }
+
+    let scoreCredits = 0;
+    try {
+      scoreCredits = await this.sampleScores();
+    } catch (error) {
+      failed += 1;
+      console.error(`[Reddit reputation] score inventory sampling failed: ${safeError(error)}`);
+    }
+
     const effects = await this.applyEffects();
     return {
       discovered: items.length,
