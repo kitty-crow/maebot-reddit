@@ -17,7 +17,7 @@ import {
   type ModerationClassifier,
   type ModerationItem,
 } from './classifier.ts';
-import { moderationExemption, moderatorSet } from './exemption.ts';
+import { ModerationPrivileges, type ModerationPrivilegeSource } from './privileges.ts';
 import type { ModerationReviewStore } from './review.ts';
 
 export type ModerationReader = Pick<
@@ -50,11 +50,6 @@ type RuntimeItem = {
   readonly permalink: string;
   readonly content: string;
   readonly moderation: ModerationItem;
-};
-
-type Privileges = {
-  readonly botUsername: string;
-  readonly moderators: ReadonlySet<string>;
 };
 
 const postContent = (post: RedditPost): string =>
@@ -105,8 +100,7 @@ const voteReviewKey = (value: ReputationVoteSuspicion): string =>
 
 export class RedditModerationRuntime {
   private readonly classifier: ModerationClassifier;
-  private privilegeCache: Privileges | null = null;
-  private privilegeUntil = 0;
+  private readonly privileges: ModerationPrivilegeSource;
   private scoreCursor = 0;
   private nextFlairReconcileAt = 0;
 
@@ -118,29 +112,16 @@ export class RedditModerationRuntime {
     private readonly reputation: ReputationStore,
     classifier: ModerationClassifier | null = null,
     private readonly reviews: ModerationReviewStore | null = null,
+    privileges: ModerationPrivilegeSource | null = null,
   ) {
     this.classifier = classifier ?? new RedditModerationClassifier(cfg.ai);
+    this.privileges = privileges ?? new ModerationPrivileges(subreddit, reader);
   }
 
-  private async privileges(): Promise<Privileges> {
-    const now = Date.now();
-    if (this.privilegeCache !== null && now < this.privilegeUntil) return this.privilegeCache;
-    const [me, moderators] = await Promise.all([
-      this.reader.me(),
-      this.reader.moderators(this.subreddit),
-    ]);
-    this.privilegeCache = {
-      botUsername: me.name,
-      moderators: moderatorSet(moderators.map(value => value.name)),
-    };
-    this.privilegeUntil = now + 5 * 60_000;
-    return this.privilegeCache;
-  }
-
-  private async process(item: RuntimeItem, privileges: Privileges): Promise<'audited' | 'exempt' | 'seen'> {
+  private async process(item: RuntimeItem): Promise<'audited' | 'exempt' | 'seen'> {
     if (await this.reputation.hasContribution(item.fullname)) return 'seen';
     if (item.author === null) return 'seen';
-    const exemption = moderationExemption(item.author, privileges.botUsername, privileges.moderators);
+    const exemption = await this.privileges.exemption(item.author);
     if (exemption !== null) {
       await this.reputation.recordExempt(
         item.fullname,
@@ -341,7 +322,6 @@ export class RedditModerationRuntime {
     if (!(await this.reputation.hasBootstrap())) {
       throw new Error(`Reddit moderation requires a bootstrapped reputation store at ${this.cfg.stateFile}`);
     }
-    const privileges = await this.privileges();
     const [posts, comments] = await Promise.all([
       this.reader.newPosts(this.subreddit, this.cfg.batchSize),
       this.reader.newComments(this.subreddit, this.cfg.batchSize),
@@ -354,7 +334,7 @@ export class RedditModerationRuntime {
     let failed = 0;
     for (const item of items) {
       try {
-        const result = await this.process(item, privileges);
+        const result = await this.process(item);
         if (result === 'audited') audited += 1;
         if (result === 'exempt') exempt += 1;
       } catch (error) {
