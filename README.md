@@ -1,6 +1,6 @@
 # Mae Reddit
 
-Mae's Reddit service owns Reddit credentials, Reddit API access, Reddit-specific durable state, moderation actions, subreddit migrations, Modmail transport, private moderation context, and Twitter-to-Reddit presentation.
+Mae's Reddit service owns Reddit credentials, Reddit API access, Reddit-specific durable state, moderation actions, subreddit migrations, Modmail transport, direct-message handling, private moderation context, and Twitter-to-Reddit presentation.
 
 The active implementation is TypeScript/Bun under `src/`. The retired Python implementation has been moved to `deprecated/legacy-python/` and is preserved only for historical parity checks, migration evidence, and incident archaeology. It must not be launched by production supervisors, shell launchers, cron jobs, or service definitions.
 
@@ -18,12 +18,54 @@ The TypeScript runtime includes:
 - live moderator exemption before public or private OpenAI moderation calls;
 - private Modmail semantic moderation with persistent OpenAI-schema conversation context;
 - transport-only Reddit Modmail synchronisation and crash-safe attributed moderator reply outbox;
-- focused Modmail web terminal and authenticated internal consumer APIs;
+- Discord and Telegram ordinary Modmail presentation through the authenticated Reddit-owned internal API;
+- focused Modmail web terminal with a synthetic read-only preview on loopback port `8892`;
+- direct Reddit-message ingestion with a durable first-activation boundary, private semantic moderation, separate persistent Mae conversation context and duplicate-safe delivery recovery;
 - cross-platform moderation-review state with first-authorised-moderator-wins semantics;
 - Twitter fanout and subreddit presentation integration;
 - explicit migration and compatibility tooling for historical state.
 
-Reddit DMs and the remaining ordinary Telegram Modmail presentation work are separate incomplete surfaces and should not be confused with the completed Modmail transport and formal-review foundations.
+These are feature-branch capabilities. They are not considered production-complete until exact-head CI, configuration, deployment and live end-to-end validation have all succeeded.
+
+## Private surfaces
+
+Reddit Modmail and direct messages deliberately have different ownership rules.
+
+### Modmail
+
+- Reddit owns the canonical Modmail conversation and all Reddit mutations.
+- Participant messages are semantically audited with durable private context.
+- Mae does **not** generate ordinary conversational Modmail replies.
+- Human moderators reply through Reddit, Discord, Telegram or a focused terminal.
+- Discord/Telegram replies are attributed to the human moderator and queued through one durable Reddit outbox.
+- Initial adapter activation skips existing relay history instead of flooding moderator channels.
+- Platform-origin metadata suppresses only proven self-echoes.
+
+The focused terminal is loopback-bound by default at:
+
+```text
+http://127.0.0.1:8892/
+```
+
+Its synthetic, read-only preview is available at:
+
+```text
+http://127.0.0.1:8892/preview/
+```
+
+No Reddit Modmail conversation is required for the preview. It cannot queue replies. A real short-lived moderator terminal link additionally requires `REDDIT_MODMAIL_WEBAPP_BASE` to point at the HTTPS URL supplied by the deployment reverse proxy.
+
+### Direct messages
+
+- Historic incoming DMs are recorded on first activation and never answered retroactively.
+- New incoming DMs use structured private semantic moderation before reputation mutation.
+- Clean private messages award zero reputation points.
+- Genuine private violations deduct from the same canonical reputation state as public moderation.
+- A genuine constructive apology may clear the current temporary communication mute, but never restores reputation or a permanent restriction.
+- Canonical moderators and Mae herself are exempt from semantic/reputation mutation before the LLM boundary.
+- Moderation and Mae's conversational reply use **separate** managed OpenAI conversation IDs per DM thread.
+- Mae's generated reply is persisted before Reddit delivery is attempted.
+- If the process crashes after a reply attempt, Mae checks Reddit's sent mailbox for the exact parent message and persisted body before treating it as delivered. An uncertain delivery is blocked rather than blindly resent.
 
 ## Ownership
 
@@ -33,7 +75,7 @@ Reddit DMs and the remaining ordinary Telegram Modmail presentation work are sep
 - Discord and Telegram are presentation and moderator-control adapters, not canonical Reddit stores.
 - Reddit must not open Twitter or Telegram canonical stores.
 - Human moderators may reply to Reddit Modmail through approved adapters, but Mae does not generate ordinary conversational Modmail replies.
-- Direct Reddit DMs are the private surface where Mae may eventually converse as Mae, while still applying semantic moderation and durable context.
+- Direct Reddit DMs are the private surface where Mae may converse as Mae after the private moderation boundary.
 
 See `docs/architecture.md`, `docs/legacy-parity.md`, `docs/state-migration.md`, `docs/flair-migration.md`, `docs/reputation-bootstrap.md` and `docs/twitter-bridge.md` for engineering contracts and migration history.
 
@@ -100,4 +142,4 @@ For host validation use `scripts/hostCi.sh`. It creates a disposable clone and d
 
 ## Production status
 
-This feature branch is still a release candidate, not an instruction to deploy. Exact-head host CI, controlled live integration checks, final bootstrap/state validation, and explicit approval are required before merge or production promotion.
+This feature branch is still a release candidate, not an instruction to deploy. Exact-head host CI, controlled live integration checks, final state validation, and explicit approval are required before merge or production promotion.
