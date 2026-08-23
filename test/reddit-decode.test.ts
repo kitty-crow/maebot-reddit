@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { flairAssignments, flairTemplates, moderators, relationshipUsers, rules } from '../src/reddit/decode.ts';
+import { comments, flairAssignments, flairTemplates, moderators, posts, relationshipUsers, rules } from '../src/reddit/decode.ts';
 
 describe('Reddit API decoders', () => {
   test('decodes wrapped moderator listings', () => {
@@ -83,5 +83,79 @@ describe('Reddit API decoders', () => {
     });
     expect(value.rules[0]?.shortName).toBe('Be civil');
     expect(value.siteRules).toEqual(['Spam']);
+  });
+
+  test('decodes post score and image metadata for reputation and visual moderation', () => {
+    const page = posts({
+      kind: 'Listing',
+      data: {
+        after: null,
+        children: [{
+          kind: 't3',
+          data: {
+            id: 'post1',
+            name: 't3_post1',
+            subreddit: 'catgirlcoin',
+            title: 'Roadmap reaction',
+            author: 'member',
+            permalink: '/r/catgirlcoin/comments/post1/roadmap/',
+            created_utc: 123,
+            selftext: 'new road map too',
+            url: 'https://i.redd.it/dead-end.gif',
+            link_flair_template_id: null,
+            link_flair_text: null,
+            stickied: false,
+            locked: false,
+            over_18: false,
+            crosspost_parent: null,
+            score: 17,
+            preview: {
+              images: [{ source: { url: 'https://preview.redd.it/dead-end.jpg?x=1&amp;y=2' } }],
+            },
+          },
+        }],
+      },
+    });
+    expect(page.items[0]?.score).toBe(17);
+    expect(page.items[0]?.mediaUrls).toContain('https://i.redd.it/dead-end.gif');
+    expect(page.items[0]?.mediaUrls).toContain('https://preview.redd.it/dead-end.jpg?x=1&y=2');
+  });
+
+  test('decodes comment score and embedded GIF metadata', () => {
+    const page = comments({
+      kind: 'Listing',
+      data: {
+        after: null,
+        children: [{
+          kind: 't1',
+          data: {
+            id: 'comment1',
+            name: 't1_comment1',
+            subreddit: 'catgirlcoin',
+            link_id: 't3_parent',
+            author: 'member',
+            body: '![gif](giphy|deadend)',
+            permalink: '/r/catgirlcoin/comments/parent/post/comment1/',
+            created_utc: 124,
+            distinguished: null,
+            stickied: false,
+            removed_by_category: null,
+            score: 4,
+            media_metadata: {
+              gif1: {
+                e: 'AnimatedImage',
+                s: {
+                  gif: 'https://preview.redd.it/dead-end.gif?width=320&amp;format=mp4',
+                  u: 'https://preview.redd.it/dead-end.png?width=320&amp;format=png',
+                },
+              },
+            },
+          },
+        }],
+      },
+    });
+    expect(page.items[0]?.score).toBe(4);
+    expect(page.items[0]?.mediaUrls).toContain('https://preview.redd.it/dead-end.gif?width=320&format=mp4');
+    expect(page.items[0]?.mediaUrls).toContain('https://preview.redd.it/dead-end.png?width=320&format=png');
   });
 });
