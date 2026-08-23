@@ -52,10 +52,19 @@ export type ModerationClassifier = {
   classify(item: ModerationItem): Promise<ModerationClassification>;
 };
 
+export type ConversationModerationClassifier = ModerationClassifier & {
+  readonly conversationId: string | undefined;
+};
+
 export type ModerationAiCfg = {
   readonly key: string;
   readonly model: string;
   readonly effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+};
+
+export type ModerationClassifierOptions = {
+  readonly conversation?: boolean;
+  readonly conversationId?: string;
 };
 
 const classificationShape = shape<ModerationClassification>('MaeRedditModeration', object({
@@ -160,11 +169,23 @@ const checked = (value: ModerationClassification): ModerationClassification => {
   };
 };
 
-export class RedditModerationClassifier implements ModerationClassifier {
+export class RedditModerationClassifier implements ConversationModerationClassifier {
   private readonly api: OpenAISchema<ModerationClassification>;
 
-  public constructor(private readonly cfg: ModerationAiCfg) {
-    this.api = openaiSchema<ModerationClassification>(cfg.key, classificationShape, null, { conversation: false });
+  public constructor(
+    private readonly cfg: ModerationAiCfg,
+    options: ModerationClassifierOptions = {},
+  ) {
+    this.api = openaiSchema<ModerationClassification>(
+      cfg.key,
+      classificationShape,
+      options.conversationId,
+      { conversation: options.conversation ?? false },
+    );
+  }
+
+  public get conversationId(): string | undefined {
+    return this.api.id;
   }
 
   public async classify(item: ModerationItem): Promise<ModerationClassification> {
