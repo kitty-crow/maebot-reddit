@@ -1,8 +1,8 @@
 import type { RedditModerationCfg } from '../env.ts';
 import { ReputationStore, type ReputationContributionKind } from '../reputation/store.ts';
-import { RedditReadClient } from '../reddit/client.ts';
+import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
-import { RedditMutationClient } from '../reddit/mutate.ts';
+import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditComment, RedditPost } from '../reddit/types.ts';
 import {
   RedditModerationClassifier,
@@ -10,6 +10,9 @@ import {
   type ModerationItem,
 } from './classifier.ts';
 import { moderationExemption, moderatorSet } from './exemption.ts';
+
+export type ModerationReader = Pick<RedditReadClient, 'me' | 'moderators' | 'newPosts' | 'newComments'>;
+export type ModerationWriter = Pick<RedditMutationClient, 'setUserFlairTemplate' | 'remove' | 'banUser'>;
 
 export type RedditModerationTick = {
   readonly discovered: number;
@@ -76,8 +79,8 @@ export class RedditModerationRuntime {
   public constructor(
     private readonly subreddit: string,
     private readonly cfg: RedditModerationCfg,
-    private readonly reader: RedditReadClient,
-    private readonly writer: RedditMutationClient,
+    private readonly reader: ModerationReader,
+    private readonly writer: ModerationWriter,
     private readonly reputation: ReputationStore,
     classifier: ModerationClassifier | null = null,
   ) {
