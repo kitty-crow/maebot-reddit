@@ -104,14 +104,61 @@ const fixture = async (): Promise<{ relay: ModmailStore; audit: ModmailAuditStor
   };
 };
 
+const fakeReputation = (onClear: () => void = () => undefined): PrivateModerationReputation => {
+  const contributions = new Set<string>();
+  return {
+    user: async () => uncivilUser,
+    hasContribution: async fullname => contributions.has(fullname),
+    applyModeration: async input => {
+      contributions.add(input.fullname);
+      return uncivilUser;
+    },
+    clearMuteForConstructiveResolution: async () => {
+      onClear();
+      return true;
+    },
+    raw: async (): Promise<Json> => ({
+      users: { someuser: { points: -4, status: 'uncivil' } },
+      reputationJournal: {},
+    }),
+  };
+};
+
 describe('private modmail moderation runtime', () => {
-  test('audits only participant messages, persists the OpenAI conversation id, and clears a temporary mute on a genuine apology', async () => {
+  test('existing relay history becomes context but is not retroactively moderated when private auditing is first enabled', async () => {
     const { relay, audit } = await fixture();
-    const first = message('m1', 'initial message', 100);
+    const first = message('m1', 'historic participant message', 100);
     await relay.sync([conversation([first])], 100);
-    const modReply = message('m2', 'Please explain what happened.', 150, moderator);
-    const apology = message('m3', 'I was wrong. I should not have spoken like that.', 200);
-    await relay.sync([conversation([first, modReply, apology])], 200);
+    const second = message('m2', 'historic follow-up', 150);
+    await relay.sync([conversation([first, second])], 150);
+
+    let classifications = 0;
+    const runtime = new PrivateModmailRuntime(
+      { key: 'test', model: 'test', effort: 'low' },
+      relay,
+      audit,
+      fakeReputation(),
+      () => ({
+        conversationId: 'should-not-be-created',
+        classify: async () => {
+          classifications += 1;
+          return clean;
+        },
+      }),
+      { classify: async () => ({ genuineApology: false, reason: 'no' }) },
+    );
+
+    expect(await runtime.bootstrap()).toBe(1);
+    expect(await audit.hasBootstrap()).toBe(true);
+    expect(await audit.cursor()).toBe(1);
+    expect(classifications).toBe(0);
+    expect(await runtime.bootstrap()).toBe(0);
+  });
+
+  test('audits only new participant messages, persists the OpenAI conversation id, and clears a temporary mute on a genuine apology', async () => {
+    const { relay, audit } = await fixture();
+    const first = message('m1', 'initial historic message', 100);
+    await relay.sync([conversation([first])], 100);
 
     const classified: ModerationItem[] = [];
     const classifiers: Array<string | undefined> = [];
@@ -126,28 +173,11 @@ describe('private modmail moderation runtime', () => {
       };
     };
 
-    const contributions = new Set<string>();
     let muteClears = 0;
-    const reputation: PrivateModerationReputation = {
-      user: async () => uncivilUser,
-      hasContribution: async fullname => contributions.has(fullname),
-      applyModeration: async input => {
-        contributions.add(input.fullname);
-        return uncivilUser;
-      },
-      clearMuteForConstructiveResolution: async () => {
-        muteClears += 1;
-        return true;
-      },
-      raw: async (): Promise<Json> => ({
-        users: { someuser: { points: -4, status: 'uncivil' } },
-        reputationJournal: {},
-      }),
-    };
+    const reputation = fakeReputation(() => { muteClears += 1; });
     const resolution: PrivateResolutionClassifier = {
       classify: async () => ({ genuineApology: true, reason: 'sincere acknowledgement' }),
     };
-
     const runtime = new PrivateModmailRuntime(
       { key: 'test', model: 'test', effort: 'low' },
       relay,
@@ -156,6 +186,11 @@ describe('private modmail moderation runtime', () => {
       classifierFactory,
       resolution,
     );
+    expect(await runtime.bootstrap()).toBe(0);
+
+    const modReply = message('m2', 'Please explain what happened.', 150, moderator);
+    const apology = message('m3', 'I was wrong. I should not have spoken like that.', 200);
+    await relay.sync([conversation([first, modReply, apology])], 200);
     const result = await runtime.tick();
 
     expect(result).toEqual({ inspected: 2, audited: 1, apologies: 1, skipped: 1, failed: 0 });
@@ -175,33 +210,23 @@ describe('private modmail moderation runtime', () => {
 
   test('a failed participant audit does not advance past the failed event', async () => {
     const { relay, audit } = await fixture();
-    const first = message('m1', 'initial message', 100);
+    const first = message('m1', 'initial historic message', 100);
     await relay.sync([conversation([first])], 100);
-    const second = message('m2', 'new participant message', 200);
-    await relay.sync([conversation([first, second])], 200);
-
-    const reputation: PrivateModerationReputation = {
-      user: async () => uncivilUser,
-      hasContribution: async () => false,
-      applyModeration: async () => uncivilUser,
-      clearMuteForConstructiveResolution: async () => false,
-      raw: async (): Promise<Json> => ({
-        users: { someuser: { points: -4, status: 'uncivil' } },
-        reputationJournal: {},
-      }),
-    };
     const runtime = new PrivateModmailRuntime(
       { key: 'test', model: 'test', effort: 'low' },
       relay,
       audit,
-      reputation,
+      fakeReputation(),
       () => ({
         conversationId: undefined,
         classify: async () => { throw new Error('classifier unavailable'); },
       }),
       { classify: async () => ({ genuineApology: false, reason: 'no' }) },
     );
+    await runtime.bootstrap();
 
+    const second = message('m2', 'new participant message', 200);
+    await relay.sync([conversation([first, second])], 200);
     expect((await runtime.tick()).failed).toBe(1);
     expect(await audit.cursor()).toBe(0);
   });
