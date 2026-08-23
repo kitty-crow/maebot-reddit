@@ -37,7 +37,7 @@ const listing = (): Response => new Response(JSON.stringify({
   },
 }), { status: 200 });
 
-test('Reddit read client owns unread, history and sent DM listings', async () => {
+test('Reddit read client owns documented inbox, unread and sent DM listings', async () => {
   const paths: string[] = [];
   const fetcher: RedditFetch = async input => {
     const url = new URL(String(input));
@@ -46,10 +46,11 @@ test('Reddit read client owns unread, history and sent DM listings', async () =>
     return listing();
   };
   const client = new RedditReadClient(auth, { fetcher, sleep: async () => undefined });
+  expect((await client.inboxDirectMessages()).map(item => item.fullname)).toEqual(['t4_abc']);
   expect((await client.unreadDirectMessages()).map(item => item.fullname)).toEqual(['t4_abc']);
   expect((await client.directMessageHistory()).map(item => item.fullname)).toEqual(['t4_abc']);
   expect((await client.sentDirectMessages()).map(item => item.fullname)).toEqual(['t4_abc']);
-  expect(paths).toEqual(['/message/unread', '/message/messages', '/message/sent']);
+  expect(paths).toEqual(['/message/inbox', '/message/unread', '/message/inbox', '/message/sent']);
 });
 
 test('Reddit mutation client replies to and marks an exact t4 message read', async () => {
