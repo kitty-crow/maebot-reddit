@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
+import { PAWSOME_FLAIR_TEXT } from '../src/reputation/policy.ts';
 import { isMap } from '../src/types/json.ts';
 import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
 
@@ -31,7 +32,7 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
   const bootstrap: ReputationBootstrap = {
     subreddit: 'catgirlcoin',
     at: 123,
-    userFlairTemplates: [template('mae-id', ':mae:'), template('pawsome-id', 'Pawsome Contributor')],
+    userFlairTemplates: [template('mae-id', ':mae:'), template('pawsome-id', PAWSOME_FLAIR_TEXT)],
     postFlairTemplates: [template('minor-id', 'Minor Announcement :lisa:')],
     flairReferences: {
       user: {
