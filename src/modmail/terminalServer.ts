@@ -99,13 +99,15 @@ export class ModmailTerminalServer {
   }
 
   public async issue(conversationId: string, moderator: ModmailModeratorIdentity): Promise<ModmailTerminalLink> {
+    const baseValue = this.cfg.publicBase;
+    if (baseValue === null) throw new Error('Focused Modmail public base is not configured');
     if (safeHandle(moderator.handle).length === 0) throw new Error('Moderator handle is required');
     const session = await this.store.createTerminalSession(
       conversationId,
       { ...moderator, handle: safeHandle(moderator.handle) },
       this.cfg.ttlSeconds,
     );
-    const base = this.cfg.publicBase.endsWith('/') ? this.cfg.publicBase : `${this.cfg.publicBase}/`;
+    const base = baseValue.endsWith('/') ? baseValue : `${baseValue}/`;
     return {
       url: new URL(`modmail/${encodeURIComponent(session.token)}/`, base).toString(),
       expiresAt: session.expiresAt,
