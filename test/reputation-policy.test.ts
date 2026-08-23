@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { RedditFlairAssignment } from '../src/reddit/types.ts';
 import {
+  MEMBER_REPUTATION_CEILING,
   MODERATOR_POINTS,
+  MODERATOR_REPUTATION_CEILING,
   PAWSOME_POINTS,
-  REPUTATION_CEILING,
   REPUTATION_FLOOR,
   chooseFlairForTier,
   chooseTierOneFlair,
@@ -32,7 +33,6 @@ describe('Reddit reputation tier policy', () => {
     expect(tierForPoints(1000)).toBe(4);
     expect(tierForPoints(PAWSOME_POINTS - 1)).toBe(4);
     expect(tierForPoints(PAWSOME_POINTS)).toBe(5);
-    expect(tierForPoints(REPUTATION_CEILING)).toBe(5);
   });
 
   test('seeds existing ordinary flair holders from their current tier including Pawsome Contributor', () => {
@@ -46,12 +46,15 @@ describe('Reddit reputation tier policy', () => {
     expect(tierFlair(assignment('Pawsome Contributor'))?.seedPoints).toBe(PAWSOME_POINTS);
   });
 
-  test('uses the permanent-ban floor and hard reputation ceiling', () => {
+  test('uses 9,999 as the hard non-moderator ceiling and 999,999,999 only for moderators', () => {
     expect(REPUTATION_FLOOR).toBe(-999_999_999);
-    expect(REPUTATION_CEILING).toBe(999_999_999);
-    expect(MODERATOR_POINTS).toBe(REPUTATION_CEILING);
+    expect(MEMBER_REPUTATION_CEILING).toBe(9_999);
+    expect(MODERATOR_REPUTATION_CEILING).toBe(999_999_999);
+    expect(MODERATOR_POINTS).toBe(MODERATOR_REPUTATION_CEILING);
     expect(clampReputationPoints(REPUTATION_FLOOR - 50)).toBe(REPUTATION_FLOOR);
-    expect(clampReputationPoints(REPUTATION_CEILING + 50)).toBe(REPUTATION_CEILING);
+    expect(clampReputationPoints(MEMBER_REPUTATION_CEILING + 50)).toBe(MEMBER_REPUTATION_CEILING);
+    expect(clampReputationPoints(MODERATOR_REPUTATION_CEILING, false)).toBe(MEMBER_REPUTATION_CEILING);
+    expect(clampReputationPoints(MODERATOR_REPUTATION_CEILING + 50, true)).toBe(MODERATOR_REPUTATION_CEILING);
     expect(clampReputationPoints(123)).toBe(123);
   });
 
