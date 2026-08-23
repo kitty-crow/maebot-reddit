@@ -13,8 +13,8 @@ import {
 import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
-import { RedditModerationRuntime } from './mod/runtime.ts';
 import { ModerationReviewStore } from './mod/review.ts';
+import { RedditModerationRuntime } from './mod/runtime.ts';
 import { QuestionEventStore } from './questions/events.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
@@ -51,6 +51,7 @@ const postMirror = singleTarget
       redditCfg.primarySubreddit,
       redditCfg.sourceSubreddit,
     );
+const moderationReviews = new ModerationReviewStore();
 const moderation = moderationCfg === null
   ? null
   : new RedditModerationRuntime(
@@ -59,6 +60,8 @@ const moderation = moderationCfg === null
       new RedditReadClient(redditCfg.auth),
       new RedditMutationClient(redditCfg.auth),
       new ReputationStore(moderationCfg.stateFile),
+      null,
+      moderationReviews,
     );
 
 const pollMs = (() => {
@@ -70,7 +73,7 @@ const pollMs = (() => {
 
 const internal = internalCfg === null
   ? null
-  : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), new ModerationReviewStore());
+  : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
@@ -107,12 +110,14 @@ const tick = async (): Promise<void> => {
       moderationResult.audited > 0
       || moderationResult.exempt > 0
       || moderationResult.scoreCredits > 0
+      || moderationResult.voteReviews > 0
+      || moderationResult.reviewActions > 0
       || moderationResult.flairRestored > 0
       || moderationResult.effectsApplied > 0
       || moderationResult.failed > 0
     )) {
       console.log(
-        `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} flairRestored=${moderationResult.flairRestored} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
+        `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} voteReviews=${moderationResult.voteReviews} reviewActions=${moderationResult.reviewActions} flairRestored=${moderationResult.flairRestored} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
       );
     }
   } finally {
