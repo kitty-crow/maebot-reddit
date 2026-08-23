@@ -81,12 +81,26 @@ export const moderators = (raw: Json): RedditListing<RedditModerator> => {
   };
 };
 
-export const relationshipUsers = (raw: Json, name = 'relationship users'): RedditListing<RedditRelationshipUser> =>
-  listing(raw, name, row => ({
-    username: strVal(row['name'], `${name}.name`),
-    note: optStr(row['note']),
-    date: optNum(row['date']),
-  }));
+export const relationshipUsers = (raw: Json, name = 'relationship users'): RedditListing<RedditRelationshipUser> => {
+  const root = mapVal(raw, name);
+  const data = mapVal(root['data'], `${name}.data`);
+  const children = arrVal(data['children'], `${name}.data.children`);
+  return {
+    items: children.map((child, index): RedditRelationshipUser => {
+      const item = mapVal(child, `${name}.children[${index}]`);
+      const nested = item['data'];
+      const row = typeof nested === 'object' && nested !== null && !Array.isArray(nested)
+        ? mapVal(nested, `${name}.children[${index}].data`)
+        : item;
+      return {
+        username: strVal(row['name'], `${name}.children[${index}].name`),
+        note: optStr(row['note']),
+        date: optNum(row['date']),
+      };
+    }),
+    after: optStr(data['after']),
+  };
+};
 
 const flairTemplate = (row: JsonMap, index: number): RedditFlairTemplate => ({
   id: strVal(row['id'], `flair[${index}].id`),
