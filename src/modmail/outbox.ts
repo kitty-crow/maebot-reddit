@@ -65,11 +65,15 @@ const replyJson = (value: ModmailReplyIntent): JsonMap => ({
   lastError: value.lastError,
 });
 
+export const modmailReplyAttribution = (moderator: ModmailModeratorIdentity): string => {
+  const platform = moderator.platform === 'discord' ? 'Discord' : 'Telegram';
+  return `**Reply from ${moderator.handle} via ${platform}:**`;
+};
+
 export const attributedModmailReply = (moderator: ModmailModeratorIdentity, textBody: string): string => {
   const text = textBody.trim();
   if (text.length === 0) throw new Error('Modmail reply cannot be empty');
-  const platform = moderator.platform === 'discord' ? 'Discord' : 'Telegram';
-  return `**Reply from ${moderator.handle} via ${platform}:**\n\n${text}`;
+  return `${modmailReplyAttribution(moderator)}\n\n${text}`;
 };
 
 export class ModmailReplyOutbox {
@@ -125,14 +129,23 @@ export class ModmailReplyOutbox {
     return output;
   }
 
-  public async pending(): Promise<readonly ModmailReplyIntent[]> {
+  private async replies(): Promise<readonly ModmailReplyIntent[]> {
     const value = root(await this.store.read());
     const replies = value['replies'];
     if (!isMap(replies)) throw new Error('Modmail reply map is missing');
     return Object.values(replies)
       .map(replyFrom)
-      .filter((reply): reply is ModmailReplyIntent => reply !== null && reply.appliedAt === null)
+      .filter((reply): reply is ModmailReplyIntent => reply !== null)
       .sort((a, b) => a.createdAt - b.createdAt || a.key.localeCompare(b.key));
+  }
+
+  public async pending(): Promise<readonly ModmailReplyIntent[]> {
+    return (await this.replies()).filter(reply => reply.appliedAt === null);
+  }
+
+  public async appliedForConversation(conversationId: string): Promise<readonly ModmailReplyIntent[]> {
+    return (await this.replies()).filter(reply =>
+      reply.conversationId === conversationId && reply.appliedAt !== null);
   }
 
   public async markApplied(key: string, at = Math.floor(Date.now() / 1_000)): Promise<void> {
