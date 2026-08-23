@@ -8,12 +8,15 @@ import type {
   RedditPost,
 } from '../src/reddit/types.ts';
 import { planReputationBootstrap } from '../src/reputation/bootstrap.ts';
+import { CATGIRLCOIN_REPUTATION_FLAIRS } from '../src/reputation/liveFlairs.ts';
 import {
   MODERATOR_POINTS,
   PAWSOME_FLAIR_TEXT,
   PAWSOME_POINTS,
   REPUTATION_FLOOR,
 } from '../src/reputation/policy.ts';
+
+const live = CATGIRLCOIN_REPUTATION_FLAIRS;
 
 const flair = (
   id: string,
@@ -33,25 +36,25 @@ const flair = (
 });
 
 const userFlairs = (): readonly RedditFlairTemplate[] => [
-  flair('mae', ':mae:', 'h'),
-  flair('lisa', ':lisa:', 'h'),
-  flair('kita', ':kita:', 'h'),
-  flair('aoi', ':aoi:', 'h'),
-  flair('hana', ':hana:', 'h'),
-  flair('rin', ':rin:', 'h'),
-  flair('celeste', ':celeste:', 'h'),
-  flair('pawsome', PAWSOME_FLAIR_TEXT, 'h', true),
-  flair('warned', ' ', 'w', true),
-  flair('uncivil', ' ', 'u', true),
-  flair('scam', 'SCAM', 's', true),
-  flair('moderator', 'Moderator:kitty-business:', 'm', true),
+  flair(live.user.mae.id, live.user.mae.text, live.user.mae.cssClass),
+  flair(live.user.lisa.id, live.user.lisa.text, live.user.lisa.cssClass),
+  flair(live.user.kita.id, live.user.kita.text, live.user.kita.cssClass),
+  flair(live.user.aoi.id, live.user.aoi.text, live.user.aoi.cssClass),
+  flair(live.user.hana.id, live.user.hana.text, live.user.hana.cssClass),
+  flair(live.user.rin.id, live.user.rin.text, live.user.rin.cssClass),
+  flair(live.user.celeste.id, live.user.celeste.text, live.user.celeste.cssClass),
+  flair(live.user.pawsomeContributor.id, live.user.pawsomeContributor.text, live.user.pawsomeContributor.cssClass, true),
+  flair(live.user.warned.id, live.user.warned.text, live.user.warned.cssClass, true),
+  flair(live.user.uncivil.id, live.user.uncivil.text, live.user.uncivil.cssClass, true),
+  flair(live.user.scam.id, live.user.scam.text, live.user.scam.cssClass, true),
+  flair('302a5e30-d43c-11eb-903c-0e0bd4f00481', 'Moderator:kitty-business:', 'm', true),
   flair('legacy', 'Legacy Special'),
 ];
 
 const postFlairs = (): readonly RedditFlairTemplate[] => [
-  flair('minor', 'Minor Announcement :lisa:'),
-  flair('announcement', 'Announcement :catgirl-moon:'),
-  flair('question', 'Question :hana:'),
+  flair(live.post.minorAnnouncement.id, live.post.minorAnnouncement.text),
+  flair(live.post.announcement.id, live.post.announcement.text),
+  flair('ad0c483a-3b72-11ec-9b51-22febc678528', 'Question :hana:'),
 ];
 
 const assignment = (username: string, templateId: string, text: string, cssClass: string | null = null): RedditFlairAssignment => ({
@@ -104,15 +107,15 @@ describe('Reddit reputation bootstrap planner', () => {
       userFlairs: userFlairs(),
       postFlairs: postFlairs(),
       assignments: [
-        assignment('Alice', 'mae', ':mae:', 'h'),
-        assignment('Bob', 'kita', ':kita:', 'h'),
-        assignment('Carol', 'celeste', ':celeste:', 'h'),
-        assignment('Poppy', 'pawsome', PAWSOME_FLAIR_TEXT, 'h'),
-        assignment('Wendy', 'warned', ' ', 'w'),
-        assignment('Uma', 'uncivil', ' ', 'u'),
-        assignment('Sam', 'scam', 'SCAM', 's'),
-        assignment('Barry', 'mae', ':mae:', 'h'),
-        assignment('Mona', 'moderator', 'Moderator:kitty-business:', 'm'),
+        assignment('Alice', live.user.mae.id, ':mae:', 'h'),
+        assignment('Bob', live.user.kita.id, ':kita:', 'h'),
+        assignment('Carol', live.user.celeste.id, ':celeste:', 'h'),
+        assignment('Poppy', live.user.pawsomeContributor.id, PAWSOME_FLAIR_TEXT, 'h'),
+        assignment('Wendy', live.user.warned.id, ' ', 'w'),
+        assignment('Uma', live.user.uncivil.id, ' ', 'u'),
+        assignment('Sam', live.user.scam.id, 'SCAM', 's'),
+        assignment('Barry', live.user.mae.id, ':mae:', 'h'),
+        assignment('Mona', '302a5e30-d43c-11eb-903c-0e0bd4f00481', 'Moderator:kitty-business:', 'm'),
         assignment('Lenny', 'legacy', 'Legacy Special'),
       ],
       moderators: [moderator('Mona')],
@@ -146,17 +149,17 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(fresh?.tier).toBe(1);
     expect(fresh?.needsFlair).toBe(true);
     expect([':mae:', ':lisa:']).toContain(fresh?.desiredFlairText);
-    if (fresh?.desiredFlairText === ':lisa:') expect(fresh.desiredFlairTemplateId).toBe('lisa');
-    else expect(fresh?.desiredFlairTemplateId).toBe('mae');
+    if (fresh?.desiredFlairText === ':lisa:') expect(fresh.desiredFlairTemplateId).toBe(live.user.lisa.id);
+    else expect(fresh?.desiredFlairTemplateId).toBe(live.user.mae.id);
     expect(plan.recentContributorsWithoutFlair).toBe(1);
 
-    expect(plan.bootstrap.flairReferences.user.mae).toBe('mae');
-    expect(plan.bootstrap.flairReferences.user.pawsomeContributor).toBe('pawsome');
-    expect(plan.bootstrap.flairReferences.user.warned).toBe('warned');
-    expect(plan.bootstrap.flairReferences.user.uncivil).toBe('uncivil');
-    expect(plan.bootstrap.flairReferences.user.scam).toBe('scam');
-    expect(plan.bootstrap.flairReferences.post.minorAnnouncement).toBe('minor');
-    expect(plan.bootstrap.flairReferences.post.announcement).toBe('announcement');
+    expect(plan.bootstrap.flairReferences.user.mae).toBe(live.user.mae.id);
+    expect(plan.bootstrap.flairReferences.user.pawsomeContributor).toBe(live.user.pawsomeContributor.id);
+    expect(plan.bootstrap.flairReferences.user.warned).toBe(live.user.warned.id);
+    expect(plan.bootstrap.flairReferences.user.uncivil).toBe(live.user.uncivil.id);
+    expect(plan.bootstrap.flairReferences.user.scam).toBe(live.user.scam.id);
+    expect(plan.bootstrap.flairReferences.post.minorAnnouncement).toBe(live.post.minorAnnouncement.id);
+    expect(plan.bootstrap.flairReferences.post.announcement).toBe(live.post.announcement.id);
   });
 
   test('uses a stable first-tier variant for the same subreddit and username', () => {
@@ -178,42 +181,42 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(first.desiredFlairTemplateId).toBe(second.desiredFlairTemplateId);
   });
 
-  test('fails closed when any canonical live reputation flair is missing or ambiguous', () => {
+  test('fails closed when a recorded canonical live flair is missing or changed', () => {
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
-      userFlairs: userFlairs().filter(value => value.text !== PAWSOME_FLAIR_TEXT),
+      userFlairs: userFlairs().filter(value => value.id !== live.user.pawsomeContributor.id),
       postFlairs: postFlairs(),
       assignments: [],
       moderators: [],
       bannedUsers: [],
       posts: [],
       comments: [],
-    })).toThrow(PAWSOME_FLAIR_TEXT);
+    })).toThrow(live.user.pawsomeContributor.id);
 
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
-      userFlairs: userFlairs().filter(value => value.cssClass !== 'w'),
+      userFlairs: userFlairs().map(value => value.id === live.user.warned.id ? { ...value, cssClass: 'wrong' } : value),
       postFlairs: postFlairs(),
       assignments: [],
       moderators: [],
       bannedUsers: [],
       posts: [],
       comments: [],
-    })).toThrow('css="w"');
+    })).toThrow(live.user.warned.id);
 
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
       userFlairs: userFlairs(),
-      postFlairs: postFlairs().filter(value => value.text !== 'Announcement :catgirl-moon:'),
+      postFlairs: postFlairs().filter(value => value.id !== live.post.announcement.id),
       assignments: [],
       moderators: [],
       bannedUsers: [],
       posts: [],
       comments: [],
-    })).toThrow('Announcement :catgirl-moon:');
+    })).toThrow(live.post.announcement.id);
   });
 
   test('fails closed for duplicate user assignment', () => {
@@ -222,7 +225,7 @@ describe('Reddit reputation bootstrap planner', () => {
       at: 1,
       userFlairs: userFlairs(),
       postFlairs: postFlairs(),
-      assignments: [assignment('Alice', 'mae', ':mae:'), assignment('alice', 'mae', ':mae:')],
+      assignments: [assignment('Alice', live.user.mae.id, ':mae:'), assignment('alice', live.user.mae.id, ':mae:')],
       moderators: [],
       bannedUsers: [],
       posts: [],
