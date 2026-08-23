@@ -2,6 +2,7 @@ import type { RedditModerationCfg } from '../env.ts';
 import { authoritativeFlairRestores } from '../reputation/flairReconcile.ts';
 import { scoreInventoryFullnames } from '../reputation/inventory.ts';
 import { moderationHistoryFor } from '../reputation/moderationHistory.ts';
+import { reputationMuteEffects } from '../reputation/muteReconcile.ts';
 import {
   ReputationStore,
   type ReputationContributionKind,
@@ -269,6 +270,7 @@ export class RedditModerationRuntime {
 
   private async applyEffects(): Promise<{ readonly applied: number; readonly failed: number }> {
     const effects = await this.reputation.pendingEffects();
+    const mutes = reputationMuteEffects(await this.reputation.raw());
     let applied = 0;
     let failed = 0;
 
@@ -310,7 +312,7 @@ export class RedditModerationRuntime {
       }
     }
 
-    for (const mute of effects.mutes) {
+    for (const mute of mutes) {
       try {
         if (mute.action === 'mute') await this.writer.muteUser(this.subreddit, mute.username, mute.note);
         else await this.writer.unmuteUser(this.subreddit, mute.username);
