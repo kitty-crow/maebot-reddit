@@ -78,11 +78,11 @@ export class RedditMediaClient {
     }
     if (!response.ok) throw new RedditError('OAuth token request was rejected', statusKind(response.status), response.status);
     const payload = jsonPayload(await response.text(), 'OAuth token request');
-    if (!isMap(payload)) throw new RedditError('OAuth token response was not an object', 'invalid_response');
+    if (!isMap(payload)) throw new RedditError('OAuth token response was not an object', 'invalid_response', response.status);
     const value = text(payload['access_token']);
     const seconds = payload['expires_in'];
     if (value === null || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
-      throw new RedditError('OAuth token response was incomplete', 'invalid_response');
+      throw new RedditError('OAuth token response was incomplete', 'invalid_response', response.status);
     }
     this.tokenCache = { value, until: now + Math.floor(seconds * 1_000) };
     return value;
@@ -117,7 +117,8 @@ export class RedditMediaClient {
     const lease = await this.lease(name, mimeType);
     const form = new FormData();
     for (const [field, value] of lease.fields) form.append(field, value);
-    form.append('file', new Blob([bytes], { type: mimeType }), name);
+    const owned = Uint8Array.from(bytes);
+    form.append('file', new Blob([owned.buffer], { type: mimeType }), name);
 
     let response: Response;
     try {
