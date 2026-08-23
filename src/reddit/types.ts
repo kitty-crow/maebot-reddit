@@ -68,6 +68,8 @@ export type RedditPost = {
   readonly locked: boolean;
   readonly over18: boolean;
   readonly crosspostParent: string | null;
+  readonly score: number;
+  readonly mediaUrls: readonly string[];
 };
 
 export type RedditComment = {
@@ -82,4 +84,6 @@ export type RedditComment = {
   readonly distinguished: string | null;
   readonly stickied: boolean;
   readonly removedByCategory: string | null;
+  readonly score: number;
+  readonly mediaUrls: readonly string[];
 };
