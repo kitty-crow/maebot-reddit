@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  DAILY_TASK_HIGHLIGHT_EXPIRES_AT,
+  DAILY_TASK_HIGHLIGHT_LABEL,
+} from '../src/daily/redditPolicy.ts';
 import type { RedditAuthCfg } from '../src/env.ts';
 import { RedditMutationClient, type RedditMutationFetch } from '../src/reddit/mutate.ts';
 import {
@@ -19,6 +23,11 @@ describe('Twitter Reddit announcement flair policy', () => {
   test('maps Daily Task-worthy tweets to the major announcement flair', () => {
     expect(twitterAnnouncementFlair(true)).toBe(MAJOR_ANNOUNCEMENT_FLAIR);
     expect(MAJOR_ANNOUNCEMENT_FLAIR).toBe('Announcement :catgirl-moon:');
+  });
+
+  test('promoted Daily Tasks use the Announcement highlight with no expiry', () => {
+    expect(DAILY_TASK_HIGHLIGHT_LABEL).toBe('Announcement');
+    expect(DAILY_TASK_HIGHLIGHT_EXPIRES_AT).toBeNull();
   });
 
   test('maps ordinary tweets to the minor announcement flair', () => {
@@ -57,5 +66,35 @@ describe('Twitter Reddit announcement flair policy', () => {
     expect(form.get('sr')).toBe('catgirlcoin');
     expect(form.get('flair_id')).toBe('flair-template-id');
     expect(form.get('kind')).toBe('self');
+  });
+
+  test('highlight mutation supports four slots and explicit removal', async () => {
+    const bodies: URLSearchParams[] = [];
+    const fetcher: RedditMutationFetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes('/api/v1/access_token')) {
+        return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), { status: 200 });
+      }
+      if (url.includes('/api/set_subreddit_sticky')) {
+        const body = init?.body instanceof URLSearchParams
+          ? new URLSearchParams(init.body)
+          : new URLSearchParams(String(init?.body ?? ''));
+        bodies.push(body);
+        return new Response('', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    };
+
+    const client = new RedditMutationClient(auth, { fetcher, maxAttempts: 1 });
+    await client.sticky('abc123', 4);
+    await client.unsticky('abc123');
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.get('id')).toBe('t3_abc123');
+    expect(bodies[0]?.get('num')).toBe('4');
+    expect(bodies[0]?.get('state')).toBe('true');
+    expect(bodies[1]?.get('id')).toBe('t3_abc123');
+    expect(bodies[1]?.get('num')).toBeNull();
+    expect(bodies[1]?.get('state')).toBe('false');
   });
 });
