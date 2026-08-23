@@ -14,7 +14,7 @@ import {
   type DmReputation,
   type DmWriter,
 } from '../src/dm/runtime.ts';
-import type { ConversationDmResponder, DmReplyContext } from '../src/dm/reply.ts';
+import type { ConversationDmResponder, DmReplyContext, DmReplyDecision } from '../src/dm/reply.ts';
 import { DmStore } from '../src/dm/store.ts';
 import type { RedditDirectMessage } from '../src/dm/types.ts';
 import type { ReputationUser } from '../src/reputation/store.ts';
@@ -141,7 +141,7 @@ const cfg = { key: 'test', model: 'test', effort: 'low' } as const;
 const responder = (
   ids: Array<string | undefined>,
   contexts: DmReplyContext[],
-  decision = { respond: true, text: 'Hi from Mae' } as const,
+  decision: DmReplyDecision = { respond: true, text: 'Hi from Mae' },
 ) => (conversationId: string | undefined): ConversationDmResponder => {
   ids.push(conversationId);
   return {
