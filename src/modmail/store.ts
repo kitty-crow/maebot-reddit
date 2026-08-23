@@ -11,6 +11,8 @@ import type {
   ModmailTerminalSession,
 } from './types.ts';
 
+export type ModmailRelayOrigin = ModmailModeratorIdentity['platform'] | null;
+
 export type ModmailRelayEvent = {
   readonly sequence: number;
   readonly key: string;
@@ -24,6 +26,7 @@ export type ModmailRelayEvent = {
   readonly bodyMarkdown: string;
   readonly isInternal: boolean;
   readonly createdAt: number;
+  readonly relayOrigin: ModmailRelayOrigin;
 };
 
 export type ModmailRelayEventPage = {
@@ -55,6 +58,8 @@ const text = (value: Json | undefined): string | null =>
 const integer = (value: Json | undefined): number =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : 0;
 const bool = (value: Json | undefined): boolean => value === true;
+const relayOrigin = (value: Json | undefined): ModmailRelayOrigin =>
+  value === 'discord' || value === 'telegram' ? value : null;
 
 const participantJson = (value: ModmailParticipant | null): Json => value === null ? null : ({
   id: value.id,
@@ -182,6 +187,7 @@ const eventJson = (value: ModmailRelayEvent): JsonMap => ({
   bodyMarkdown: value.bodyMarkdown,
   isInternal: value.isInternal,
   createdAt: value.createdAt,
+  relayOrigin: value.relayOrigin,
 });
 
 const eventFrom = (value: Json | undefined): ModmailRelayEvent | null => {
@@ -204,6 +210,7 @@ const eventFrom = (value: Json | undefined): ModmailRelayEvent | null => {
     bodyMarkdown: text(value['bodyMarkdown']) ?? '',
     isInternal: bool(value['isInternal']),
     createdAt: integer(value['createdAt']),
+    relayOrigin: relayOrigin(value['relayOrigin']),
   };
 };
 
@@ -252,6 +259,7 @@ const eventFor = (sequence: number, conversation: ModmailConversation, message: 
   bodyMarkdown: message.bodyMarkdown,
   isInternal: message.isInternal,
   createdAt: message.createdAt,
+  relayOrigin: null,
 });
 
 const retireConversationSessions = (value: JsonMap, conversationId: string): void => {
@@ -328,6 +336,36 @@ export class ModmailStore {
     created = created.sort((a, b) => a.sequence - b.sequence);
     this.publish([...changed]);
     return created;
+  }
+
+  public async markReplyOrigin(
+    conversationId: string,
+    bodyMarkdown: string,
+    platform: Exclude<ModmailRelayOrigin, null>,
+    createdAt: number,
+  ): Promise<boolean> {
+    let marked = false;
+    await this.store.edit(current => {
+      const value = root(current);
+      const events = value['events'];
+      if (!isMap(events)) throw new Error('Modmail event map is missing');
+      const threshold = Math.max(0, createdAt - 60);
+      const candidates = Object.entries(events)
+        .map(([key, raw]) => ({ key, raw, event: eventFrom(raw) }))
+        .filter(row =>
+          row.event !== null
+          && row.event.conversationId === conversationId
+          && row.event.bodyMarkdown.trim() === bodyMarkdown.trim()
+          && row.event.createdAt >= threshold
+          && (row.event.participatingAs === 'moderator' || row.event.author !== row.event.participant))
+        .sort((a, b) => (b.event?.sequence ?? 0) - (a.event?.sequence ?? 0));
+      const selected = candidates[0];
+      if (selected === undefined || !isMap(selected.raw)) return value;
+      selected.raw['relayOrigin'] = platform;
+      marked = true;
+      return value;
+    });
+    return marked;
   }
 
   public async eventsAfter(after: number, limit = 100): Promise<ModmailRelayEventPage> {
