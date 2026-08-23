@@ -13,7 +13,7 @@ const clip = (value: string, max: number): string => {
   return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`;
 };
 
-const supportRoute = `If you want the moderators to review this, reply to me and let me know you want to resolve the situation. If your message shows that you want to move forward constructively, I’ll reopen modmail immediately so you can contact the moderation team. Your score and Marks/Strikes will stay the same.`;
+const supportRoute = `If your modmail is temporarily muted, a genuine apology to me will reopen it immediately so you can request human moderator review. The apology does not change your score, Strikes, or Marks.`;
 
 const label = (kind: ReputationViolationNotice['contentKind']): string => {
   if (kind === 'post') return 'post';
