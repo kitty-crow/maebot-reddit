@@ -83,6 +83,8 @@ const post = (id: string, author: string | null): RedditPost => ({
   locked: false,
   over18: false,
   crosspostParent: null,
+  score: 0,
+  mediaUrls: [],
 });
 
 const comment = (id: string, author: string | null): RedditComment => ({
@@ -97,6 +99,8 @@ const comment = (id: string, author: string | null): RedditComment => ({
   distinguished: null,
   stickied: false,
   removedByCategory: null,
+  score: 0,
+  mediaUrls: [],
 });
 
 describe('Reddit reputation bootstrap planner', () => {
