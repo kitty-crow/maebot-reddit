@@ -293,6 +293,17 @@ describe('live Reddit moderation runtime', () => {
     await f.runtime.tick();
     const firstCalls = f.classifier.items.length;
     const firstFlairs = f.writer.flairs.length;
+    const applied = f.writer.flairs.find(value => value.username === 'OrdinaryUser');
+    if (applied === undefined) throw new Error('OrdinaryUser did not receive a canonical flair');
+    f.reader.assignments = [
+      ...f.reader.assignments,
+      {
+        username: 'OrdinaryUser',
+        templateId: applied.templateId,
+        text: applied.templateId === 'lisa-id' ? ':lisa:' : ':mae:',
+        cssClass: 'h',
+      },
+    ];
     await f.runtime.tick();
     expect(firstCalls).toBe(1);
     expect(f.classifier.items).toHaveLength(1);
