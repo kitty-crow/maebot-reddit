@@ -15,6 +15,8 @@ import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { RedditModerationRuntime } from './mod/runtime.ts';
+import { ModmailRuntime } from './modmail/runtime.ts';
+import { ModmailStore } from './modmail/store.ts';
 import { QuestionEventStore } from './questions/events.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
@@ -52,16 +54,30 @@ const postMirror = singleTarget
       redditCfg.sourceSubreddit,
     );
 const moderationReviews = new ModerationReviewStore();
-const moderation = moderationCfg === null
+const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
+const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
+const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
+const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
+const moderation = moderationCfg === null || moderationReader === null || moderationWriter === null || reputation === null
   ? null
   : new RedditModerationRuntime(
       redditCfg.sourceSubreddit,
       moderationCfg,
-      new RedditReadClient(redditCfg.auth),
-      new RedditMutationClient(redditCfg.auth),
-      new ReputationStore(moderationCfg.stateFile),
+      moderationReader,
+      moderationWriter,
+      reputation,
       null,
       moderationReviews,
+    );
+const modmail = moderationCfg === null || moderationReader === null || moderationWriter === null || reputation === null
+  ? null
+  : new ModmailRuntime(
+      redditCfg.sourceSubreddit,
+      moderationCfg,
+      moderationReader,
+      moderationWriter,
+      reputation,
+      modmailStore,
     );
 
 const pollMs = (() => {
@@ -74,6 +90,7 @@ const pollMs = (() => {
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
+internal?.useModmail(modmailStore);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
@@ -86,6 +103,14 @@ const tick = async (): Promise<void> => {
     const mirror = postMirror === null ? null : await postMirror.tick();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
+    let modmailResult = null;
+    if (modmail !== null) {
+      try {
+        modmailResult = await modmail.tick();
+      } catch (error) {
+        console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
+      }
+    }
     let moderationResult = null;
     if (moderation !== null) {
       try {
@@ -105,6 +130,13 @@ const tick = async (): Promise<void> => {
     }
     if (weeklyResult.inspected > 0 || weeklyResult.completed > 0 || weeklyResult.failed > 0) {
       console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
+    }
+    if (modmailResult !== null && (
+      modmailResult.relayed > 0 || modmailResult.audited > 0 || modmailResult.apologies > 0 || modmailResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit modmail] relayed=${modmailResult.relayed} audited=${modmailResult.audited} apologies=${modmailResult.apologies} failed=${modmailResult.failed}`,
+      );
     }
     if (moderationResult !== null && (
       moderationResult.audited > 0
@@ -170,9 +202,9 @@ if (singleTarget) {
   console.log(`Mae Reddit Twitter consumer, weekly Daily Task relay and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
 }
 if (moderation === null) {
-  console.log('LLM comment/submission moderation is disabled by REDDIT_MODERATION_ENABLED.');
+  console.log('LLM Reddit moderation and internal reputation are disabled by REDDIT_MODERATION_ENABLED.');
 } else {
-  console.log(`LLM comment/submission moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
+  console.log(`LLM post/comment/modmail moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
 }
 
 if (postMirror !== null) await postMirror.tick();
