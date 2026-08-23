@@ -1,5 +1,5 @@
 import type { Json } from '../types/json.ts';
-import { arrVal, mapVal, optNum, optStr, strVal } from '../types/value.ts';
+import { arrVal, mapVal, optBool, optNum, optStr, strVal } from '../types/value.ts';
 import type { RedditThingScore } from './types.ts';
 
 export const thingScores = (raw: Json): readonly RedditThingScore[] => {
@@ -17,6 +17,7 @@ export const thingScores = (raw: Json): readonly RedditThingScore[] => {
     return {
       fullname,
       score: Math.floor(optNum(row['score']) ?? 0),
+      archived: optBool(row['archived']) ?? false,
     };
   });
 };
