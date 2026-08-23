@@ -146,19 +146,19 @@ export const internalApiConfig = (): InternalApiCfg | null => {
 
 export const modmailTerminalConfig = (): ModmailTerminalCfg => {
   const publicBase = maybe('REDDIT_MODMAIL_WEBAPP_BASE');
-  let normalizedBase: string | null = null;
+  let canonicalBase: string | null = null;
   if (publicBase !== null) {
     const url = new URL(publicBase);
     if (url.protocol !== 'https:') throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must use HTTPS');
     if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) {
       throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must be a clean HTTPS base URL');
     }
-    normalizedBase = url.toString().replace(/\/$/u, '');
+    canonicalBase = url.toString().replace(/\/$/u, '');
   }
   return {
     host: opt('REDDIT_MODMAIL_WEBAPP_HOST', '127.0.0.1'),
     port: port('REDDIT_MODMAIL_WEBAPP_PORT', maybe('REDDIT_MODMAIL_WEBAPP_PORT') ?? '8892'),
-    publicBase: normalizedBase,
+    publicBase: canonicalBase,
     ttlSeconds: Math.min(86_400, Math.max(300, positive('REDDIT_MODMAIL_WEBAPP_TTL_SECONDS', '3600'))),
   };
 };
