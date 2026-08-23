@@ -223,12 +223,22 @@ export class RedditMutationClient {
     await this.form(pathFor(subreddit, '/api/friend'), form);
   }
 
-  public async sticky(postId: string, slot: 1 | 2): Promise<void> {
+  public async sticky(postId: string, slot: 1 | 2 | 3 | 4): Promise<void> {
     const form = new URLSearchParams({
       api_type: 'json',
       id: postId.startsWith('t3_') ? postId : `t3_${postId}`,
       num: String(slot),
       state: 'true',
+      to_profile: 'false',
+    });
+    await this.form('/api/set_subreddit_sticky', form);
+  }
+
+  public async unsticky(postId: string): Promise<void> {
+    const form = new URLSearchParams({
+      api_type: 'json',
+      id: postId.startsWith('t3_') ? postId : `t3_${postId}`,
+      state: 'false',
       to_profile: 'false',
     });
     await this.form('/api/set_subreddit_sticky', form);
