@@ -1,10 +1,48 @@
+import { existsSync } from 'node:fs';
 import { expect, test } from 'bun:test';
 
-const rootGlobals = await Bun.file('globals.py').text();
-const rootMain = await Bun.file('main.py').text();
-const legacySubmissionMain = await Bun.file('submission_moderation/main.py').text();
-const postGlobals = await Bun.file('submission_moderation/globals.py').text();
-const postModeration = await Bun.file('submission_moderation/post_moderation.py').text();
+const legacyRoot = 'deprecated/legacy-python';
+const rootGlobals = await Bun.file(`${legacyRoot}/globals.py`).text();
+const rootMain = await Bun.file(`${legacyRoot}/main.py`).text();
+const legacySubmissionMain = await Bun.file(`${legacyRoot}/submission_moderation/main.py`).text();
+const postGlobals = await Bun.file(`${legacyRoot}/submission_moderation/globals.py`).text();
+const postModeration = await Bun.file(`${legacyRoot}/submission_moderation/post_moderation.py`).text();
+const archiveReadme = await Bun.file(`${legacyRoot}/README.md`).text();
+
+test('legacy Python implementation is physically separated from the active runtime', () => {
+  for (const path of [
+    'main.py',
+    'redditbot.py',
+    'commands.py',
+    'globals.py',
+    'counter.py',
+    'haiku_finder.py',
+    'leaderboard.py',
+    'mods.py',
+    'stringhandle.py',
+    'syllable_fixes.py',
+    'submission_moderation',
+    'Pipfile',
+    'Pipfile.lock',
+    'poetry.lock',
+    'pyproject.toml',
+  ]) {
+    expect(existsSync(path)).toBe(false);
+  }
+
+  expect(existsSync(`${legacyRoot}/main.py`)).toBe(true);
+  expect(existsSync(`${legacyRoot}/submission_moderation/main.py`)).toBe(true);
+  expect(existsSync(`${legacyRoot}/Pipfile`)).toBe(true);
+  expect(existsSync(`${legacyRoot}/pyproject.toml`)).toBe(true);
+});
+
+test('deprecated archive documents that TypeScript and reputation.pb are authoritative', () => {
+  expect(archiveReadme).toContain('Do not run this code');
+  expect(archiveReadme).toContain('TypeScript/Bun implementation');
+  expect(archiveReadme).toContain('data/reputation.pb');
+  expect(archiveReadme).toContain('not authoritative');
+  expect(archiveReadme).toContain('Active TypeScript code must not import from this directory');
+});
 
 test('legacy automated notices keep a blank paragraph before the markdown rule', () => {
   expect(rootGlobals).toContain('bot_notice = "\\n\\n---\\n^beep boop!');
