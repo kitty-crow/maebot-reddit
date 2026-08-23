@@ -31,6 +31,8 @@ export type ModmailRelayEventPage = {
   readonly next: number;
 };
 
+export type ModmailStoreListener = (conversationIds: readonly string[]) => void | Promise<void>;
+
 const initial = (): JsonMap => ({
   schema: 1,
   bootstrappedAt: 0,
@@ -154,6 +156,19 @@ const conversationFrom = (value: Json | undefined): ModmailConversation | null =
   };
 };
 
+const mergeConversation = (
+  prior: ModmailConversation | null,
+  incoming: ModmailConversation,
+): ModmailConversation => {
+  const messages = new Map<string, ModmailMessage>();
+  for (const message of prior?.messages ?? []) messages.set(message.id, message);
+  for (const message of incoming.messages) messages.set(message.id, message);
+  return {
+    ...incoming,
+    messages: [...messages.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+  };
+};
+
 const eventJson = (value: ModmailRelayEvent): JsonMap => ({
   sequence: value.sequence,
   key: value.key,
@@ -250,13 +265,29 @@ const retireConversationSessions = (value: JsonMap, conversationId: string): voi
 
 export class ModmailStore {
   private readonly store: Store;
+  private readonly listeners = new Set<ModmailStoreListener>();
 
   public constructor(file = 'data/modmail.pb') {
     this.store = new Store(file, initial());
   }
 
+  public subscribe(listener: ModmailStoreListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private publish(conversationIds: readonly string[]): void {
+    if (conversationIds.length === 0) return;
+    for (const listener of this.listeners) {
+      void Promise.resolve(listener(conversationIds)).catch(error => {
+        console.error('[Reddit modmail] store listener failed:', error);
+      });
+    }
+  }
+
   public async sync(conversations: readonly ModmailConversation[], at = Math.floor(Date.now() / 1_000)): Promise<readonly ModmailRelayEvent[]> {
     let created: ModmailRelayEvent[] = [];
+    const changed = new Set<string>();
     await this.store.edit(current => {
       const value = root(current);
       const conversationMap = value['conversations'];
@@ -268,16 +299,25 @@ export class ModmailStore {
       let sequence = integer(value['sequence']);
 
       for (const incoming of conversations) {
-        if (incoming.kind !== 'sr_user' || incoming.participant?.name === null || incoming.participant?.name === undefined) continue;
+        const participantName = incoming.participant?.name ?? null;
+        if (incoming.kind !== 'sr_user' || participantName === null) continue;
         const prior = conversationFrom(conversationMap[incoming.id]);
         const known = new Set(prior?.messages.map(message => message.id) ?? []);
-        conversationMap[incoming.id] = conversationJson(incoming);
+        const merged = mergeConversation(prior, incoming);
+        conversationMap[incoming.id] = conversationJson(merged);
+        const newMessages = incoming.messages.filter(message => !known.has(message.id));
+        if (
+          prior === null
+          || newMessages.length > 0
+          || prior.state !== incoming.state
+          || prior.subject !== incoming.subject
+          || prior.lastUpdatedAt !== incoming.lastUpdatedAt
+        ) changed.add(incoming.id);
         if (incoming.state === 'archived') retireConversationSessions(value, incoming.id);
         if (firstSync) continue;
-        for (const message of incoming.messages) {
-          if (known.has(message.id)) continue;
+        for (const message of newMessages) {
           sequence += 1;
-          const event = eventFor(sequence, incoming, message);
+          const event = eventFor(sequence, merged, message);
           events[String(sequence)] = eventJson(event);
           created.push(event);
         }
@@ -286,6 +326,7 @@ export class ModmailStore {
       return value;
     });
     created = created.sort((a, b) => a.sequence - b.sequence);
+    this.publish([...changed]);
     return created;
   }
 
