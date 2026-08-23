@@ -52,6 +52,11 @@ export type RedditSubreddit = {
   readonly submissionType: string | null;
 };
 
+export type RedditThingScore = {
+  readonly fullname: string;
+  readonly score: number;
+};
+
 export type RedditPost = {
   readonly id: string;
   readonly fullname: string;
