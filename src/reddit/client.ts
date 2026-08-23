@@ -134,20 +134,34 @@ export class RedditReadClient {
     return decode.comments(await this.get(`${pathFor(name, '/comments')}?limit=${safeLimit}`)).items;
   }
 
+  public async newPostsHistory(name: string, maxItems = 1000): Promise<readonly RedditPost[]> {
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages(pathFor(name, '/new'), 100, value => decode.posts(value, 'new posts'), max);
+  }
+
+  public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages(pathFor(name, '/comments'), 100, value => decode.comments(value, 'new comments'), max);
+  }
+
   private async pages<T>(
     path: string,
-    limit: number,
+    pageLimit: number,
     decoder: (value: Json) => decode.RedditListing<T>,
+    maxItems = Number.MAX_SAFE_INTEGER,
   ): Promise<readonly T[]> {
     const out: T[] = [];
     let after: string | null = null;
     do {
+      const remaining = Math.max(0, maxItems - out.length);
+      if (remaining === 0) break;
+      const limit = Math.max(1, Math.min(pageLimit, remaining));
       const query = new URLSearchParams({ limit: String(limit), count: String(out.length) });
       if (after !== null) query.set('after', after);
       const page = decoder(await this.get(`${path}?${query}`));
-      out.push(...page.items);
+      out.push(...page.items.slice(0, remaining));
       after = page.after;
-    } while (after !== null);
+    } while (after !== null && out.length < maxItems);
     return out;
   }
 
