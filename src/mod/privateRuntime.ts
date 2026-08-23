@@ -4,6 +4,7 @@ import type {
   ModerationClassifier,
 } from './classifier.ts';
 import { RedditModerationClassifier } from './classifier.ts';
+import type { ModerationPrivilegeSource } from './privileges.ts';
 import type { PrivateResolutionClassifier } from './privateResolution.ts';
 import { RedditPrivateResolutionClassifier } from './privateResolution.ts';
 import type { ReputationStore } from '../reputation/store.ts';
@@ -74,6 +75,7 @@ export class PrivateModmailRuntime {
     private readonly reputation: PrivateModerationReputation,
     classifierFactory: PrivateModerationClassifierFactory | null = null,
     resolution: PrivateResolutionClassifier | null = null,
+    private readonly privileges: ModerationPrivilegeSource | null = null,
   ) {
     this.classifierFactory = classifierFactory ?? (conversationId => new RedditModerationClassifier(cfg, {
       conversation: true,
@@ -114,6 +116,11 @@ export class PrivateModmailRuntime {
 
     const fullname = `modmail:${event.conversationId}:${event.messageId}`;
     if (await this.reputation.hasContribution(fullname)) {
+      await this.advance(event, openaiConversationId);
+      return 'skipped';
+    }
+
+    if (this.privileges !== null && await this.privileges.exemption(event.author) !== null) {
       await this.advance(event, openaiConversationId);
       return 'skipped';
     }
