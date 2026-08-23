@@ -6,6 +6,7 @@ import { LiveWeeklyRedditPublisher, WeeklyRedditRelay } from './daily/weekly.ts'
 import {
   dailyReviewApiConfig,
   internalApiConfig,
+  modmailTerminalConfig,
   redditConfig,
   redditModerationConfig,
   twitterApiConfig,
@@ -18,6 +19,7 @@ import { RedditModerationRuntime } from './mod/runtime.ts';
 import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
+import { ModmailTerminalServer } from './modmail/terminalServer.ts';
 import { QuestionEventStore } from './questions/events.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
@@ -33,6 +35,7 @@ const moderationCfg = redditModerationConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
+const terminalCfg = modmailTerminalConfig();
 const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
@@ -57,6 +60,7 @@ const postMirror = singleTarget
 const moderationReviews = new ModerationReviewStore();
 const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
 const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env['REDDIT_MODMAIL_OUTBOX_FILE']?.trim() || 'data/modmailReplies.pb'));
+const terminal = terminalCfg === null ? null : new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
@@ -92,10 +96,13 @@ const pollMs = (() => {
   return value;
 })();
 
+terminal?.start();
+if (terminal !== null) console.log(`Focused Reddit modmail terminal listening on ${terminal.address()}; public base=${terminalCfg?.publicBase ?? 'unavailable'}.`);
+
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
-internal?.useModmail(modmailStore);
+internal?.useModmail(modmailStore, modmailOutbox, terminal);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
@@ -229,6 +236,7 @@ const stop = (): void => {
   stopping = true;
   clearInterval(timer);
   internal?.stop();
+  terminal?.stop();
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
