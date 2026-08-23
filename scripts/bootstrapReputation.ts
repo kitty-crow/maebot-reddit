@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { redditConfig } from '../src/env.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import type { RedditFlairAssignment, RedditFlairTemplate } from '../src/reddit/types.ts';
+import type { JsonMap } from '../src/types/json.ts';
 import {
   TIER_FLAIRS,
   chooseTierOneFlair,
@@ -45,7 +46,7 @@ const exactTemplate = (templates: readonly RedditFlairTemplate[], text: string):
   return match;
 };
 
-const reportTemplate = (template: RedditFlairTemplate): Record<string, unknown> => ({
+const reportTemplate = (template: RedditFlairTemplate): JsonMap => ({
   id: template.id,
   text: template.text,
   cssClass: template.cssClass,
