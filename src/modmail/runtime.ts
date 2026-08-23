@@ -47,6 +47,12 @@ export class ModmailRuntime {
         await this.outbox.markApplied(reply.key);
         const after = alreadyPresent ? before : await this.reader.modmailConversation(reply.conversationId, false);
         await this.store.sync([after]);
+        await this.store.markReplyOrigin(
+          reply.conversationId,
+          reply.bodyMarkdown,
+          reply.moderator.platform,
+          reply.createdAt,
+        );
         applied += 1;
       } catch (error) {
         failed += 1;
