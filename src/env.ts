@@ -30,6 +30,15 @@ const port = (name: string, value: string): number => {
   return parsed;
 };
 
+const loopbackHost = (name: string, fallback = '127.0.0.1'): string => {
+  const value = opt(name, fallback);
+  const canonical = value.toLowerCase();
+  if (canonical !== '127.0.0.1' && canonical !== '::1' && canonical !== 'localhost') {
+    throw new Error(`${name} must be a loopback host`);
+  }
+  return value;
+};
+
 const positive = (name: string, fallback: string): number => {
   const parsed = Number(opt(name, fallback));
   if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer`);
@@ -159,7 +168,7 @@ export const internalApiConfig = (): InternalApiCfg | null => {
     throw new Error('REDDIT_INTERNAL_API_TOKEN and REDDIT_INTERNAL_API_PORT must be configured together');
   }
   return {
-    host: opt('REDDIT_INTERNAL_API_HOST', '127.0.0.1'),
+    host: loopbackHost('REDDIT_INTERNAL_API_HOST'),
     port: port('REDDIT_INTERNAL_API_PORT', rawPort),
     token,
   };
@@ -177,7 +186,7 @@ export const modmailTerminalConfig = (): ModmailTerminalCfg => {
     canonicalBase = url.toString().replace(/\/$/u, '');
   }
   return {
-    host: opt('REDDIT_MODMAIL_WEBAPP_HOST', '127.0.0.1'),
+    host: loopbackHost('REDDIT_MODMAIL_WEBAPP_HOST'),
     port: port('REDDIT_MODMAIL_WEBAPP_PORT', maybe('REDDIT_MODMAIL_WEBAPP_PORT') ?? '8892'),
     publicBase: canonicalBase,
     ttlSeconds: Math.min(86_400, Math.max(300, positive('REDDIT_MODMAIL_WEBAPP_TTL_SECONDS', '3600'))),
