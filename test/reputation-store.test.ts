@@ -33,6 +33,24 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
     at: 123,
     userFlairTemplates: [template('mae-id', ':mae:')],
     postFlairTemplates: [template('minor-id', 'Minor Announcement :lisa:')],
+    flairReferences: {
+      user: {
+        mae: 'mae-id',
+        lisa: 'lisa-id',
+        kita: 'kita-id',
+        aoi: 'aoi-id',
+        hana: 'hana-id',
+        rin: 'rin-id',
+        celeste: 'celeste-id',
+        warned: 'warned-id',
+        uncivil: 'uncivil-id',
+        scam: 'scam-id',
+      },
+      post: {
+        minorAnnouncement: 'minor-id',
+        announcement: 'announcement-id',
+      },
+    },
     users: [{
       username: 'Alice',
       points: 1,
@@ -76,6 +94,13 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
   expect(isMap(alice)).toBe(true);
   if (!isMap(alice)) throw new Error('Alice reputation record was not a map');
   expect(alice['points']).toBe(1);
+  const references = raw['flairReferences'];
+  expect(isMap(references)).toBe(true);
+  if (!isMap(references)) throw new Error('flair references were not persisted');
+  const userRefs = references['user'];
+  expect(isMap(userRefs)).toBe(true);
+  if (!isMap(userRefs)) throw new Error('user flair references were not persisted');
+  expect(userRefs['mae']).toBe('mae-id');
 
   await expect(reopened.bootstrap(bootstrap)).rejects.toThrow('already bootstrapped');
 });
