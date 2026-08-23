@@ -8,6 +8,8 @@ import type {
   RedditPost,
 } from '../reddit/types.ts';
 import {
+  MODERATOR_POINTS,
+  REPUTATION_FLOOR,
   TIER_FLAIRS,
   chooseTierOneFlair,
   moderationStatus,
@@ -87,6 +89,7 @@ export const resolveFlairReferences = (
       hana: tierTemplate(tiers, ':hana:').id,
       rin: tierTemplate(tiers, ':rin:').id,
       celeste: tierTemplate(tiers, ':celeste:').id,
+      pawsomeContributor: tierTemplate(tiers, 'Pawsome Contributor').id,
       warned: exactTemplate(subreddit, userFlairs, 'Warned', false)?.id ?? null,
       uncivil: exactTemplate(subreddit, userFlairs, 'Uncivil', false)?.id ?? null,
       scam: exactTemplate(subreddit, userFlairs, 'SCAM', false)?.id ?? null,
@@ -120,8 +123,8 @@ const assignmentUser = (
   if (moderators.has(key)) {
     return {
       username,
-      points: 0,
-      tier: 5,
+      points: MODERATOR_POINTS,
+      tier: 9,
       status: 'moderator',
       currentFlairTemplateId: assignment.templateId,
       currentFlairText: assignment.text,
@@ -180,7 +183,7 @@ const assignmentUser = (
   if (banned.has(key)) {
     return {
       username,
-      points: -3,
+      points: REPUTATION_FLOOR,
       tier: 0,
       status: 'banned',
       currentFlairTemplateId: assignment.templateId,
@@ -216,8 +219,8 @@ const assignmentUser = (
 
 const moderatorUser = (username: string, at: number): ReputationUser => ({
   username,
-  points: 0,
-  tier: 5,
+  points: MODERATOR_POINTS,
+  tier: 9,
   status: 'moderator',
   currentFlairTemplateId: null,
   currentFlairText: null,
@@ -233,7 +236,7 @@ const moderatorUser = (username: string, at: number): ReputationUser => ({
 
 const bannedUser = (username: string, at: number): ReputationUser => ({
   username,
-  points: -3,
+  points: REPUTATION_FLOOR,
   tier: 0,
   status: 'banned',
   currentFlairTemplateId: null,
