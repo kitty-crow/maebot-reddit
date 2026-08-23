@@ -22,6 +22,8 @@ export type ReputationSubject = {
   readonly status: ReputationStatus;
 };
 
+export type ReputationContributionKind = 'post' | 'comment';
+
 const permanent = (status: 'banned' | 'scam'): ReputationTransition => ({
   points: REPUTATION_FLOOR,
   tier: 0,
@@ -109,4 +111,31 @@ export const applyModerationClassification = (
   if (classification.verdict === 'low') return low(subject);
   if (classification.verdict === 'scam') return permanent('scam');
   return severe(subject);
+};
+
+export const applyContributionPolicy = (
+  subject: ReputationSubject,
+  kind: ReputationContributionKind,
+  classification: ModerationClassification,
+): ReputationTransition => {
+  const classified = applyModerationClassification(subject, classification);
+
+  if (subject.status !== 'uncivil' || kind !== 'post') return classified;
+
+  // Uncivil users are comment-only. Their posts are still LLM-audited, but a
+  // clean prohibited post cannot be used as a redemption contribution.
+  if (classification.verdict === 'clean') {
+    return {
+      points: subject.points,
+      tier: 0,
+      status: 'uncivil',
+      remove: true,
+      ban: false,
+    };
+  }
+
+  // A prohibited post with an actual LLM violation receives the normal
+  // reputation penalty and is removed regardless of the classifier's content
+  // disposition.
+  return { ...classified, remove: true };
 };
