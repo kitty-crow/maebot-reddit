@@ -1,0 +1,373 @@
+import { randomBytes } from 'node:crypto';
+import { Store } from '../store/store.ts';
+import { isMap, type Json, type JsonMap } from '../types/json.ts';
+import type {
+  ModmailConversation,
+  ModmailConversationKind,
+  ModmailConversationState,
+  ModmailMessage,
+  ModmailModeratorIdentity,
+  ModmailParticipant,
+  ModmailTerminalSession,
+} from './types.ts';
+
+export type ModmailRelayEvent = {
+  readonly sequence: number;
+  readonly key: string;
+  readonly conversationId: string;
+  readonly messageId: string;
+  readonly subreddit: string;
+  readonly subject: string;
+  readonly participant: string | null;
+  readonly author: string | null;
+  readonly participatingAs: string | null;
+  readonly bodyMarkdown: string;
+  readonly isInternal: boolean;
+  readonly createdAt: number;
+};
+
+export type ModmailRelayEventPage = {
+  readonly events: readonly ModmailRelayEvent[];
+  readonly next: number;
+};
+
+const initial = (): JsonMap => ({
+  schema: 1,
+  bootstrappedAt: 0,
+  sequence: 0,
+  conversations: {},
+  events: {},
+  terminalSessions: {},
+});
+
+const root = (value: Json): JsonMap => {
+  if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail store');
+  if (!isMap(value['conversations'])) value['conversations'] = {};
+  if (!isMap(value['events'])) value['events'] = {};
+  if (!isMap(value['terminalSessions'])) value['terminalSessions'] = {};
+  return value;
+};
+
+const text = (value: Json | undefined): string | null =>
+  typeof value === 'string' && value.length > 0 ? value : null;
+const integer = (value: Json | undefined): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) ? value : 0;
+const bool = (value: Json | undefined): boolean => value === true;
+
+const participantJson = (value: ModmailParticipant | null): Json => value === null ? null : ({
+  id: value.id,
+  name: value.name,
+  isModerator: value.isModerator,
+  isAdmin: value.isAdmin,
+  isParticipant: value.isParticipant,
+  isHidden: value.isHidden,
+  isDeleted: value.isDeleted,
+});
+
+const participantFrom = (value: Json | undefined): ModmailParticipant | null => {
+  if (!isMap(value)) return null;
+  return {
+    id: text(value['id']),
+    name: text(value['name']),
+    isModerator: bool(value['isModerator']),
+    isAdmin: bool(value['isAdmin']),
+    isParticipant: bool(value['isParticipant']),
+    isHidden: bool(value['isHidden']),
+    isDeleted: bool(value['isDeleted']),
+  };
+};
+
+const messageJson = (value: ModmailMessage): JsonMap => ({
+  id: value.id,
+  conversationId: value.conversationId,
+  author: participantJson(value.author),
+  bodyMarkdown: value.bodyMarkdown,
+  createdAt: value.createdAt,
+  isInternal: value.isInternal,
+  participatingAs: value.participatingAs,
+});
+
+const messageFrom = (value: Json | undefined): ModmailMessage | null => {
+  if (!isMap(value)) return null;
+  const id = text(value['id']);
+  const conversationId = text(value['conversationId']);
+  if (id === null || conversationId === null) return null;
+  return {
+    id,
+    conversationId,
+    author: participantFrom(value['author']),
+    bodyMarkdown: text(value['bodyMarkdown']) ?? '',
+    createdAt: integer(value['createdAt']),
+    isInternal: bool(value['isInternal']),
+    participatingAs: text(value['participatingAs']),
+  };
+};
+
+const stateFrom = (value: Json | undefined): ModmailConversationState => {
+  if (
+    value === 'new' || value === 'inprogress' || value === 'archived'
+    || value === 'appeals' || value === 'join_requests' || value === 'filtered'
+  ) return value;
+  return 'unknown';
+};
+
+const kindFrom = (value: Json | undefined): ModmailConversationKind => {
+  if (value === 'sr_user' || value === 'sr_sr' || value === 'internal') return value;
+  return 'unknown';
+};
+
+const conversationJson = (value: ModmailConversation): JsonMap => ({
+  id: value.id,
+  subreddit: value.subreddit,
+  subject: value.subject,
+  participant: participantJson(value.participant),
+  kind: value.kind,
+  state: value.state,
+  isInternal: value.isInternal,
+  isAuto: value.isAuto,
+  lastUpdatedAt: value.lastUpdatedAt,
+  messages: Object.fromEntries(value.messages.map(message => [message.id, messageJson(message)])),
+});
+
+const conversationFrom = (value: Json | undefined): ModmailConversation | null => {
+  if (!isMap(value)) return null;
+  const id = text(value['id']);
+  if (id === null) return null;
+  const rawMessages = value['messages'];
+  const messages = isMap(rawMessages)
+    ? Object.values(rawMessages)
+      .map(messageFrom)
+      .filter((message): message is ModmailMessage => message !== null)
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    : [];
+  return {
+    id,
+    subreddit: text(value['subreddit']) ?? '',
+    subject: text(value['subject']) ?? '',
+    participant: participantFrom(value['participant']),
+    kind: kindFrom(value['kind']),
+    state: stateFrom(value['state']),
+    isInternal: bool(value['isInternal']),
+    isAuto: bool(value['isAuto']),
+    lastUpdatedAt: integer(value['lastUpdatedAt']),
+    messages,
+  };
+};
+
+const eventJson = (value: ModmailRelayEvent): JsonMap => ({
+  sequence: value.sequence,
+  key: value.key,
+  conversationId: value.conversationId,
+  messageId: value.messageId,
+  subreddit: value.subreddit,
+  subject: value.subject,
+  participant: value.participant,
+  author: value.author,
+  participatingAs: value.participatingAs,
+  bodyMarkdown: value.bodyMarkdown,
+  isInternal: value.isInternal,
+  createdAt: value.createdAt,
+});
+
+const eventFrom = (value: Json | undefined): ModmailRelayEvent | null => {
+  if (!isMap(value)) return null;
+  const key = text(value['key']);
+  const conversationId = text(value['conversationId']);
+  const messageId = text(value['messageId']);
+  const sequence = integer(value['sequence']);
+  if (key === null || conversationId === null || messageId === null || sequence < 1) return null;
+  return {
+    sequence,
+    key,
+    conversationId,
+    messageId,
+    subreddit: text(value['subreddit']) ?? '',
+    subject: text(value['subject']) ?? '',
+    participant: text(value['participant']),
+    author: text(value['author']),
+    participatingAs: text(value['participatingAs']),
+    bodyMarkdown: text(value['bodyMarkdown']) ?? '',
+    isInternal: bool(value['isInternal']),
+    createdAt: integer(value['createdAt']),
+  };
+};
+
+const terminalJson = (value: ModmailTerminalSession): JsonMap => ({
+  token: value.token,
+  conversationId: value.conversationId,
+  moderator: {
+    platform: value.moderator.platform,
+    userId: value.moderator.userId,
+    handle: value.moderator.handle,
+  },
+  createdAt: value.createdAt,
+  expiresAt: value.expiresAt,
+});
+
+const terminalFrom = (value: Json | undefined): ModmailTerminalSession | null => {
+  if (!isMap(value) || !isMap(value['moderator'])) return null;
+  const token = text(value['token']);
+  const conversationId = text(value['conversationId']);
+  const platform = value['moderator']['platform'];
+  const userId = text(value['moderator']['userId']);
+  const handle = text(value['moderator']['handle']);
+  if (
+    token === null || conversationId === null || userId === null || handle === null
+    || (platform !== 'discord' && platform !== 'telegram')
+  ) return null;
+  return {
+    token,
+    conversationId,
+    moderator: { platform, userId, handle },
+    createdAt: integer(value['createdAt']),
+    expiresAt: integer(value['expiresAt']),
+  };
+};
+
+const eventFor = (sequence: number, conversation: ModmailConversation, message: ModmailMessage): ModmailRelayEvent => ({
+  sequence,
+  key: `modmail:${conversation.id}:${message.id}`,
+  conversationId: conversation.id,
+  messageId: message.id,
+  subreddit: conversation.subreddit,
+  subject: conversation.subject,
+  participant: conversation.participant?.name ?? null,
+  author: message.author?.name ?? null,
+  participatingAs: message.participatingAs,
+  bodyMarkdown: message.bodyMarkdown,
+  isInternal: message.isInternal,
+  createdAt: message.createdAt,
+});
+
+const retireConversationSessions = (value: JsonMap, conversationId: string): void => {
+  const sessions = value['terminalSessions'];
+  if (!isMap(sessions)) return;
+  for (const [token, raw] of Object.entries(sessions)) {
+    const session = terminalFrom(raw);
+    if (session?.conversationId === conversationId) delete sessions[token];
+  }
+};
+
+export class ModmailStore {
+  private readonly store: Store;
+
+  public constructor(file = 'data/modmail.pb') {
+    this.store = new Store(file, initial());
+  }
+
+  public async sync(conversations: readonly ModmailConversation[], at = Math.floor(Date.now() / 1_000)): Promise<readonly ModmailRelayEvent[]> {
+    let created: ModmailRelayEvent[] = [];
+    await this.store.edit(current => {
+      const value = root(current);
+      const conversationMap = value['conversations'];
+      const events = value['events'];
+      if (!isMap(conversationMap) || !isMap(events)) throw new Error('Modmail store maps are missing');
+      const bootstrappedAt = integer(value['bootstrappedAt']);
+      const firstSync = bootstrappedAt === 0;
+      if (firstSync) value['bootstrappedAt'] = at;
+      let sequence = integer(value['sequence']);
+
+      for (const incoming of conversations) {
+        if (incoming.kind !== 'sr_user' || incoming.participant?.name === null || incoming.participant?.name === undefined) continue;
+        const prior = conversationFrom(conversationMap[incoming.id]);
+        const known = new Set(prior?.messages.map(message => message.id) ?? []);
+        conversationMap[incoming.id] = conversationJson(incoming);
+        if (incoming.state === 'archived') retireConversationSessions(value, incoming.id);
+        if (firstSync) continue;
+        for (const message of incoming.messages) {
+          if (known.has(message.id)) continue;
+          sequence += 1;
+          const event = eventFor(sequence, incoming, message);
+          events[String(sequence)] = eventJson(event);
+          created.push(event);
+        }
+      }
+      value['sequence'] = sequence;
+      return value;
+    });
+    created = created.sort((a, b) => a.sequence - b.sequence);
+    return created;
+  }
+
+  public async eventsAfter(after: number, limit = 100): Promise<ModmailRelayEventPage> {
+    const value = root(await this.store.read());
+    const events = value['events'];
+    if (!isMap(events)) throw new Error('Modmail event map is missing');
+    const safeAfter = Math.max(0, Math.floor(after));
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const rows = Object.values(events)
+      .map(eventFrom)
+      .filter((event): event is ModmailRelayEvent => event !== null && event.sequence > safeAfter)
+      .sort((a, b) => a.sequence - b.sequence)
+      .slice(0, safeLimit);
+    return { events: rows, next: rows.at(-1)?.sequence ?? safeAfter };
+  }
+
+  public async conversation(id: string): Promise<ModmailConversation | null> {
+    const value = root(await this.store.read());
+    const conversations = value['conversations'];
+    if (!isMap(conversations)) throw new Error('Modmail conversation map is missing');
+    return conversationFrom(conversations[id]);
+  }
+
+  public async createTerminalSession(
+    conversationId: string,
+    moderator: ModmailModeratorIdentity,
+    ttlSeconds: number,
+    at = Math.floor(Date.now() / 1_000),
+  ): Promise<ModmailTerminalSession> {
+    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60) throw new Error('Modmail terminal TTL must be at least 60 seconds');
+    let output: ModmailTerminalSession | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const conversations = value['conversations'];
+      const sessions = value['terminalSessions'];
+      if (!isMap(conversations) || !isMap(sessions)) throw new Error('Modmail store maps are missing');
+      const conversation = conversationFrom(conversations[conversationId]);
+      if (conversation === null) throw new Error(`Unknown modmail conversation ${conversationId}`);
+      if (conversation.state === 'archived') throw new Error(`Modmail conversation ${conversationId} is archived`);
+      const token = randomBytes(24).toString('base64url');
+      const session: ModmailTerminalSession = {
+        token,
+        conversationId,
+        moderator,
+        createdAt: at,
+        expiresAt: at + ttlSeconds,
+      };
+      sessions[token] = terminalJson(session);
+      output = session;
+      return value;
+    });
+    if (output === null) throw new Error('Failed to create modmail terminal session');
+    return output;
+  }
+
+  public async terminalSession(token: string, at = Math.floor(Date.now() / 1_000)): Promise<ModmailTerminalSession | null> {
+    let output: ModmailTerminalSession | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const sessions = value['terminalSessions'];
+      const conversations = value['conversations'];
+      if (!isMap(sessions) || !isMap(conversations)) throw new Error('Modmail store maps are missing');
+      const session = terminalFrom(sessions[token]);
+      if (session === null) return value;
+      const conversation = conversationFrom(conversations[session.conversationId]);
+      if (session.expiresAt <= at || conversation === null || conversation.state === 'archived') {
+        delete sessions[token];
+        return value;
+      }
+      output = session;
+      return value;
+    });
+    return output;
+  }
+
+  public async closeTerminalSession(token: string): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const sessions = value['terminalSessions'];
+      if (isMap(sessions)) delete sessions[token];
+      return value;
+    });
+  }
+}
