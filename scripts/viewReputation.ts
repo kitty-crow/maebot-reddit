@@ -21,11 +21,12 @@ if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
 
 const report = parseMap(await readFile(reportPath, 'utf8'));
 const userValues = arrVal(report['users'], 'report.users');
+const validTiers = new Set([0, 1, 2, 3, 4, 5, 9]);
 const rows: ReputationRankingRow[] = userValues.map((value, index): ReputationRankingRow => {
   const row = mapVal(value, `report.users[${index}]`);
   const tier = numVal(row['tier'], `report.users[${index}].tier`);
-  if (!Number.isSafeInteger(tier) || tier < 0 || tier > 4) {
-    throw new Error(`report.users[${index}].tier must be an integer from 0 to 4`);
+  if (!Number.isSafeInteger(tier) || !validTiers.has(tier)) {
+    throw new Error(`report.users[${index}].tier must be one of 0, 1, 2, 3, 4, 5 or 9`);
   }
   return {
     username: strVal(row['username'], `report.users[${index}].username`),
@@ -52,9 +53,9 @@ const clamp = (value: string, size: number): string => value.length <= size
 const printHeader = (start: number, end: number): void => {
   console.log(`\nMae reputation ranking ${start + 1}-${end} of ${ranked.length}`);
   console.log(
-    `${'#'.padStart(4)}  ${'User'.padEnd(userWidth)}  ${'Score'.padStart(7)}  ${'Tier'.padStart(4)}  ${'Current flair'.padEnd(flairWidth)}  Status`,
+    `${'#'.padStart(4)}  ${'User'.padEnd(userWidth)}  ${'Score'.padStart(12)}  ${'Tier'.padStart(4)}  ${'Current flair'.padEnd(flairWidth)}  Status`,
   );
-  console.log('-'.repeat(Math.min(120, 4 + 2 + userWidth + 2 + 7 + 2 + 4 + 2 + flairWidth + 2 + 16)));
+  console.log('-'.repeat(Math.min(130, 4 + 2 + userWidth + 2 + 12 + 2 + 4 + 2 + flairWidth + 2 + 16)));
 };
 
 const rl = createInterface({ input: stdin, output: stdout });
@@ -69,7 +70,7 @@ try {
       const user = clamp(`u/${row.username}`, userWidth);
       const flair = clamp(row.currentFlairText ?? '(none)', flairWidth);
       console.log(
-        `${marker.padStart(4)}  ${user}  ${String(row.points).padStart(7)}  ${String(row.tier).padStart(4)}  ${flair}  ${row.status}`,
+        `${marker.padStart(4)}  ${user}  ${String(row.points).padStart(12)}  ${String(row.tier).padStart(4)}  ${flair}  ${row.status}`,
       );
     }
 
