@@ -72,6 +72,43 @@ describe('Reddit read client', () => {
       expect(message).not.toContain('secret-bearing');
     }
   });
+
+  test('pages accessible contribution history without crediting beyond the requested cap', async () => {
+    const apiCalls: URL[] = [];
+    const post = (id: string, author: string) => ({
+      kind: 't3',
+      data: {
+        id,
+        subreddit: 'catgirlcoin',
+        title: `post ${id}`,
+        author,
+        permalink: `/r/catgirlcoin/comments/${id}/post/`,
+        created_utc: 1,
+      },
+    });
+    const fetcher: RedditFetch = async input => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/access_token')) return token();
+      apiCalls.push(url);
+      const after = url.searchParams.get('after');
+      if (after === null) {
+        return new Response(JSON.stringify({
+          data: { after: 't3_b', children: [post('a', 'one'), post('b', 'two')] },
+        }), { status: 200 });
+      }
+      expect(after).toBe('t3_b');
+      return new Response(JSON.stringify({
+        data: { after: 't3_d', children: [post('c', 'three'), post('d', 'four')] },
+      }), { status: 200 });
+    };
+    const client = new RedditReadClient(auth, { fetcher, sleep: async () => undefined });
+    const items = await client.newPostsHistory('catgirlcoin', 3);
+    expect(items.map(item => item.id)).toEqual(['a', 'b', 'c']);
+    expect(apiCalls.length).toBe(2);
+    expect(apiCalls[0]?.searchParams.get('count')).toBe('0');
+    expect(apiCalls[1]?.searchParams.get('count')).toBe('2');
+    expect(apiCalls[1]?.searchParams.get('limit')).toBe('1');
+  });
 });
 
 describe('rate helpers', () => {
