@@ -3,11 +3,14 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { TwitterClient } from '../vendor/maebot-twitter/src/index.ts';
 import { LiveWeeklyRedditPublisher, WeeklyRedditRelay } from './daily/weekly.ts';
+import { RedditDmRuntime } from './dm/runtime.ts';
+import { DmStore } from './dm/store.ts';
 import {
   dailyReviewApiConfig,
   internalApiConfig,
   modmailTerminalConfig,
   redditConfig,
+  redditDmConfig,
   redditModerationConfig,
   twitterApiConfig,
 } from './env.ts';
@@ -35,10 +38,15 @@ import { LiveTwitterRedditPublisher } from './twitter/publisher.ts';
 
 const redditCfg = redditConfig();
 const moderationCfg = redditModerationConfig();
+const dmCfg = redditDmConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
 const terminalCfg = modmailTerminalConfig();
+if (dmCfg !== null && moderationCfg === null) {
+  throw new Error('REDDIT_DM_ENABLED requires REDDIT_MODERATION_ENABLED so private moderation stays canonical');
+}
+
 const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
@@ -64,7 +72,7 @@ const moderationReviews = new ModerationReviewStore();
 const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
 const modmailAudit = new ModmailAuditStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_AUDIT_FILE']?.trim() || 'data/modmailAudit.pb'));
 const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env['REDDIT_MODMAIL_OUTBOX_FILE']?.trim() || 'data/modmailReplies.pb'));
-const terminal = terminalCfg === null ? null : new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox);
+const terminal = new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
@@ -103,6 +111,24 @@ const privateModmail = moderationCfg === null || reputation === null
       null,
       moderationPrivileges,
     );
+const directMessages = dmCfg === null
+  || moderationCfg === null
+  || moderationReader === null
+  || moderationWriter === null
+  || reputation === null
+  ? null
+  : new RedditDmRuntime(
+      redditCfg.sourceSubreddit,
+      redditCfg.auth.username,
+      moderationCfg.ai,
+      dmCfg.replyAi,
+      dmCfg.persona,
+      moderationReader,
+      moderationWriter,
+      new DmStore(dmCfg.stateFile),
+      reputation,
+      moderationPrivileges,
+    );
 
 const pollMs = (() => {
   const raw = process.env['REDDIT_TWITTER_POLL_MS']?.trim() || '5000';
@@ -111,8 +137,8 @@ const pollMs = (() => {
   return value;
 })();
 
-terminal?.start();
-if (terminal !== null) console.log(`Focused Reddit modmail terminal listening on ${terminal.address()}; public base=${terminalCfg?.publicBase ?? 'unavailable'}.`);
+terminal.start();
+console.log(`Focused Reddit modmail terminal listening on ${terminal.address()}; preview=${terminal.previewAddress()}; public base=${terminalCfg.publicBase ?? 'unavailable'}.`);
 
 const internal = internalCfg === null
   ? null
@@ -144,6 +170,14 @@ const tick = async (): Promise<void> => {
         privateModmailResult = await privateModmail.tick();
       } catch (error) {
         console.error(`[Reddit private moderation] tick failed: ${safeError(error)}`);
+      }
+    }
+    let dmResult = null;
+    if (directMessages !== null && dmCfg !== null) {
+      try {
+        dmResult = await directMessages.tick(dmCfg.batchSize);
+      } catch (error) {
+        console.error(`[Reddit DM] tick failed: ${safeError(error)}`);
       }
     }
     let moderationResult = null;
@@ -183,6 +217,18 @@ const tick = async (): Promise<void> => {
     )) {
       console.log(
         `[Reddit private moderation] inspected=${privateModmailResult.inspected} audited=${privateModmailResult.audited} apologies=${privateModmailResult.apologies} skipped=${privateModmailResult.skipped} failed=${privateModmailResult.failed}`,
+      );
+    }
+    if (dmResult !== null && (
+      dmResult.inspected > 0
+      || dmResult.replies > 0
+      || dmResult.apologies > 0
+      || dmResult.recovered > 0
+      || dmResult.uncertain > 0
+      || dmResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit DM] inspected=${dmResult.inspected} moderated=${dmResult.moderated} replies=${dmResult.replies} noReply=${dmResult.noReply} apologies=${dmResult.apologies} recovered=${dmResult.recovered} uncertain=${dmResult.uncertain} skipped=${dmResult.skipped} failed=${dmResult.failed}`,
       );
     }
     if (moderationResult !== null && (
@@ -253,10 +299,17 @@ if (moderation === null) {
 } else {
   console.log(`LLM post/comment/modmail moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
 }
+if (directMessages === null) {
+  console.log('Mae Reddit direct-message conversation handling is disabled by REDDIT_DM_ENABLED.');
+}
 
 if (privateModmail !== null) {
   const seeded = await privateModmail.bootstrap();
   console.log(`Private modmail moderation activation boundary established; existing relay events skipped=${seeded}.`);
+}
+if (directMessages !== null) {
+  const seeded = await directMessages.bootstrap();
+  console.log(`Reddit DM activation boundary established; historic incoming direct messages skipped=${seeded}.`);
 }
 if (postMirror !== null) await postMirror.tick();
 await startupSmoke();
@@ -271,7 +324,7 @@ const stop = (): void => {
   stopping = true;
   clearInterval(timer);
   internal?.stop();
-  terminal?.stop();
+  terminal.stop();
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
