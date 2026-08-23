@@ -69,6 +69,13 @@ const canonicalUser: ReputationUser = {
   seededAt: 1,
 };
 
+type ReputationSnapshot = {
+  readonly username: string;
+  readonly points: number;
+  readonly tier: number;
+  readonly status: string;
+};
+
 const fixture = async (withReputation: boolean) => {
   const root = await mkdtemp(join(tmpdir(), 'mae-internal-modmail-'));
   roots.push(root);
@@ -91,7 +98,7 @@ const fixture = async (withReputation: boolean) => {
 };
 
 describe('Reddit internal Modmail API', () => {
-  test('returns the canonical participant reputation with the canonical Reddit conversation', async () => {
+  test('returns only the canonical participant reputation snapshot with the canonical Reddit conversation', async () => {
     const { server, base } = await fixture(true);
     try {
       const response = await fetch(`${base}/v1/modmail/conversations/abc123`, {
@@ -100,15 +107,17 @@ describe('Reddit internal Modmail API', () => {
       expect(response.status).toBe(200);
       const body = await response.json() as {
         conversation: { id: string; participant: { name: string } | null };
-        reputation: ReputationUser | null;
+        reputation: ReputationSnapshot | null;
       };
       expect(body.conversation.id).toBe('abc123');
       expect(body.conversation.participant?.name).toBe('SomeUser');
-      expect(body.reputation).toMatchObject({
+      expect(body.reputation).toEqual({
         username: 'SomeUser',
         points: -4,
+        tier: 0,
         status: 'uncivil',
       });
+      expect(Object.keys(body.reputation ?? {}).sort()).toEqual(['points', 'status', 'tier', 'username']);
     } finally {
       server.stop();
     }
@@ -121,7 +130,7 @@ describe('Reddit internal Modmail API', () => {
         headers: { authorization: 'Bearer secret' },
       });
       expect(response.status).toBe(200);
-      const body = await response.json() as { reputation: ReputationUser | null };
+      const body = await response.json() as { reputation: ReputationSnapshot | null };
       expect(body.reputation).toBeNull();
     } finally {
       server.stop();
