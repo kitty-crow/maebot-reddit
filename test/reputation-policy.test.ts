@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { RedditFlairAssignment } from '../src/reddit/types.ts';
 import {
+  chooseFlairForTier,
   chooseTierOneFlair,
   moderationStatus,
   tierFlair,
@@ -43,10 +44,28 @@ describe('Reddit reputation tier policy', () => {
     expect(moderationStatus(assignment(':mae:'), true)).toEqual({ status: 'banned', points: -3 });
   });
 
-  test('uses the one-time tier-one variant probabilities without reroll policy in the store', () => {
+  test('uses the one-time tier flair probabilities at their exact boundaries', () => {
+    expect(chooseFlairForTier(1, () => 0)).toBe(':lisa:');
+    expect(chooseFlairForTier(1, () => 0.009999)).toBe(':lisa:');
+    expect(chooseFlairForTier(1, () => 0.01)).toBe(':mae:');
+
+    expect(chooseFlairForTier(2, () => 0)).toBe(':aoi:');
+    expect(chooseFlairForTier(2, () => 0.000999)).toBe(':aoi:');
+    expect(chooseFlairForTier(2, () => 0.001)).toBe(':kita:');
+
+    expect(chooseFlairForTier(3, () => 0)).toBe(':rin:');
+    expect(chooseFlairForTier(3, () => 0.000099)).toBe(':rin:');
+    expect(chooseFlairForTier(3, () => 0.0001)).toBe(':hana:');
+
+    expect(chooseFlairForTier(4, () => 0)).toBe(':celeste:');
+    expect(chooseFlairForTier(4, () => 0.999999)).toBe(':celeste:');
     expect(chooseTierOneFlair(() => 0)).toBe(':lisa:');
-    expect(chooseTierOneFlair(() => 0.009999)).toBe(':lisa:');
-    expect(chooseTierOneFlair(() => 0.01)).toBe(':mae:');
     expect(chooseTierOneFlair(() => 0.5)).toBe(':mae:');
+  });
+
+  test('rejects an invalid random source rather than silently skewing flair odds', () => {
+    expect(() => chooseFlairForTier(1, () => -0.1)).toThrow('[0, 1)');
+    expect(() => chooseFlairForTier(2, () => 1)).toThrow('[0, 1)');
+    expect(() => chooseFlairForTier(3, () => Number.NaN)).toThrow('[0, 1)');
   });
 });
