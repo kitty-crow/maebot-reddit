@@ -10,6 +10,7 @@ export type ModmailAuditConversationState = {
 
 const initial = (): JsonMap => ({
   schema: 1,
+  bootstrappedAt: 0,
   cursor: 0,
   conversations: {},
 });
@@ -17,6 +18,9 @@ const initial = (): JsonMap => ({
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail audit store');
   if (!isMap(value['conversations'])) value['conversations'] = {};
+  if (typeof value['bootstrappedAt'] !== 'number' || !Number.isSafeInteger(value['bootstrappedAt']) || value['bootstrappedAt'] < 0) {
+    value['bootstrappedAt'] = 0;
+  }
   if (typeof value['cursor'] !== 'number' || !Number.isSafeInteger(value['cursor']) || value['cursor'] < 0) {
     value['cursor'] = 0;
   }
@@ -46,6 +50,19 @@ export class ModmailAuditStore {
 
   public constructor(file = 'data/modmailAudit.pb') {
     this.store = new Store(file, initial());
+  }
+
+  public async hasBootstrap(): Promise<boolean> {
+    return integer(root(await this.store.read())['bootstrappedAt']) > 0;
+  }
+
+  public async markBootstrapped(at = Math.floor(Date.now() / 1_000)): Promise<void> {
+    if (!Number.isSafeInteger(at) || at < 1) throw new Error('Modmail audit bootstrap timestamp must be positive');
+    await this.store.edit(current => {
+      const value = root(current);
+      if (integer(value['bootstrappedAt']) === 0) value['bootstrappedAt'] = at;
+      return value;
+    });
   }
 
   public async cursor(): Promise<number> {
