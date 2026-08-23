@@ -8,6 +8,7 @@
     "start": "bun run src/main.ts",
     "audit:reddit": "bun run scripts/redditAudit.ts",
     "bootstrap:reputation": "bun run scripts/bootstrapReputation.ts",
+    "view:reputation": "bun run scripts/viewReputation.ts",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
     "clone:flairs": "bun run scripts/cloneFlairs.ts",
     "check": "bunx tsc -p tsconfig.json --noEmit && bun run check:types && bun run check:imports && bun run check:boundaries",
