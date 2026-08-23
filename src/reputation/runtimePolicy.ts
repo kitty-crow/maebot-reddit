@@ -3,6 +3,7 @@ import {
   BAN_TRIGGER_POINTS,
   RECOVERABLE_REPUTATION_FLOOR,
   REPUTATION_FLOOR,
+  UNCIVIL_CEILING,
   clampReputationPoints,
   tierForPoints,
   type ReputationStatus,
@@ -34,7 +35,7 @@ const permanent = (status: 'banned' | 'scam'): ReputationTransition => ({
 
 const activeStatus = (points: number): ReputationStatus => {
   if (points >= 1) return 'ordinary';
-  if (points <= -4) return 'uncivil';
+  if (points <= UNCIVIL_CEILING) return 'uncivil';
   return 'warned';
 };
 
