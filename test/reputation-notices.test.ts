@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { maeSupportRoute, violationNoticeText } from '../src/reputation/notices.ts';
 
 describe('Mae reputation notices', () => {
-  test('warned notices use Strikes and first-person constructive-review wording', () => {
+  test('warned notices use Strikes and the canonical constructive-resolution route', () => {
     const text = violationNoticeText({
       state: 'warned',
       contentKind: 'comment',
@@ -11,9 +11,9 @@ describe('Mae reputation notices', () => {
       points: -2,
     });
     expect(text).toContain('Current Strikes: 2/3');
-    expect(text).toContain('reply to me');
-    expect(text).toContain('I’ll reopen modmail immediately');
-    expect(text).not.toMatch(/genuine apology|apologise|apologize/iu);
+    expect(text).toContain('genuine apology to me');
+    expect(text).toContain('will reopen it immediately');
+    expect(text).toContain('does not change your score, Strikes, or Marks');
   });
 
   test('third strike remains warned and says the next loss can become uncivil', () => {
