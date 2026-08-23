@@ -1,3 +1,9 @@
+import type {
+  ModerationClassification,
+  ModerationDisposition,
+  ModerationRule,
+  ModerationVerdict,
+} from '../mod/classifier.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import type {
@@ -31,7 +37,11 @@ const mapField = (value: JsonMap, name: 'conversations' | 'messages'): JsonMap =
 const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
 const number = (value: Json | undefined): number | null =>
-  typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+const integer = (value: Json | undefined): number | null => {
+  const parsed = number(value);
+  return parsed !== null && Number.isSafeInteger(parsed) ? parsed : null;
+};
 const bool = (value: Json | undefined): boolean => value === true;
 
 const nullableText = (value: Json | undefined): string | null =>
@@ -40,6 +50,65 @@ const nullableText = (value: Json | undefined): string | null =>
 const delivery = (value: Json | undefined): DmDeliveryState => {
   if (value === 'seeded' || value === 'pending' || value === 'attempted' || value === 'sent' || value === 'no-reply') return value;
   throw new Error('Reddit DM delivery state is invalid');
+};
+
+const verdict = (value: Json | undefined): ModerationVerdict => {
+  if (value === 'clean' || value === 'low' || value === 'severe' || value === 'scam') return value;
+  throw new Error('Reddit DM moderation verdict is invalid');
+};
+
+const rule = (value: Json | undefined): ModerationRule => {
+  if (
+    value === 'none'
+    || value === 'rule_2'
+    || value === 'rule_3'
+    || value === 'rule_5'
+    || value === 'rule_6'
+    || value === 'reddit_site'
+    || value === 'other'
+  ) return value;
+  throw new Error('Reddit DM moderation rule is invalid');
+};
+
+const disposition = (value: Json | undefined): ModerationDisposition => {
+  if (value === 'allow' || value === 'remove') return value;
+  throw new Error('Reddit DM moderation disposition is invalid');
+};
+
+const classificationJson = (value: ModerationClassification): JsonMap => ({
+  verdict: value.verdict,
+  rule: value.rule,
+  disposition: value.disposition,
+  penaltyPoints: value.penaltyPoints,
+  confidence: value.confidence,
+  reason: value.reason,
+  evidence: [...value.evidence],
+});
+
+const classificationFrom = (value: Json | undefined): ModerationClassification | null => {
+  if (value === null || value === undefined) return null;
+  if (!isMap(value)) throw new Error('Reddit DM moderation classification is invalid');
+  const penaltyPoints = integer(value['penaltyPoints']);
+  const confidence = number(value['confidence']);
+  const reason = typeof value['reason'] === 'string' ? value['reason'] : null;
+  const evidence = value['evidence'];
+  if (penaltyPoints === null || penaltyPoints < 0 || confidence === null || reason === null || !Array.isArray(evidence)) {
+    throw new Error('Reddit DM moderation classification is incomplete');
+  }
+  const evidenceText: string[] = [];
+  for (const item of evidence) {
+    if (typeof item !== 'string') throw new Error('Reddit DM moderation evidence is invalid');
+    evidenceText.push(item);
+  }
+  return {
+    verdict: verdict(value['verdict']),
+    rule: rule(value['rule']),
+    disposition: disposition(value['disposition']),
+    penaltyPoints,
+    confidence,
+    reason,
+    evidence: evidenceText,
+  };
 };
 
 const messageJson = (value: RedditDirectMessage): JsonMap => ({
@@ -79,6 +148,7 @@ const messageFrom = (value: Json | undefined): RedditDirectMessage => {
 
 const stateJson = (value: DmMessageState): JsonMap => ({
   message: messageJson(value.message),
+  classification: value.classification === null ? null : classificationJson(value.classification),
   classificationApplied: value.classificationApplied,
   generatedReply: value.generatedReply,
   delivery: value.delivery,
@@ -89,7 +159,7 @@ const stateFrom = (value: Json | undefined): DmMessageState | null => {
   if (!isMap(value)) return null;
   const processedAt = value['processedAt'] === null || value['processedAt'] === undefined
     ? null
-    : number(value['processedAt']);
+    : integer(value['processedAt']);
   if (processedAt === null && value['processedAt'] !== null && value['processedAt'] !== undefined) {
     throw new Error('Reddit DM processedAt is invalid');
   }
@@ -99,6 +169,7 @@ const stateFrom = (value: Json | undefined): DmMessageState | null => {
   }
   return {
     message: messageFrom(value['message']),
+    classification: classificationFrom(value['classification']),
     classificationApplied: bool(value['classificationApplied']),
     generatedReply: typeof generated === 'string' ? generated : null,
     delivery: delivery(value['delivery']),
@@ -153,6 +224,7 @@ export class DmStore {
         if (states[message.fullname] !== undefined) continue;
         states[message.fullname] = stateJson({
           message,
+          classification: null,
           classificationApplied: false,
           generatedReply: null,
           delivery: 'seeded',
@@ -185,6 +257,7 @@ export class DmStore {
       }
       output = {
         message,
+        classification: null,
         classificationApplied: false,
         generatedReply: null,
         delivery: 'pending',
@@ -258,14 +331,18 @@ export class DmStore {
     return output;
   }
 
+  public async setClassification(fullname: string, classification: ModerationClassification): Promise<DmMessageState> {
+    return await this.update(fullname, state => ({ ...state, classification }));
+  }
+
   public async markModerated(fullname: string): Promise<DmMessageState> {
     return await this.update(fullname, state => ({ ...state, classificationApplied: true }));
   }
 
   public async setReply(fullname: string, reply: string): Promise<DmMessageState> {
-    const text = reply.trim();
-    if (text.length === 0 || text.length > 10_000) throw new Error('Reddit DM generated reply is invalid');
-    return await this.update(fullname, state => ({ ...state, generatedReply: text, delivery: 'pending' }));
+    const clean = reply.trim();
+    if (clean.length === 0 || clean.length > 10_000) throw new Error('Reddit DM generated reply is invalid');
+    return await this.update(fullname, state => ({ ...state, generatedReply: clean, delivery: 'pending' }));
   }
 
   public async markAttempted(fullname: string): Promise<DmMessageState> {
