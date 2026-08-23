@@ -51,7 +51,7 @@ describe('canonical Reddit moderation review API', () => {
 
     const response = await fetch(`${base}/v1/moderation/reviews/${encodeURIComponent(created.key)}`, { headers: auth });
     expect(response.status).toBe(200);
-    const body = await response.json() as { review: { key: string; decision: unknown } };
+    const body = await response.json() as { review: { key: string; decision: null } };
     expect(body.review.key).toBe(created.key);
     expect(body.review.decision).toBeNull();
   });
