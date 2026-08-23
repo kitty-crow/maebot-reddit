@@ -22,7 +22,7 @@ export type ReputationSubject = {
   readonly status: ReputationStatus;
 };
 
-export type ReputationContributionKind = 'post' | 'comment';
+export type ReputationContributionKind = 'post' | 'comment' | 'dm' | 'modmail';
 
 const permanent = (status: 'banned' | 'scam'): ReputationTransition => ({
   points: REPUTATION_FLOOR,
@@ -38,10 +38,7 @@ const activeStatus = (points: number): ReputationStatus => {
   return 'warned';
 };
 
-const active = (
-  points: number,
-  remove: boolean,
-): ReputationTransition => ({
+const active = (points: number, remove: boolean): ReputationTransition => ({
   points,
   tier: tierForPoints(points),
   status: activeStatus(points),
@@ -112,13 +109,33 @@ export const applyModerationClassification = (
   return severe(subject, classification);
 };
 
+export const applyPrivateModerationClassification = (
+  subject: ReputationSubject,
+  classification: ModerationClassification,
+): ReputationTransition => {
+  if (classification.verdict === 'clean') {
+    return {
+      points: subject.points,
+      tier: tierForPoints(subject.points),
+      status: subject.status,
+      remove: false,
+      ban: false,
+    };
+  }
+  const classified = applyModerationClassification(subject, classification);
+  return { ...classified, remove: false };
+};
+
 export const applyContributionPolicy = (
   subject: ReputationSubject,
   kind: ReputationContributionKind,
   classification: ModerationClassification,
 ): ReputationTransition => {
-  const classified = applyModerationClassification(subject, classification);
+  if (kind === 'dm' || kind === 'modmail') {
+    return applyPrivateModerationClassification(subject, classification);
+  }
 
+  const classified = applyModerationClassification(subject, classification);
   if (subject.status !== 'uncivil' || kind !== 'post') return classified;
 
   // Uncivil users are comment-only. Their posts are still LLM-audited, but a
