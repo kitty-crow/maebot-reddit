@@ -1,7 +1,6 @@
 import type {
   ConversationModerationClassifier,
   ModerationAiCfg,
-  ModerationClassifier,
 } from './classifier.ts';
 import { RedditModerationClassifier } from './classifier.ts';
 import type { ModerationPrivilegeSource } from './privileges.ts';
@@ -133,9 +132,7 @@ export class PrivateModmailRuntime {
 
     const conversation = await this.relay.conversation(event.conversationId);
     if (conversation === null) throw new Error(`Missing canonical modmail conversation ${event.conversationId}`);
-    const classifier: ModerationClassifier & { readonly conversationId?: string } = this.classifierFactory(
-      openaiConversationId ?? undefined,
-    );
+    const classifier = this.classifierFactory(openaiConversationId ?? undefined);
     const history = moderationHistoryFor(await this.reputation.raw(), event.author);
     const classification = await classifier.classify({
       kind: 'modmail',
