@@ -75,10 +75,17 @@ try {
     }
 
     if (end >= ranked.length) break;
-    const answer = (await rl.question('\nType q then Enter to continue, anything else to stop: ')).trim().toLowerCase();
-    if (answer !== 'q') {
-      console.log('Stopped before the end of the ranking.');
-      break;
+
+    while (true) {
+      const answer = (await rl.question('\nEnter = next page | x + Enter = close: ')).trim().toLowerCase();
+      if (answer === '') break;
+      if (answer === 'x') {
+        console.log('Closed reputation viewer.');
+        process.exitCode = 0;
+        start = ranked.length;
+        break;
+      }
+      console.log('Press Enter for the next page, or type x then press Enter to close.');
     }
   }
 } finally {
