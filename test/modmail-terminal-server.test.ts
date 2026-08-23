@@ -85,6 +85,21 @@ const tokenFrom = (publicUrl: string): string => {
 };
 
 describe('focused Reddit Modmail terminal', () => {
+  test('serves the exact UI in synthetic read-only preview mode without a Modmail token', async () => {
+    const { server, base, outbox } = await fixture();
+    expect(server.previewAddress()).toBe(`${base}/preview/`);
+    const response = await fetch(server.previewAddress());
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    const body = await response.text();
+    expect(body).toContain('Mae · Reddit Modmail');
+    expect(body).toContain('Synthetic read-only preview');
+    expect(body).toContain('Preview only');
+    expect(body).toContain('ExampleUser');
+    expect(await outbox.pending()).toHaveLength(0);
+    expect((await fetch(`${base}/preview/reply`, { method: 'POST' })).status).toBe(404);
+  });
+
   test('issues a short-lived one-conversation terminal and serves hardened no-store HTML', async () => {
     const { server, base } = await fixture();
     const link = await server.issue('abc123', { platform: 'discord', userId: '42', handle: 'AliceMod' });
