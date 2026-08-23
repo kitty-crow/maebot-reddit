@@ -19,14 +19,6 @@ export type ModmailParticipant = {
   readonly isDeleted: boolean;
 };
 
-export type ModmailRelayPlatform = 'discord' | 'telegram' | 'reddit';
-
-export type ModmailModeratorIdentity = {
-  readonly platform: Exclude<ModmailRelayPlatform, 'reddit'>;
-  readonly userId: string;
-  readonly handle: string;
-};
-
 export type ModmailMessage = {
   readonly id: string;
   readonly conversationId: string;
@@ -35,7 +27,6 @@ export type ModmailMessage = {
   readonly createdAt: number;
   readonly isInternal: boolean;
   readonly participatingAs: string | null;
-  readonly relayModerator?: ModmailModeratorIdentity | null;
 };
 
 export type ModmailConversation = {
@@ -54,6 +45,14 @@ export type ModmailConversation = {
 export type ModmailConversationPage = {
   readonly conversations: readonly ModmailConversation[];
   readonly after: string | null;
+};
+
+export type ModmailRelayPlatform = 'discord' | 'telegram' | 'reddit';
+
+export type ModmailModeratorIdentity = {
+  readonly platform: Exclude<ModmailRelayPlatform, 'reddit'>;
+  readonly userId: string;
+  readonly handle: string;
 };
 
 export type ModmailTerminalSession = {
