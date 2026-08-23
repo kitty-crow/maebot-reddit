@@ -677,7 +677,7 @@ export class ReputationStore {
         throw new Error(`Moderator u/${input.author} reached reputation mutation boundary`);
       }
 
-      const transition = applyContributionPolicy(previous, input.kind === 'post' ? 'post' : 'comment', input.classification);
+      const transition = applyContributionPolicy(previous, input.kind, input.classification);
       const desired = desiredFor(value, previous, transition.points, transition.tier, transition.status, input.fullname);
       const next: ReputationUser = {
         ...previous,
