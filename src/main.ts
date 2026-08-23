@@ -15,6 +15,7 @@ import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
 import { PrivateModmailRuntime } from './mod/privateRuntime.ts';
+import { ModerationPrivileges } from './mod/privileges.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { RedditModerationRuntime } from './mod/runtime.ts';
 import { ModmailAuditStore } from './modmail/auditStore.ts';
@@ -67,6 +68,9 @@ const terminal = terminalCfg === null ? null : new ModmailTerminalServer(termina
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
+const moderationPrivileges = moderationReader === null
+  ? null
+  : new ModerationPrivileges(redditCfg.sourceSubreddit, moderationReader);
 const moderation = moderationCfg === null || moderationReader === null || moderationWriter === null || reputation === null
   ? null
   : new RedditModerationRuntime(
@@ -98,6 +102,9 @@ const privateModmail = moderationCfg === null || reputation === null
       modmailStore,
       modmailAudit,
       reputation,
+      null,
+      null,
+      moderationPrivileges,
     );
 
 const pollMs = (() => {
