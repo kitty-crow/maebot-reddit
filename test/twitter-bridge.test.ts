@@ -9,7 +9,7 @@ import type {
   TwitterItem,
   TwitterPlatform,
 } from '../vendor/maebot-twitter/src/index.ts';
-import type { CanonicalDailyReview, DailyReviewApi } from '../src/review/client.ts';
+import type { CanonicalDailyReview, CanonicalWeeklyReview, DailyReviewApi } from '../src/review/client.ts';
 import { RedditStateStore } from '../src/store/state.ts';
 import {
   TwitterRedditBridge,
@@ -96,6 +96,10 @@ class FakeReviews implements DailyReviewApi {
     this.calls += 1;
     if (this.fail) throw new Error('review API temporarily unavailable');
     return this.value;
+  }
+
+  public async weekly(): Promise<readonly CanonicalWeeklyReview[]> {
+    return [];
   }
 }
 
