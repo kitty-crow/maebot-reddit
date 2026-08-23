@@ -80,21 +80,27 @@ describe('Twitter Reddit rendering', () => {
 });
 
 describe('sticky safety planner', () => {
-  test('recognises a post that is already sticky', () => {
-    expect(planSticky([post('one'), null], 'one')).toEqual({ action: 'already_sticky', slot: 1 });
-    expect(planSticky([null, post('two')], 't3_two')).toEqual({ action: 'already_sticky', slot: 2 });
+  test('recognises a post that is already highlighted in any API-visible slot', () => {
+    expect(planSticky([post('one'), null, null, null], 'one')).toEqual({ action: 'already_sticky', slot: 1 });
+    expect(planSticky([null, post('two'), null, null], 't3_two')).toEqual({ action: 'already_sticky', slot: 2 });
+    expect(planSticky([null, null, null, post('four')], 'four')).toEqual({ action: 'already_sticky', slot: 4 });
   });
 
-  test('uses an empty slot without disturbing an existing unrelated sticky', () => {
-    expect(planSticky([post('existing'), null], 'desired')).toEqual({ action: 'use_empty_slot', slot: 2 });
+  test('uses the first empty highlight slot without disturbing unrelated highlights', () => {
+    expect(planSticky([post('one'), post('two'), null, post('four')], 'desired')).toEqual({
+      action: 'use_empty_slot',
+      slot: 3,
+    });
   });
 
-  test('blocks when both sticky slots are occupied rather than selecting an eviction victim', () => {
-    expect(planSticky([post('one'), post('two')], 'desired')).toEqual({
+  test('blocks when all four API-visible highlight slots are occupied rather than evicting one', () => {
+    expect(planSticky([post('one'), post('two'), post('three'), post('four')], 'desired')).toEqual({
       action: 'blocked',
       occupied: [
         { slot: 1, postId: 'one' },
         { slot: 2, postId: 'two' },
+        { slot: 3, postId: 'three' },
+        { slot: 4, postId: 'four' },
       ],
     });
   });
