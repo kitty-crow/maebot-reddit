@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { reputationMuteEffects } from '../src/reputation/muteReconcile.ts';
 import {
   REDDIT_MUTE_CHUNK_MS,
   REDDIT_MUTE_RENEW_LEAD_MS,
@@ -55,5 +56,72 @@ describe('Reddit modmail mute reconciliation', () => {
       { redditMuted: true, appliedAt: start },
       start + 27 * day,
     )).toBe('mute');
+  });
+
+  test('persisted reputation state drives the actual runtime mute effect', () => {
+    const raw = {
+      users: {
+        alice: { username: 'Alice' },
+      },
+      discipline: {
+        alice: {
+          muteUntil: start + 30 * day,
+          mutePermanent: false,
+          redditMuted: false,
+          muteAppliedAt: null,
+        },
+      },
+    };
+
+    expect(reputationMuteEffects(raw, start)).toEqual([{
+      username: 'Alice',
+      action: 'mute',
+      note: 'Mae uncivil reputation state',
+    }]);
+  });
+
+  test('persisted runtime state does not produce the old two-day refresh spam', () => {
+    const raw = {
+      users: {
+        alice: { username: 'Alice' },
+      },
+      discipline: {
+        alice: {
+          muteUntil: start + 30 * day,
+          mutePermanent: false,
+          redditMuted: true,
+          muteAppliedAt: start,
+        },
+      },
+    };
+
+    expect(reputationMuteEffects(raw, start + 2 * day)).toEqual([]);
+    expect(reputationMuteEffects(raw, start + 27 * day)).toEqual([{
+      username: 'Alice',
+      action: 'mute',
+      note: 'Mae uncivil reputation state',
+    }]);
+  });
+
+  test('persisted runtime state explicitly unmutes when Mae debt expires', () => {
+    const raw = {
+      users: {
+        alice: { username: 'Alice' },
+      },
+      discipline: {
+        alice: {
+          muteUntil: start + 30 * day,
+          mutePermanent: false,
+          redditMuted: true,
+          muteAppliedAt: start + 27 * day,
+        },
+      },
+    };
+
+    expect(reputationMuteEffects(raw, start + 30 * day)).toEqual([{
+      username: 'Alice',
+      action: 'unmute',
+      note: 'Mae reputation mute ended',
+    }]);
   });
 });
