@@ -25,7 +25,7 @@ const encoder = new TextEncoder();
 
 const pageHeaders = (): Headers => new Headers({
   'cache-control': 'no-store, private',
-  'content-security-policy': "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://i.redd.it blob:; media-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://v.redd.it blob:; base-uri 'none'; form-action 'none'",
+  'content-security-policy': "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://i.redd.it blob: data:; media-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://v.redd.it blob:; base-uri 'none'; form-action 'none'",
   'content-type': 'text/html; charset=utf-8',
   'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
   'referrer-policy': 'no-referrer',
@@ -62,7 +62,13 @@ const attachmentIds = (value: Json | undefined): readonly string[] | null => {
 const safeHandle = (value: string): string => value.trim().slice(0, 128);
 const fileName = (value: string | null): string | null => {
   if (value === null) return null;
-  const name = value.trim();
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  const name = decoded.trim();
   return name.length > 0 && name.length <= 180 ? name : null;
 };
 
