@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { flairAssignments, flairTemplates, moderators, rules } from '../src/reddit/decode.ts';
+import { flairAssignments, flairTemplates, moderators, relationshipUsers, rules } from '../src/reddit/decode.ts';
 
 describe('Reddit API decoders', () => {
   test('decodes wrapped moderator listings', () => {
@@ -27,6 +27,35 @@ describe('Reddit API decoders', () => {
     expect(page.items).toEqual([
       { name: 'mod', id: 'abc', permissions: ['posts', 'flair'] },
       { name: 'owner', id: null, permissions: ['all'] },
+    ]);
+    expect(page.after).toBe('next');
+  });
+
+  test('decodes wrapped relationship-user listings', () => {
+    const page = relationshipUsers({
+      kind: 'UserList',
+      data: {
+        after: null,
+        children: [{ kind: 't2', data: { name: 'blocked-user', note: 'reason', date: 123 } }],
+      },
+    }, 'banned users');
+    expect(page.items).toEqual([{ username: 'blocked-user', note: 'reason', date: 123 }]);
+  });
+
+  test('decodes live direct-child relationship-user listings even when data is null', () => {
+    const page = relationshipUsers({
+      kind: 'UserList',
+      data: {
+        after: 'next',
+        children: [
+          { name: 'blocked-user', note: null, date: 123, data: null },
+          { name: 'other-user', note: 'manual ban', date: null },
+        ],
+      },
+    }, 'banned users');
+    expect(page.items).toEqual([
+      { username: 'blocked-user', note: null, date: 123 },
+      { username: 'other-user', note: 'manual ban', date: null },
     ]);
     expect(page.after).toBe('next');
   });
