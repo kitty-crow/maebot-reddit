@@ -83,7 +83,15 @@ describe('canonical Reddit moderation review API', () => {
     const response = await fetch(`${base}/v1/moderation/reviews/${encodeURIComponent(created.key)}`, { headers: auth });
     expect(response.status).toBe(200);
     const body = await response.json() as {
-      review: { decision: { choice: string; platform: string; userName: string } | null };
+      review: {
+        decision: {
+          choice: string;
+          platform: string;
+          userId: string;
+          userName: string;
+          at: number;
+        } | null;
+      };
     };
     expect(body.review.decision).toEqual({
       choice: 'reject',
