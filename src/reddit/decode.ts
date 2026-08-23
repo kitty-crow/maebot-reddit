@@ -24,6 +24,36 @@ export type RedditRelationshipUser = {
 
 const nullableName = (v: Json | undefined): string | null => typeof v === 'string' && v !== '[deleted]' ? v : null;
 
+const cleanUrl = (value: string): string => value.replaceAll('&amp;', '&').trim();
+const httpUrl = (value: string): boolean => /^https?:\/\//iu.test(value);
+
+const collectMedia = (value: Json | undefined, out: Set<string>): void => {
+  if (typeof value === 'string') {
+    const url = cleanUrl(value);
+    if (httpUrl(url)) out.add(url);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectMedia(item, out);
+    return;
+  }
+  if (value === null || value === undefined || typeof value !== 'object') return;
+  for (const child of Object.values(value)) collectMedia(child, out);
+};
+
+const mediaUrls = (row: JsonMap): readonly string[] => {
+  const out = new Set<string>();
+  const direct = optStr(row['url_overridden_by_dest']) ?? optStr(row['url']);
+  if (direct !== null && /(?:i\.redd\.it|preview\.redd\.it|external-preview\.redd\.it|\.gif(?:v)?(?:$|[?#])|\.(?:avif|jpe?g|png|webp)(?:$|[?#]))/iu.test(direct)) {
+    out.add(cleanUrl(direct));
+  }
+  collectMedia(row['preview'], out);
+  collectMedia(row['media'], out);
+  collectMedia(row['secure_media'], out);
+  collectMedia(row['media_metadata'], out);
+  return [...out].slice(0, 12);
+};
+
 const rows = (raw: Json, name: string): { readonly data: JsonMap; readonly after: string | null }[] => {
   const root = mapVal(raw, name);
   const data = mapVal(root['data'], `${name}.data`);
@@ -217,6 +247,8 @@ const post = (row: JsonMap): RedditPost => {
     locked: boolVal(row['locked'] ?? false, 'post.locked'),
     over18: boolVal(row['over_18'] ?? false, 'post.over_18'),
     crosspostParent: optStr(row['crosspost_parent']),
+    score: Math.floor(optNum(row['score']) ?? 0),
+    mediaUrls: mediaUrls(row),
   };
 };
 
@@ -242,6 +274,8 @@ const comment = (row: JsonMap): RedditComment => {
     distinguished: optStr(row['distinguished']),
     stickied: optBool(row['stickied']) ?? false,
     removedByCategory: optStr(row['removed_by_category']),
+    score: Math.floor(optNum(row['score']) ?? 0),
+    mediaUrls: mediaUrls(row),
   };
 };
 
