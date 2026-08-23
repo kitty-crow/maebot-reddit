@@ -1,5 +1,6 @@
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
+import type { ModmailMediaAttachment } from './media/types.ts';
 import type { ModmailModeratorIdentity } from './types.ts';
 
 export type ModmailReplyIntent = {
@@ -7,6 +8,7 @@ export type ModmailReplyIntent = {
   readonly conversationId: string;
   readonly moderator: ModmailModeratorIdentity;
   readonly text: string;
+  readonly attachments: readonly ModmailMediaAttachment[];
   readonly bodyMarkdown: string;
   readonly createdAt: number;
   readonly appliedAt: number | null;
@@ -26,6 +28,34 @@ const text = (value: Json | undefined): string | null =>
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 
+const attachmentFrom = (value: Json | undefined): ModmailMediaAttachment | null => {
+  if (!isMap(value)) return null;
+  const id = text(value['id']);
+  const conversationId = text(value['conversationId']);
+  const name = text(value['name']);
+  const mimeType = text(value['mimeType']);
+  const kind = value['kind'];
+  const url = text(value['url']);
+  const size = integerOrNull(value['size']);
+  const createdAt = integerOrNull(value['createdAt']);
+  if (
+    id === null || conversationId === null || name === null || mimeType === null || url === null
+    || (kind !== 'image' && kind !== 'video') || size === null || createdAt === null
+  ) return null;
+  return { id, conversationId, name, mimeType, kind, url, size, createdAt };
+};
+
+const attachmentJson = (value: ModmailMediaAttachment): JsonMap => ({
+  id: value.id,
+  conversationId: value.conversationId,
+  name: value.name,
+  mimeType: value.mimeType,
+  kind: value.kind,
+  url: value.url,
+  size: value.size,
+  createdAt: value.createdAt,
+});
+
 const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
   if (!isMap(value) || !isMap(value['moderator'])) return null;
   const key = text(value['key']);
@@ -38,11 +68,15 @@ const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
     key === null || conversationId === null || userId === null || handle === null || bodyMarkdown === null
     || (platform !== 'discord' && platform !== 'telegram')
   ) return null;
+  const attachments = Array.isArray(value['attachments'])
+    ? value['attachments'].map(attachmentFrom).filter((item): item is ModmailMediaAttachment => item !== null)
+    : [];
   return {
     key,
     conversationId,
     moderator: { platform, userId, handle },
     text: text(value['text']) ?? '',
+    attachments,
     bodyMarkdown,
     createdAt: integerOrNull(value['createdAt']) ?? 0,
     appliedAt: integerOrNull(value['appliedAt']),
@@ -59,6 +93,7 @@ const replyJson = (value: ModmailReplyIntent): JsonMap => ({
     handle: value.moderator.handle,
   },
   text: value.text,
+  attachments: value.attachments.map(attachmentJson),
   bodyMarkdown: value.bodyMarkdown,
   createdAt: value.createdAt,
   appliedAt: value.appliedAt,
@@ -70,10 +105,23 @@ export const modmailReplyAttribution = (moderator: ModmailModeratorIdentity): st
   return `**Reply from ${moderator.handle} via ${platform}:**`;
 };
 
-export const attributedModmailReply = (moderator: ModmailModeratorIdentity, textBody: string): string => {
-  const text = textBody.trim();
-  if (text.length === 0) throw new Error('Modmail reply cannot be empty');
-  return `${modmailReplyAttribution(moderator)}\n\n${text}`;
+const attachmentLabel = (attachment: ModmailMediaAttachment): string => {
+  const icon = attachment.kind === 'image' ? '🖼️' : '🎞️';
+  const name = attachment.name.replace(/[\[\]]/gu, '_');
+  return `- [${icon} ${name}](${attachment.url})`;
+};
+
+export const attributedModmailReply = (
+  moderator: ModmailModeratorIdentity,
+  textBody: string,
+  attachments: readonly ModmailMediaAttachment[] = [],
+): string => {
+  const body = textBody.trim();
+  if (body.length === 0 && attachments.length === 0) throw new Error('Modmail reply cannot be empty');
+  const parts = [modmailReplyAttribution(moderator)];
+  if (body.length > 0) parts.push(body);
+  if (attachments.length > 0) parts.push(`**Attachments:**\n${attachments.map(attachmentLabel).join('\n')}`);
+  return parts.join('\n\n');
 };
 
 export class ModmailReplyOutbox {
@@ -88,13 +136,18 @@ export class ModmailReplyOutbox {
     readonly conversationId: string;
     readonly moderator: ModmailModeratorIdentity;
     readonly text: string;
+    readonly attachments?: readonly ModmailMediaAttachment[];
     readonly createdAt?: number;
   }): Promise<ModmailReplyIntent> {
     const key = input.key.trim();
     const conversationId = input.conversationId.trim();
+    const attachments = input.attachments ?? [];
     if (key.length === 0) throw new Error('Modmail reply idempotency key is required');
     if (!/^[A-Za-z0-9]+$/u.test(conversationId)) throw new Error('Modmail reply conversation id is invalid');
-    const bodyMarkdown = attributedModmailReply(input.moderator, input.text);
+    if (attachments.some(attachment => attachment.conversationId !== conversationId)) {
+      throw new Error('Modmail attachment belongs to another conversation');
+    }
+    const bodyMarkdown = attributedModmailReply(input.moderator, input.text, attachments);
     let output: ModmailReplyIntent | null = null;
     await this.store.edit(current => {
       const value = root(current);
@@ -116,6 +169,7 @@ export class ModmailReplyOutbox {
         conversationId,
         moderator: input.moderator,
         text: input.text.trim(),
+        attachments,
         bodyMarkdown,
         createdAt: input.createdAt ?? Math.floor(Date.now() / 1_000),
         appliedAt: null,
