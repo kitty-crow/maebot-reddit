@@ -1,8 +1,8 @@
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 
-export type ReputationTier = 0 | 1 | 2 | 3 | 4;
+export type ReputationTier = 0 | 1 | 2 | 3 | 4 | 5;
 export type ReputationStatus = 'ordinary' | 'warned' | 'uncivil' | 'banned' | 'scam' | 'moderator' | 'unmapped';
-export type OrdinaryTier = Exclude<ReputationTier, 0>;
+export type OrdinaryTier = 1 | 2 | 3 | 4;
 export type TierFlairText = ':mae:' | ':lisa:' | ':kita:' | ':aoi:' | ':hana:' | ':rin:' | ':celeste:';
 
 export type TierFlair = {
