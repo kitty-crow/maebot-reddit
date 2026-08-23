@@ -202,6 +202,32 @@ const validThread = (value: string): void => {
   if (!/^t4_[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit DM thread ${value}`);
 };
 
+const cleanUsername = (username: string): string => {
+  const value = username.trim();
+  if (value.length === 0) throw new Error('Reddit DM username is required');
+  return value;
+};
+
+const conversationState = (
+  conversations: JsonMap,
+  threadFullname: string,
+  username: string,
+): DmConversationState => {
+  const cleanUser = cleanUsername(username);
+  const existing = conversationFrom(conversations[threadFullname]);
+  if (existing === null) {
+    return {
+      username: cleanUser,
+      moderationConversationId: null,
+      responseConversationId: null,
+    };
+  }
+  if (existing.username.toLowerCase() !== cleanUser.toLowerCase()) {
+    throw new Error(`Reddit DM thread ${threadFullname} changed correspondent identity`);
+  }
+  return existing;
+};
+
 export class DmStore {
   private readonly store: Store;
 
@@ -272,23 +298,13 @@ export class DmStore {
 
   public async conversation(threadFullname: string, username: string): Promise<DmConversationState> {
     validThread(threadFullname);
-    const cleanUser = username.trim();
-    if (cleanUser.length === 0) throw new Error('Reddit DM username is required');
     let output: DmConversationState | null = null;
     await this.store.edit(current => {
       const value = root(current);
       const conversations = mapField(value, 'conversations');
-      const existing = conversationFrom(conversations[threadFullname]);
-      if (existing !== null) {
-        output = existing;
-        return value;
-      }
-      output = {
-        username: cleanUser,
-        moderationConversationId: null,
-        responseConversationId: null,
-      };
-      conversations[threadFullname] = conversationJson(output);
+      const next = conversationState(conversations, threadFullname, username);
+      conversations[threadFullname] = conversationJson(next);
+      output = next;
       return value;
     });
     if (output === null) throw new Error('Reddit DM conversation state creation failed');
@@ -302,12 +318,12 @@ export class DmStore {
     responseConversationId: string | null,
   ): Promise<void> {
     validThread(threadFullname);
-    const cleanUser = username.trim();
-    if (cleanUser.length === 0) throw new Error('Reddit DM username is required');
     await this.store.edit(current => {
       const value = root(current);
-      mapField(value, 'conversations')[threadFullname] = conversationJson({
-        username: cleanUser,
+      const conversations = mapField(value, 'conversations');
+      const previous = conversationState(conversations, threadFullname, username);
+      conversations[threadFullname] = conversationJson({
+        username: previous.username,
         moderationConversationId,
         responseConversationId,
       });
@@ -335,6 +351,35 @@ export class DmStore {
     return await this.update(fullname, state => ({ ...state, classification }));
   }
 
+  public async setClassificationWithConversation(
+    fullname: string,
+    classification: ModerationClassification,
+    threadFullname: string,
+    username: string,
+    moderationConversationId: string | null,
+  ): Promise<DmMessageState> {
+    validFullname(fullname);
+    validThread(threadFullname);
+    let output: DmMessageState | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const states = mapField(value, 'messages');
+      const conversations = mapField(value, 'conversations');
+      const existing = stateFrom(states[fullname]);
+      if (existing === null) throw new Error(`Unknown Reddit DM ${fullname}`);
+      const previousConversation = conversationState(conversations, threadFullname, username);
+      output = { ...existing, classification };
+      states[fullname] = stateJson(output);
+      conversations[threadFullname] = conversationJson({
+        ...previousConversation,
+        moderationConversationId,
+      });
+      return value;
+    });
+    if (output === null) throw new Error('Reddit DM classification transaction failed');
+    return output;
+  }
+
   public async markModerated(fullname: string): Promise<DmMessageState> {
     return await this.update(fullname, state => ({ ...state, classificationApplied: true }));
   }
@@ -343,6 +388,37 @@ export class DmStore {
     const clean = reply.trim();
     if (clean.length === 0 || clean.length > 10_000) throw new Error('Reddit DM generated reply is invalid');
     return await this.update(fullname, state => ({ ...state, generatedReply: clean, delivery: 'pending' }));
+  }
+
+  public async setReplyWithConversation(
+    fullname: string,
+    reply: string,
+    threadFullname: string,
+    username: string,
+    responseConversationId: string | null,
+  ): Promise<DmMessageState> {
+    const clean = reply.trim();
+    if (clean.length === 0 || clean.length > 10_000) throw new Error('Reddit DM generated reply is invalid');
+    validFullname(fullname);
+    validThread(threadFullname);
+    let output: DmMessageState | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const states = mapField(value, 'messages');
+      const conversations = mapField(value, 'conversations');
+      const existing = stateFrom(states[fullname]);
+      if (existing === null) throw new Error(`Unknown Reddit DM ${fullname}`);
+      const previousConversation = conversationState(conversations, threadFullname, username);
+      output = { ...existing, generatedReply: clean, delivery: 'pending' };
+      states[fullname] = stateJson(output);
+      conversations[threadFullname] = conversationJson({
+        ...previousConversation,
+        responseConversationId,
+      });
+      return value;
+    });
+    if (output === null) throw new Error('Reddit DM reply transaction failed');
+    return output;
   }
 
   public async markAttempted(fullname: string): Promise<DmMessageState> {
@@ -357,6 +433,36 @@ export class DmStore {
   public async markNoReply(fullname: string, at: number): Promise<DmMessageState> {
     if (!Number.isSafeInteger(at) || at < 0) throw new Error('Reddit DM processed time must be non-negative');
     return await this.update(fullname, state => ({ ...state, generatedReply: null, delivery: 'no-reply', processedAt: at }));
+  }
+
+  public async markNoReplyWithConversation(
+    fullname: string,
+    at: number,
+    threadFullname: string,
+    username: string,
+    responseConversationId: string | null,
+  ): Promise<DmMessageState> {
+    if (!Number.isSafeInteger(at) || at < 0) throw new Error('Reddit DM processed time must be non-negative');
+    validFullname(fullname);
+    validThread(threadFullname);
+    let output: DmMessageState | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const states = mapField(value, 'messages');
+      const conversations = mapField(value, 'conversations');
+      const existing = stateFrom(states[fullname]);
+      if (existing === null) throw new Error(`Unknown Reddit DM ${fullname}`);
+      const previousConversation = conversationState(conversations, threadFullname, username);
+      output = { ...existing, generatedReply: null, delivery: 'no-reply', processedAt: at };
+      states[fullname] = stateJson(output);
+      conversations[threadFullname] = conversationJson({
+        ...previousConversation,
+        responseConversationId,
+      });
+      return value;
+    });
+    if (output === null) throw new Error('Reddit DM no-reply transaction failed');
+    return output;
   }
 
   public async attempted(): Promise<readonly DmMessageState[]> {
