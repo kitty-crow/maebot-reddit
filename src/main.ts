@@ -7,14 +7,18 @@ import {
   dailyReviewApiConfig,
   internalApiConfig,
   redditConfig,
+  redditModerationConfig,
   twitterApiConfig,
 } from './env.ts';
 import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
+import { RedditModerationRuntime } from './mod/runtime.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
+import { safeError } from './reddit/error.ts';
 import { RedditMutationClient } from './reddit/mutate.ts';
 import { DailyReviewClient } from './review/client.ts';
 import { RedditStateStore } from './store/state.ts';
@@ -22,6 +26,7 @@ import { TwitterRedditBridge } from './twitter/bridge.ts';
 import { LiveTwitterRedditPublisher } from './twitter/publisher.ts';
 
 const redditCfg = redditConfig();
+const moderationCfg = redditModerationConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
@@ -46,6 +51,15 @@ const postMirror = singleTarget
       redditCfg.primarySubreddit,
       redditCfg.sourceSubreddit,
     );
+const moderation = moderationCfg === null
+  ? null
+  : new RedditModerationRuntime(
+      redditCfg.sourceSubreddit,
+      moderationCfg,
+      new RedditReadClient(redditCfg.auth),
+      new RedditMutationClient(redditCfg.auth),
+      new ReputationStore(moderationCfg.stateFile),
+    );
 
 const pollMs = (() => {
   const raw = process.env['REDDIT_TWITTER_POLL_MS']?.trim() || '5000';
@@ -69,6 +83,14 @@ const tick = async (): Promise<void> => {
     const mirror = postMirror === null ? null : await postMirror.tick();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
+    let moderationResult = null;
+    if (moderation !== null) {
+      try {
+        moderationResult = await moderation.tick();
+      } catch (error) {
+        console.error(`[Reddit moderation] tick failed: ${safeError(error)}`);
+      }
+    }
     if (mirror !== null && (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0)) {
       console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
     }
@@ -80,6 +102,17 @@ const tick = async (): Promise<void> => {
     }
     if (weeklyResult.inspected > 0 || weeklyResult.completed > 0 || weeklyResult.failed > 0) {
       console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
+    }
+    if (moderationResult !== null && (
+      moderationResult.audited > 0
+      || moderationResult.exempt > 0
+      || moderationResult.scoreCredits > 0
+      || moderationResult.effectsApplied > 0
+      || moderationResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
+      );
     }
   } finally {
     ticking = false;
@@ -130,7 +163,11 @@ if (singleTarget) {
 } else {
   console.log(`Mae Reddit Twitter consumer, weekly Daily Task relay and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
 }
-console.log('Legacy comment/submission moderation ingestion is intentionally offline during this cutover window.');
+if (moderation === null) {
+  console.log('LLM comment/submission moderation is disabled by REDDIT_MODERATION_ENABLED.');
+} else {
+  console.log(`LLM comment/submission moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
+}
 
 if (postMirror !== null) await postMirror.tick();
 await startupSmoke();
