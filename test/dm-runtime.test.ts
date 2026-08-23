@@ -56,6 +56,7 @@ const incoming = (
   id: string,
   body = 'Hello Mae',
   firstMessageFullname: string | null = null,
+  isNew = true,
 ): RedditDirectMessage => ({
   id,
   fullname: `t4_${id}`,
@@ -66,7 +67,7 @@ const incoming = (
   createdUtc: Number(id.replace(/\D/gu, '')) || 100,
   parentFullname: null,
   firstMessageFullname,
-  isNew: true,
+  isNew,
   wasComment: false,
 });
 
@@ -85,14 +86,12 @@ const sentReply = (id: string, parent: string, body: string): RedditDirectMessag
 });
 
 type ReaderState = {
-  history: RedditDirectMessage[];
-  unread: RedditDirectMessage[];
+  inbox: RedditDirectMessage[];
   sent: RedditDirectMessage[];
 };
 
 const reader = (state: ReaderState): DmReader => ({
-  directMessageHistory: async max => state.history.slice(0, max),
-  unreadDirectMessages: async max => state.unread.slice(0, max),
+  inboxDirectMessages: async max => state.inbox.slice(0, max),
   sentDirectMessages: async max => state.sent.slice(0, max),
 });
 
@@ -155,10 +154,10 @@ const responder = (
 };
 
 describe('Reddit direct-message runtime', () => {
-  test('first activation seeds history without retroactive moderation or replies, then processes a new DM exactly once', async () => {
+  test('first activation seeds inbox history without retroactive moderation or replies, then processes a new DM exactly once', async () => {
     const dmStore = await store();
     const old = incoming('100');
-    const state: ReaderState = { history: [old], unread: [old], sent: [] };
+    const state: ReaderState = { inbox: [old], sent: [] };
     const writes: WriterState = { replies: [], reads: [] };
     const moderationIds: Array<string | undefined> = [];
     const moderationItems: ModerationItem[] = [];
@@ -197,9 +196,9 @@ describe('Reddit direct-message runtime', () => {
     expect(writes.replies).toHaveLength(0);
 
     const live = incoming('200', 'Can you help me?', old.fullname);
-    state.unread = [live];
+    state.inbox = [live, old];
     const first = await runtime.tick();
-    expect(first).toMatchObject({ inspected: 1, moderated: 1, replies: 1, noReply: 0, failed: 0 });
+    expect(first).toMatchObject({ inspected: 2, moderated: 1, replies: 1, noReply: 0, failed: 0 });
     expect(mutations).toBe(1);
     expect(moderationItems).toHaveLength(1);
     expect(moderationItems[0]?.kind).toBe('dm');
@@ -220,6 +219,27 @@ describe('Reddit direct-message runtime', () => {
     expect(moderationItems).toHaveLength(1);
   });
 
+  test('already-read inbox DM is still processed once because unread state is not the discovery boundary', async () => {
+    const dmStore = await store();
+    await dmStore.seed([], 1);
+    const readMessage = incoming('250', 'I opened this before Mae polled.', null, false);
+    const state: ReaderState = { inbox: [readMessage], sent: [] };
+    const writes: WriterState = { replies: [], reads: [] };
+    const runtime = new RedditDmRuntime(
+      'catgirlcoin', 'this_is_the_mae', cfg, cfg, 'Mae persona',
+      reader(state), writer(writes), dmStore, reputation(user()),
+      null,
+      () => ({ conversationId: 'conv_mod', classify: async () => clean }),
+      responder([], []),
+      { classify: async () => ({ genuineApology: false, reason: 'no' }) },
+    );
+
+    expect(await runtime.tick()).toMatchObject({ moderated: 1, replies: 1, failed: 0 });
+    expect(writes.replies).toHaveLength(1);
+    expect((await runtime.tick()).replies).toBe(0);
+    expect(writes.replies).toHaveLength(1);
+  });
+
   test('recovers a crash after Reddit accepted a reply without sending it twice', async () => {
     const dmStore = await store();
     await dmStore.seed([], 1);
@@ -231,8 +251,7 @@ describe('Reddit direct-message runtime', () => {
     await dmStore.markAttempted(live.fullname);
 
     const state: ReaderState = {
-      history: [],
-      unread: [live],
+      inbox: [live],
       sent: [sentReply('301', live.fullname, 'Recovered reply')],
     };
     const writes: WriterState = { replies: [], reads: [] };
@@ -263,7 +282,7 @@ describe('Reddit direct-message runtime', () => {
     await dmStore.setReply(live.fullname, 'Maybe already sent');
     await dmStore.markAttempted(live.fullname);
 
-    const state: ReaderState = { history: [], unread: [live], sent: [] };
+    const state: ReaderState = { inbox: [live], sent: [] };
     const writes: WriterState = { replies: [], reads: [] };
     const runtime = new RedditDmRuntime(
       'catgirlcoin', 'this_is_the_mae', cfg, cfg, 'Mae persona',
@@ -285,7 +304,7 @@ describe('Reddit direct-message runtime', () => {
     const dmStore = await store();
     await dmStore.seed([], 1);
     const live = incoming('500', 'I was wrong. I should not have spoken to you like that.');
-    const state: ReaderState = { history: [], unread: [live], sent: [] };
+    const state: ReaderState = { inbox: [live], sent: [] };
     const writes: WriterState = { replies: [], reads: [] };
     let clears = 0;
     let mutations = 0;
@@ -312,7 +331,7 @@ describe('Reddit direct-message runtime', () => {
     const dmStore = await store();
     await dmStore.seed([], 1);
     const live = incoming('600', 'Hi Mae');
-    const state: ReaderState = { history: [], unread: [live], sent: [] };
+    const state: ReaderState = { inbox: [live], sent: [] };
     const writes: WriterState = { replies: [], reads: [] };
     let moderationCalls = 0;
     let mutationCalls = 0;
