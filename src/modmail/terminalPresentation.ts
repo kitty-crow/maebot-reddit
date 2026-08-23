@@ -1,8 +1,15 @@
-import { modmailReplyAttribution, type ModmailReplyIntent } from './outbox.ts';
+import type { ModmailReplyIntent } from './outbox.ts';
 import type { ModmailConversation, ModmailMessage } from './types.ts';
 
 export type TerminalMessageSide = 'participant' | 'moderator' | 'internal';
 export type TerminalMessageOrigin = 'Reddit' | 'Discord' | 'Telegram';
+
+export type TerminalMediaView = {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'image' | 'video';
+  readonly url: string;
+};
 
 export type TerminalMessageView = {
   readonly id: string;
@@ -11,6 +18,7 @@ export type TerminalMessageView = {
   readonly side: TerminalMessageSide;
   readonly sender: string;
   readonly origin: TerminalMessageOrigin;
+  readonly attachments: readonly TerminalMediaView[];
 };
 
 export type TerminalConversationView = {
@@ -38,9 +46,6 @@ const sideFor = (conversation: ModmailConversation, message: ModmailMessage): Te
   const author = message.author?.name?.toLowerCase() ?? null;
   const participant = conversation.participant?.name?.toLowerCase() ?? null;
   if (author !== null && participant !== null && author === participant) return 'participant';
-
-  // Reddit can emit system/deleted-author entries that are neither participant
-  // nor moderator speech. Keep those centred instead of falsely attributing them.
   return 'internal';
 };
 
@@ -66,20 +71,20 @@ const appliedMatch = (
   return selected;
 };
 
-const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): TerminalMessageView => {
-  const prefix = `${modmailReplyAttribution(reply.moderator)}\n\n`;
-  const body = message.bodyMarkdown.startsWith(prefix)
-    ? message.bodyMarkdown.slice(prefix.length)
-    : reply.text;
-  return {
-    id: message.id,
-    bodyMarkdown: body,
-    createdAt: message.createdAt,
-    side: 'moderator',
-    sender: reply.moderator.handle,
-    origin: reply.moderator.platform === 'discord' ? 'Discord' : 'Telegram',
-  };
-};
+const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): TerminalMessageView => ({
+  id: message.id,
+  bodyMarkdown: reply.text,
+  createdAt: message.createdAt,
+  side: 'moderator',
+  sender: reply.moderator.handle,
+  origin: reply.moderator.platform === 'discord' ? 'Discord' : 'Telegram',
+  attachments: reply.attachments.map(attachment => ({
+    id: attachment.id,
+    name: attachment.name,
+    kind: attachment.kind,
+    url: attachment.url,
+  })),
+});
 
 export const presentModmailConversation = (
   conversation: ModmailConversation,
@@ -99,6 +104,7 @@ export const presentModmailConversation = (
       side,
       sender: redditHandle(message.author?.name ?? null),
       origin: 'Reddit' as const,
+      attachments: [],
     };
   });
   return {
