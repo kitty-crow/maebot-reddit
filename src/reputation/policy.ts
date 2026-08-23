@@ -1,6 +1,8 @@
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 
 export const REPUTATION_FLOOR = -999_999_999;
+export const RECOVERABLE_REPUTATION_FLOOR = -9;
+export const BAN_TRIGGER_POINTS = -10;
 export const PAWSOME_POINTS = 9_999;
 export const MEMBER_REPUTATION_CEILING = PAWSOME_POINTS;
 export const MODERATOR_REPUTATION_CEILING = 999_999_999;
