@@ -1,13 +1,22 @@
+import { createHash } from 'node:crypto';
+import type { ModerationClassification } from '../mod/classifier.ts';
 import type { RedditFlairTemplate } from '../reddit/types.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { Store } from '../store/store.ts';
-import type { ReputationStatus, ReputationTier } from './policy.ts';
+import {
+  chooseFlairForTier,
+  type OrdinaryTier,
+  type ReputationStatus,
+  type ReputationTier,
+} from './policy.ts';
+import { applyModerationClassification } from './runtimePolicy.ts';
 
 export type ReputationSeedSource =
   | 'tier-flair'
   | 'status-flair'
   | 'reddit-ban'
   | 'recent-unflaired-contributor'
+  | 'live-contribution'
   | 'moderator'
   | 'unmapped-flair';
 
@@ -66,6 +75,39 @@ export type ReputationBootstrap = {
   readonly flairReferences: ReputationFlairReferences;
   readonly users: readonly ReputationUser[];
   readonly coverage: ReputationBootstrapCoverage;
+};
+
+export type ReputationContributionKind = 'post' | 'comment';
+
+export type ReputationContributionInput = {
+  readonly fullname: string;
+  readonly kind: ReputationContributionKind;
+  readonly author: string;
+  readonly createdAt: number;
+  readonly score: number;
+  readonly classification: ModerationClassification;
+  readonly moderatedAt: number;
+};
+
+export type ReputationPendingFlair = {
+  readonly username: string;
+  readonly templateId: string;
+  readonly text: string;
+};
+
+export type ReputationPendingRemoval = {
+  readonly fullname: string;
+};
+
+export type ReputationPendingBan = {
+  readonly fullname: string;
+  readonly username: string;
+};
+
+export type ReputationPendingEffects = {
+  readonly flairs: readonly ReputationPendingFlair[];
+  readonly removals: readonly ReputationPendingRemoval[];
+  readonly bans: readonly ReputationPendingBan[];
 };
 
 const initial = (): JsonMap => ({
@@ -139,6 +181,241 @@ const coverageJson = (value: ReputationBootstrapCoverage): JsonMap => ({
   note: value.note,
 });
 
+const root = (value: Json): JsonMap => {
+  if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported reputation store');
+  if (!isMap(value['users'])) value['users'] = {};
+  if (!isMap(value['contributions'])) value['contributions'] = {};
+  if (!isMap(value['reputationJournal'])) value['reputationJournal'] = {};
+  return value;
+};
+
+const mapField = (value: JsonMap, name: string): JsonMap => {
+  const field = value[name];
+  if (!isMap(field)) throw new Error(`Reputation ${name} map is invalid`);
+  return field;
+};
+
+const textOrNull = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
+const bool = (value: Json | undefined): boolean => value === true;
+const integer = (value: Json | undefined, fallback = 0): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback;
+
+const tier = (value: Json | undefined): ReputationTier =>
+  value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 9 ? value : 0;
+
+const status = (value: Json | undefined): ReputationStatus => {
+  if (value === 'ordinary' || value === 'warned' || value === 'uncivil' || value === 'banned'
+    || value === 'scam' || value === 'moderator' || value === 'unmapped') return value;
+  return 'unmapped';
+};
+
+const source = (value: Json | undefined): ReputationSeedSource => {
+  if (value === 'tier-flair' || value === 'status-flair' || value === 'reddit-ban'
+    || value === 'recent-unflaired-contributor' || value === 'live-contribution'
+    || value === 'moderator' || value === 'unmapped-flair') return value;
+  return 'live-contribution';
+};
+
+const userFrom = (value: Json | undefined): ReputationUser | null => {
+  if (!isMap(value) || typeof value['username'] !== 'string') return null;
+  return {
+    username: value['username'],
+    points: integer(value['points']),
+    tier: tier(value['tier']),
+    status: status(value['status']),
+    currentFlairTemplateId: textOrNull(value['currentFlairTemplateId']),
+    currentFlairText: textOrNull(value['currentFlairText']),
+    currentFlairCssClass: textOrNull(value['currentFlairCssClass']),
+    desiredFlairTemplateId: textOrNull(value['desiredFlairTemplateId']),
+    desiredFlairText: textOrNull(value['desiredFlairText']),
+    immutableModeratorFlair: bool(value['immutableModeratorFlair']),
+    needsFlair: bool(value['needsFlair']),
+    needsReview: bool(value['needsReview']),
+    source: source(value['source']),
+    seededAt: integer(value['seededAt']),
+  };
+};
+
+const blankUser = (username: string, at: number): ReputationUser => ({
+  username,
+  points: 0,
+  tier: 0,
+  status: 'ordinary',
+  currentFlairTemplateId: null,
+  currentFlairText: null,
+  currentFlairCssClass: null,
+  desiredFlairTemplateId: null,
+  desiredFlairText: null,
+  immutableModeratorFlair: false,
+  needsFlair: false,
+  needsReview: false,
+  source: 'live-contribution',
+  seededAt: at,
+});
+
+const refText = (value: Json | undefined, name: string): string => {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Missing reputation flair reference ${name}`);
+  return value;
+};
+
+const referencesFrom = (value: JsonMap): ReputationFlairReferences => {
+  const refs = mapField(value, 'flairReferences');
+  const user = mapField(refs, 'user');
+  const post = mapField(refs, 'post');
+  return {
+    user: {
+      mae: refText(user['mae'], 'mae'),
+      lisa: refText(user['lisa'], 'lisa'),
+      kita: refText(user['kita'], 'kita'),
+      aoi: refText(user['aoi'], 'aoi'),
+      hana: refText(user['hana'], 'hana'),
+      rin: refText(user['rin'], 'rin'),
+      celeste: refText(user['celeste'], 'celeste'),
+      pawsomeContributor: refText(user['pawsomeContributor'], 'pawsomeContributor'),
+      warned: textOrNull(user['warned']),
+      uncivil: textOrNull(user['uncivil']),
+      scam: textOrNull(user['scam']),
+    },
+    post: {
+      minorAnnouncement: textOrNull(post['minorAnnouncement']),
+      announcement: textOrNull(post['announcement']),
+    },
+  };
+};
+
+const catalogueText = (value: JsonMap, templateId: string): string => {
+  const catalog = mapField(value, 'flairCatalog');
+  const users = catalog['user'];
+  if (!Array.isArray(users)) throw new Error('Reputation user flair catalog is invalid');
+  for (const item of users) {
+    if (!isMap(item)) continue;
+    if (item['id'] === templateId && typeof item['text'] === 'string') return item['text'];
+  }
+  throw new Error(`Flair template ${templateId} is missing from the reputation catalog`);
+};
+
+const stableRoll = (username: string, targetTier: OrdinaryTier, eventKey: string): number => {
+  const digest = createHash('sha256')
+    .update('mae-runtime-tier-entry\0')
+    .update(username.trim().toLowerCase())
+    .update('\0')
+    .update(String(targetTier))
+    .update('\0')
+    .update(eventKey)
+    .digest();
+  return digest.readUIntBE(0, 6) / 281_474_976_710_656;
+};
+
+const ordinaryFlair = (
+  refs: ReputationFlairReferences,
+  username: string,
+  targetTier: OrdinaryTier,
+  eventKey: string,
+): { readonly id: string; readonly text: string } => {
+  const text = chooseFlairForTier(targetTier, () => stableRoll(username, targetTier, eventKey));
+  if (text === ':mae:') return { id: refs.user.mae, text };
+  if (text === ':lisa:') return { id: refs.user.lisa, text };
+  if (text === ':kita:') return { id: refs.user.kita, text };
+  if (text === ':aoi:') return { id: refs.user.aoi, text };
+  if (text === ':hana:') return { id: refs.user.hana, text };
+  if (text === ':rin:') return { id: refs.user.rin, text };
+  if (text === ':celeste:') return { id: refs.user.celeste, text };
+  return { id: refs.user.pawsomeContributor, text };
+};
+
+const desiredFor = (
+  value: JsonMap,
+  previous: ReputationUser,
+  nextPoints: number,
+  nextTier: ReputationTier,
+  nextStatus: ReputationStatus,
+  eventKey: string,
+): { readonly id: string | null; readonly text: string | null } => {
+  const refs = referencesFrom(value);
+  if (nextStatus === 'warned') {
+    if (refs.user.warned === null) throw new Error('Warned flair reference is unavailable');
+    return { id: refs.user.warned, text: catalogueText(value, refs.user.warned) };
+  }
+  if (nextStatus === 'uncivil') {
+    if (refs.user.uncivil === null) throw new Error('Uncivil flair reference is unavailable');
+    return { id: refs.user.uncivil, text: catalogueText(value, refs.user.uncivil) };
+  }
+  if (nextStatus === 'scam') {
+    if (refs.user.scam === null) throw new Error('SCAM flair reference is unavailable');
+    return { id: refs.user.scam, text: catalogueText(value, refs.user.scam) };
+  }
+  if (nextStatus === 'banned' || nextStatus === 'moderator') {
+    return { id: previous.currentFlairTemplateId, text: previous.currentFlairText };
+  }
+  if (nextTier === 0 || nextPoints <= 0) {
+    return { id: previous.currentFlairTemplateId, text: previous.currentFlairText };
+  }
+  if (nextTier === previous.tier && previous.desiredFlairTemplateId !== null) {
+    return { id: previous.desiredFlairTemplateId, text: previous.desiredFlairText };
+  }
+  return ordinaryFlair(refs, previous.username, nextTier, eventKey);
+};
+
+const contributionJson = (input: ReputationContributionInput, remove: boolean, ban: boolean): JsonMap => ({
+  fullname: input.fullname,
+  kind: input.kind,
+  author: input.author,
+  createdAt: input.createdAt,
+  moderatedAt: input.moderatedAt,
+  exempt: false,
+  verdict: input.classification.verdict,
+  rule: input.classification.rule,
+  disposition: input.classification.disposition,
+  confidence: input.classification.confidence,
+  reason: input.classification.reason,
+  evidence: [...input.classification.evidence],
+  creditedScore: input.score,
+  pendingHigh: input.score,
+  pendingSeen: 0,
+  removeRequired: remove,
+  removeApplied: false,
+  banRequired: ban,
+  banApplied: false,
+});
+
+const exemptContributionJson = (
+  fullname: string,
+  kind: ReputationContributionKind,
+  author: string,
+  createdAt: number,
+  score: number,
+  at: number,
+): JsonMap => ({
+  fullname,
+  kind,
+  author,
+  createdAt,
+  moderatedAt: at,
+  exempt: true,
+  verdict: 'clean',
+  rule: 'none',
+  disposition: 'allow',
+  confidence: 1,
+  reason: 'Privileged author is exempt from LLM moderation and reputation changes.',
+  evidence: [],
+  creditedScore: score,
+  pendingHigh: score,
+  pendingSeen: 0,
+  removeRequired: false,
+  removeApplied: true,
+  banRequired: false,
+  banApplied: true,
+});
+
+const journal = (
+  value: JsonMap,
+  key: string,
+  body: JsonMap,
+): void => {
+  const entries = mapField(value, 'reputationJournal');
+  if (entries[key] === undefined) entries[key] = body;
+};
+
 export class ReputationStore {
   private readonly store: Store;
 
@@ -174,6 +451,227 @@ export class ReputationStore {
         reputationJournal: {},
         coverage: coverageJson(value.coverage),
       } satisfies JsonMap;
+    });
+  }
+
+  public async hasContribution(fullname: string): Promise<boolean> {
+    const value = root(await this.store.read());
+    return mapField(value, 'contributions')[fullname] !== undefined;
+  }
+
+  public async recordExempt(
+    fullname: string,
+    kind: ReputationContributionKind,
+    author: string,
+    createdAt: number,
+    score: number,
+    at: number,
+  ): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const contributions = mapField(value, 'contributions');
+      if (contributions[fullname] === undefined) {
+        contributions[fullname] = exemptContributionJson(fullname, kind, author, createdAt, score, at);
+      }
+      return value;
+    });
+  }
+
+  public async applyModeration(input: ReputationContributionInput): Promise<ReputationUser> {
+    let output: ReputationUser | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const contributions = mapField(value, 'contributions');
+      const users = mapField(value, 'users');
+      const key = input.author.trim().toLowerCase();
+      const existingContribution = contributions[input.fullname];
+      if (existingContribution !== undefined) {
+        const existingUser = userFrom(users[key]);
+        if (existingUser === null) throw new Error(`Contribution ${input.fullname} exists without user ${input.author}`);
+        output = existingUser;
+        return value;
+      }
+
+      const previous = userFrom(users[key]) ?? blankUser(input.author, input.moderatedAt);
+      if (previous.status === 'moderator' || previous.immutableModeratorFlair) {
+        throw new Error(`Moderator u/${input.author} reached reputation mutation boundary`);
+      }
+      const transition = applyModerationClassification(previous, input.classification);
+      const desired = desiredFor(
+        value,
+        previous,
+        transition.points,
+        transition.tier,
+        transition.status,
+        input.fullname,
+      );
+      const next: ReputationUser = {
+        ...previous,
+        points: transition.points,
+        tier: transition.tier,
+        status: transition.status,
+        desiredFlairTemplateId: desired.id,
+        desiredFlairText: desired.text,
+        needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
+        needsReview: false,
+        source: previous.source === 'unmapped-flair' ? 'live-contribution' : previous.source,
+      };
+      users[key] = userJson(next);
+      contributions[input.fullname] = contributionJson(input, transition.remove, transition.ban);
+      journal(value, `moderation:${input.fullname}`, {
+        kind: 'moderation',
+        fullname: input.fullname,
+        username: input.author,
+        at: input.moderatedAt,
+        verdict: input.classification.verdict,
+        rule: input.classification.rule,
+        beforePoints: previous.points,
+        afterPoints: next.points,
+        beforeStatus: previous.status,
+        afterStatus: next.status,
+      });
+      output = next;
+      return value;
+    });
+    if (output === null) throw new Error('Reputation moderation transaction produced no user');
+    return output;
+  }
+
+  public async observeScore(fullname: string, score: number, at: number): Promise<number> {
+    if (!Number.isSafeInteger(score)) throw new Error('Reddit score must be a safe integer');
+    let credited = 0;
+    await this.store.edit(current => {
+      const value = root(current);
+      const contributions = mapField(value, 'contributions');
+      const contribution = contributions[fullname];
+      if (!isMap(contribution) || bool(contribution['exempt'])) return value;
+      const author = textOrNull(contribution['author']);
+      if (author === null) return value;
+      const users = mapField(value, 'users');
+      const userKey = author.toLowerCase();
+      const previous = userFrom(users[userKey]);
+      if (previous === null || previous.status !== 'ordinary') return value;
+
+      const creditedScore = integer(contribution['creditedScore'], score);
+      let pendingHigh = integer(contribution['pendingHigh'], creditedScore);
+      let pendingSeen = integer(contribution['pendingSeen']);
+      if (score <= creditedScore) {
+        contribution['pendingHigh'] = creditedScore;
+        contribution['pendingSeen'] = 0;
+        return value;
+      }
+      if (pendingSeen === 0 || score < pendingHigh) {
+        pendingHigh = score;
+        pendingSeen = 1;
+      } else {
+        pendingHigh = Math.max(pendingHigh, score);
+        pendingSeen += 1;
+      }
+      contribution['pendingHigh'] = pendingHigh;
+      contribution['pendingSeen'] = pendingSeen;
+      if (pendingSeen < 2) return value;
+
+      credited = pendingHigh - creditedScore;
+      const synthetic: ModerationClassification = {
+        verdict: 'clean',
+        rule: 'none',
+        disposition: 'allow',
+        confidence: 1,
+        reason: 'Stable Reddit score high-water increase.',
+        evidence: [],
+      };
+      let nextPoints = previous.points;
+      for (let index = 0; index < credited; index += 1) {
+        nextPoints = applyModerationClassification({ points: nextPoints, status: 'ordinary' }, synthetic).points;
+      }
+      const nextTier = applyModerationClassification({ points: nextPoints - 1, status: 'ordinary' }, synthetic).tier;
+      const desired = desiredFor(value, previous, nextPoints, nextTier, 'ordinary', `score:${fullname}:${pendingHigh}`);
+      const next: ReputationUser = {
+        ...previous,
+        points: nextPoints,
+        tier: nextTier,
+        desiredFlairTemplateId: desired.id,
+        desiredFlairText: desired.text,
+        needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
+      };
+      users[userKey] = userJson(next);
+      contribution['creditedScore'] = pendingHigh;
+      contribution['pendingHigh'] = pendingHigh;
+      contribution['pendingSeen'] = 0;
+      journal(value, `score:${fullname}:${pendingHigh}`, {
+        kind: 'score-high-water',
+        fullname,
+        username: author,
+        at,
+        redditScore: pendingHigh,
+        delta: credited,
+        beforePoints: previous.points,
+        afterPoints: nextPoints,
+      });
+      return value;
+    });
+    return credited;
+  }
+
+  public async pendingEffects(): Promise<ReputationPendingEffects> {
+    const value = root(await this.store.read());
+    const users = mapField(value, 'users');
+    const contributions = mapField(value, 'contributions');
+    const flairs: ReputationPendingFlair[] = [];
+    const removals: ReputationPendingRemoval[] = [];
+    const bans: ReputationPendingBan[] = [];
+
+    for (const raw of Object.values(users)) {
+      const user = userFrom(raw);
+      if (user === null || !user.needsFlair || user.desiredFlairTemplateId === null || user.desiredFlairText === null) continue;
+      if (user.status === 'moderator' || user.immutableModeratorFlair) continue;
+      flairs.push({ username: user.username, templateId: user.desiredFlairTemplateId, text: user.desiredFlairText });
+    }
+    for (const raw of Object.values(contributions)) {
+      if (!isMap(raw) || bool(raw['exempt'])) continue;
+      const fullname = textOrNull(raw['fullname']);
+      const author = textOrNull(raw['author']);
+      if (fullname === null || author === null) continue;
+      if (bool(raw['removeRequired']) && !bool(raw['removeApplied'])) removals.push({ fullname });
+      if (bool(raw['banRequired']) && !bool(raw['banApplied'])) bans.push({ fullname, username: author });
+    }
+    return { flairs, removals, bans };
+  }
+
+  public async markFlairApplied(username: string, templateId: string, text: string): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const users = mapField(value, 'users');
+      const key = username.toLowerCase();
+      const previous = userFrom(users[key]);
+      if (previous === null || previous.desiredFlairTemplateId !== templateId) return value;
+      users[key] = userJson({
+        ...previous,
+        currentFlairTemplateId: templateId,
+        currentFlairText: text,
+        desiredFlairTemplateId: templateId,
+        desiredFlairText: text,
+        needsFlair: false,
+      });
+      return value;
+    });
+  }
+
+  public async markRemovalApplied(fullname: string): Promise<void> {
+    await this.markContributionEffect(fullname, 'removeApplied');
+  }
+
+  public async markBanApplied(fullname: string): Promise<void> {
+    await this.markContributionEffect(fullname, 'banApplied');
+  }
+
+  private async markContributionEffect(fullname: string, field: 'removeApplied' | 'banApplied'): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const contributions = mapField(value, 'contributions');
+      const contribution = contributions[fullname];
+      if (isMap(contribution)) contribution[field] = true;
+      return value;
     });
   }
 
