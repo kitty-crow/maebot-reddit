@@ -65,11 +65,7 @@ const createdPost = (value: Json): RedditCreatedPost => {
   const id = text(data['id']);
   if (id.length === 0) throw new RedditError('Reddit submit response did not contain a post id', 'invalid_response');
   const fullname = text(data['name']) || `t3_${id}`;
-  return {
-    id,
-    fullname,
-    url: text(data['url']),
-  };
+  return { id, fullname, url: text(data['url']) };
 };
 
 const add = (form: URLSearchParams, name: string, value: string | null): void => {
@@ -130,7 +126,6 @@ export class RedditMutationClient {
       kind: 'crosspost',
       nsfw: 'false',
       sendreplies: 'true',
-      spoiler: 'false',
       sr: subreddit,
       title,
     });
@@ -168,11 +163,7 @@ export class RedditMutationClient {
     templateId: string,
     customText: string | null,
   ): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      flair_template_id: templateId,
-      name: username,
-    });
+    const form = new URLSearchParams({ api_type: 'json', flair_template_id: templateId, name: username });
     add(form, 'text', customText);
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
   }
@@ -208,12 +199,7 @@ export class RedditMutationClient {
   }
 
   public async remove(fullname: string): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      id: fullname,
-      spam: 'false',
-    });
-    await this.form('/api/remove', form);
+    await this.form('/api/remove', new URLSearchParams({ api_type: 'json', id: fullname, spam: 'false' }));
   }
 
   public async banUser(
@@ -230,6 +216,44 @@ export class RedditMutationClient {
       note: note.slice(0, 300),
     });
     await this.form(pathFor(subreddit, '/api/friend'), form);
+  }
+
+  public async sendPrivateMessage(username: string, subject: string, body: string): Promise<void> {
+    const form = new URLSearchParams({
+      api_type: 'json',
+      to: username,
+      subject: subject.slice(0, 100),
+      text: body,
+    });
+    await this.form('/api/compose', form);
+  }
+
+  public async replyToPrivateMessage(fullname: string, body: string): Promise<void> {
+    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
+    await this.form('/api/comment', new URLSearchParams({
+      api_type: 'json',
+      thing_id: fullname,
+      text: body,
+    }));
+  }
+
+  public async muteUser(subreddit: string, username: string, note: string): Promise<void> {
+    const form = new URLSearchParams({
+      api_type: 'json',
+      name: username,
+      type: 'muted',
+      duration: '28',
+      note: note.slice(0, 300),
+    });
+    await this.form(pathFor(subreddit, '/api/friend'), form);
+  }
+
+  public async unmuteUser(subreddit: string, username: string): Promise<void> {
+    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
+      api_type: 'json',
+      name: username,
+      type: 'muted',
+    }));
   }
 
   public async sticky(postId: string, slot: 1 | 2): Promise<void> {
