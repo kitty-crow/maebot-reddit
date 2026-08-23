@@ -99,9 +99,15 @@ const classification = (
   verdict,
   rule: verdict === 'clean' ? 'none' : verdict === 'scam' ? 'rule_5' : 'rule_6',
   disposition: verdict === 'clean' || verdict === 'low' ? 'allow' : 'remove',
+  penaltyPoints: verdict === 'clean' ? 0 : verdict === 'low' ? 1 : verdict === 'severe' ? 10 : 999_999_999,
   confidence: 0.99,
   reason: `fixture ${verdict}`,
   evidence: [],
+});
+
+const contributionFields = (fullname: string) => ({
+  permalink: `/r/catgirlcoin/${fullname}`,
+  content: `fixture ${fullname}`,
 });
 
 const openStore = async (): Promise<{ readonly file: string; readonly store: ReputationStore }> => {
@@ -154,6 +160,7 @@ describe('reputation store', () => {
       author: 'Alice',
       createdAt: 200,
       score: 1,
+      ...contributionFields('t1_clean'),
       classification: classification('clean'),
       moderatedAt: 201,
     };
@@ -181,6 +188,7 @@ describe('reputation store', () => {
       author: 'FreshUser',
       createdAt: 300,
       score: 1,
+      ...contributionFields('t3_new'),
       classification: classification('clean'),
       moderatedAt: 301,
     });
@@ -201,6 +209,7 @@ describe('reputation store', () => {
       author: 'Alice',
       createdAt: 400,
       score: 1,
+      ...contributionFields('t1_severe'),
       classification: classification('severe'),
       moderatedAt: 401,
     });
@@ -216,6 +225,7 @@ describe('reputation store', () => {
       author: 'Scammer',
       createdAt: 500,
       score: 1,
+      ...contributionFields('t1_scam'),
       classification: classification('scam'),
       moderatedAt: 501,
     });
@@ -238,6 +248,7 @@ describe('reputation store', () => {
       author: 'Alice',
       createdAt: 600,
       score: 7,
+      ...contributionFields('t1_score'),
       classification: classification('clean'),
       moderatedAt: 601,
     });
