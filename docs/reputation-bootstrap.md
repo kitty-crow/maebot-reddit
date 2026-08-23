@@ -17,10 +17,13 @@ The bootstrap reads the configured source subreddit and records:
 
 - every user flair template returned by Reddit, including its template ID;
 - every post flair template returned by Reddit, including its template ID;
+- semantic references to the seven tier flair IDs and, where present, Warned, Uncivil, SCAM, `Minor Announcement :lisa:` and `Announcement :catgirl-moon:`;
 - the complete moderator listing;
 - the complete banned-user listing available to the bot;
 - every user flair assignment returned by `/api/flairlist`;
 - authors discoverable in Reddit's accessible `/new` post and `/comments` history, up to 1,000 items from each listing.
+
+The seven ordinary tier flair templates are required and the bootstrap fails closed if any is missing or ambiguous. Status/announcement semantic references are reported as unresolved rather than guessed when no unique exact text match exists; the complete raw flair catalog remains in both the report and protobuf state for review.
 
 Reddit does not expose a complete subscriber roster. Therefore users with no flair and no contribution in the accessible listing window cannot be inventoried before they next participate. Runtime contribution ingestion must create those users on their first observed contribution.
 
@@ -42,7 +45,7 @@ The live tier boundaries are:
 - 100–999: tier 3
 - >999: tier 4
 
-An unflair user discovered through an existing contribution is treated as having made their first contribution and is seeded with 1 point. Their future tier-one flair choice is selected once and persisted: `:lisa:` has a 1% chance and `:mae:` the remaining 99%.
+An unflair user discovered through an existing contribution is treated as having made their first contribution and is seeded with 1 point. Their tier-one flair choice is selected once and persisted: `:lisa:` has a 1% chance and `:mae:` the remaining 99%. The bootstrap roll is deterministically derived from the subreddit and username so an interrupted pre-persistence bootstrap cannot silently reroll the user on retry. Normal runtime tier transitions will persist the chosen variant when the transition happens.
 
 Moderator accounts are marked as immutable and their current moderator flair is never replaced by tier reconciliation.
 
@@ -60,6 +63,8 @@ Any flair that cannot be mapped confidently is preserved verbatim, seeded at 0, 
 The bootstrap refuses to overwrite an already initialised `reputation.pb` unless `--force` is supplied. `--force` is intended only after the prior report and state have been reviewed.
 
 No Reddit-side flair assignment occurs during bootstrap. Users discovered without a flair are recorded with `needsFlair=true` and the desired existing template ID so a later explicit reconciliation step can apply it safely.
+
+After writing the state, the command reopens/verifies the protobuf bootstrap marker before reporting success.
 
 The reputation store also reserves empty `contributions` and `reputationJournal` maps for the next phase. Vote-score credits and contribution credits must be journalled atomically with user-point changes so retries cannot double-credit users.
 
