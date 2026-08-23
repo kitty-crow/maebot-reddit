@@ -1,6 +1,7 @@
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import type {
   ModmailConversation,
+  ModmailConversationKind,
   ModmailConversationPage,
   ModmailConversationState,
   ModmailMessage,
@@ -50,6 +51,11 @@ const state = (value: Json | undefined): ModmailConversationState => {
   if (value === 3) return 'appeals';
   if (value === 4) return 'join_requests';
   if (value === 5) return 'filtered';
+  return 'unknown';
+};
+
+const kind = (value: Json | undefined): ModmailConversationKind => {
+  if (value === 'sr_user' || value === 'sr_sr' || value === 'internal') return value;
   return 'unknown';
 };
 
@@ -111,6 +117,7 @@ const conversation = (
     subreddit: subredditName(value),
     subject: text(value['subject']) ?? '',
     participant: participant(value['participant']),
+    kind: kind(value['conversationType']),
     state: state(value['state']),
     isInternal: bool(value['isInternal']),
     isAuto: bool(value['isAuto']),
