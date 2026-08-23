@@ -1,6 +1,7 @@
 import type { RedditModerationCfg } from '../env.ts';
 import { authoritativeFlairRestores } from '../reputation/flairReconcile.ts';
 import { scoreInventoryFullnames } from '../reputation/inventory.ts';
+import { moderationHistoryFor } from '../reputation/moderationHistory.ts';
 import { ReputationStore, type ReputationContributionKind } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
@@ -57,6 +58,7 @@ const postItem = (post: RedditPost): RuntimeItem => ({
     text: [post.selfText, post.url].filter(value => value.trim().length > 0).join('\n\n'),
     permalink: post.permalink,
     mediaUrls: post.mediaUrls,
+    history: null,
   },
 });
 
@@ -74,6 +76,7 @@ const commentItem = (comment: RedditComment): RuntimeItem => ({
     text: comment.body,
     permalink: comment.permalink,
     mediaUrls: comment.mediaUrls,
+    history: null,
   },
 });
 
@@ -125,7 +128,12 @@ export class RedditModerationRuntime {
       );
       return 'exempt';
     }
-    const classification = await this.classifier.classify(item.moderation);
+
+    const history = moderationHistoryFor(await this.reputation.raw(), item.author);
+    const classification = await this.classifier.classify({
+      ...item.moderation,
+      history,
+    });
     await this.reputation.applyModeration({
       fullname: item.fullname,
       kind: item.kind,
