@@ -5,6 +5,7 @@ import { numVal, strVal } from '../types/value.ts';
 import * as decode from './decode.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
+import { thingScores } from './scoreDecode.ts';
 import type {
   RedditAccount,
   RedditComment,
@@ -13,6 +14,7 @@ import type {
   RedditModerator,
   RedditPost,
   RedditSubreddit,
+  RedditThingScore,
 } from './types.ts';
 
 export type RedditFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -142,6 +144,17 @@ export class RedditReadClient {
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
     return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
+  }
+
+  public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
+    if (fullnames.length === 0) return [];
+    const values = [...new Set(fullnames.map(value => value.trim()))];
+    if (values.length > 100) throw new Error('Reddit score inventory reads are limited to 100 fullnames per request');
+    for (const fullname of values) {
+      if (!/^(?:t1|t3)_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit fullname ${fullname}`);
+    }
+    const query = new URLSearchParams({ id: values.join(',') });
+    return thingScores(await this.get(`/api/info?${query}`));
   }
 
   private async pages<T>(
