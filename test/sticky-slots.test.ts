@@ -18,6 +18,8 @@ const post = (id: string, stickied: boolean): RedditPost => ({
   locked: false,
   over18: false,
   crosspostParent: null,
+  score: 0,
+  mediaUrls: [],
 });
 
 describe('Reddit sticky discovery', () => {
