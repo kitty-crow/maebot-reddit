@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - fix/modmail-terminal-ui
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
