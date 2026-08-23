@@ -95,6 +95,15 @@ const uncivilUser: ReputationUser = {
   seededAt: 1,
 };
 
+const moderatorUser: ReputationUser = {
+  ...uncivilUser,
+  points: 999_999_999,
+  tier: 9,
+  status: 'moderator',
+  immutableModeratorFlair: true,
+  source: 'moderator',
+};
+
 const fixture = async (): Promise<{ relay: ModmailStore; audit: ModmailAuditStore }> => {
   const root = await mkdtemp(join(tmpdir(), 'mae-private-modmail-'));
   roots.push(root);
@@ -249,6 +258,51 @@ describe('private modmail moderation runtime', () => {
     expect(classified[1]?.text).toContain('Second live participant message.');
     expect((await audit.conversation('abc'))?.openaiConversationId).toBe('conv_modmail_abc');
     expect(await audit.cursor()).toBe(3);
+  });
+
+  test('canonical moderators are skipped before the private LLM and reputation mutation boundaries', async () => {
+    const { relay, audit } = await fixture();
+    const historic = message('m1', 'historic message', 100);
+    await relay.sync([conversation([historic])], 100);
+
+    let classifierCalls = 0;
+    let mutationCalls = 0;
+    const reputation: PrivateModerationReputation = {
+      user: async () => moderatorUser,
+      hasContribution: async () => false,
+      applyModeration: async () => {
+        mutationCalls += 1;
+        return moderatorUser;
+      },
+      clearMuteForConstructiveResolution: async () => false,
+      raw: async (): Promise<Json> => ({
+        users: { someuser: { points: 999_999_999, status: 'moderator' } },
+        reputationJournal: {},
+      }),
+    };
+    const runtime = new PrivateModmailRuntime(
+      { key: 'test', model: 'test', effort: 'low' },
+      relay,
+      audit,
+      reputation,
+      () => ({
+        conversationId: 'must-not-be-created',
+        classify: async () => {
+          classifierCalls += 1;
+          return clean;
+        },
+      }),
+      { classify: async () => ({ genuineApology: false, reason: 'no' }) },
+    );
+    await runtime.bootstrap();
+
+    const live = message('m2', 'Participant identity is a canonical moderator.', 200);
+    await relay.sync([conversation([historic, live])], 200);
+    expect(await runtime.tick()).toEqual({ inspected: 1, audited: 0, apologies: 0, skipped: 1, failed: 0 });
+    expect(classifierCalls).toBe(0);
+    expect(mutationCalls).toBe(0);
+    expect(await audit.cursor()).toBe(1);
+    expect((await audit.conversation('abc'))?.openaiConversationId).toBeNull();
   });
 
   test('a failed participant audit does not advance past the failed event', async () => {
