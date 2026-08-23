@@ -26,6 +26,10 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
+const sleep = async (milliseconds: number): Promise<void> => {
+  await new Promise<void>(resolvePromise => setTimeout(resolvePromise, milliseconds));
+};
+
 const subreddit = (valueArg('--subreddit') ?? cfg.sourceSubreddit).replace(/^r\//iu, '');
 const force = flag('--force');
 const reportPath = resolve(process.cwd(), valueArg('--report') ?? 'data/reputation-bootstrap-report.json');
@@ -98,6 +102,22 @@ try {
   const remainingMissing = bootstrap.users.filter(value => value.needsFlair);
   if (remainingMissing.length > 0) {
     throw new Error(`Bootstrap left ${remainingMissing.length} discovered user(s) without a required tier flair`);
+  }
+
+  if (pendingFlairs.length > 0) {
+    let unverified = pendingFlairs;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const liveAssignments = await client.userFlairAssignments(subreddit);
+      unverified = pendingFlairs.filter(expected => !liveAssignments.some(actual =>
+        actual.username.localeCompare(expected.username, undefined, { sensitivity: 'base' }) === 0
+        && actual.templateId === expected.templateId));
+      if (unverified.length === 0) break;
+      if (attempt < 3) await sleep(1_000);
+    }
+    if (unverified.length > 0) {
+      throw new Error(`Reddit did not verify assigned tier flair for: ${unverified.map(value => `u/${value.username}`).join(', ')}`);
+    }
+    console.log(`Verified ${pendingFlairs.length} applied flair assignment(s) from Reddit.`);
   }
 
   const references = bootstrap.flairReferences;
