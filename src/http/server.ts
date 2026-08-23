@@ -1,4 +1,5 @@
 import type { ModerationReviewStore } from '../mod/review.ts';
+import type { ModmailStore } from '../modmail/store.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
@@ -26,6 +27,7 @@ const nonNegativeInt = (value: string | null, fallback: number): number | null =
 
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
+  private modmail: ModmailStore | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -33,6 +35,11 @@ export class RedditInternalHttpServer {
     private readonly moderation: ModerationReviewStore,
     private readonly logger: RedditInternalHttpLogger = defaultLogger,
   ) {}
+
+  public useModmail(store: ModmailStore): void {
+    if (this.server !== null) throw new Error('Modmail store must be attached before the Reddit internal API starts');
+    this.modmail = store;
+  }
 
   public start(): void {
     if (this.server !== null) return;
@@ -80,6 +87,26 @@ export class RedditInternalHttpServer {
       }
       const page = await this.questions.after(after, limit);
       return this.record(req, url, json(page), `after=${after} events=${page.events.length} next=${page.next}`);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/modmail/events') {
+      if (this.modmail === null) return this.record(req, url, json({ error: 'modmail unavailable' }, 503));
+      const after = nonNegativeInt(url.searchParams.get('after'), 0);
+      const limit = nonNegativeInt(url.searchParams.get('limit'), 100);
+      if (after === null || limit === null || limit < 1 || limit > 100) {
+        return this.record(req, url, json({ error: 'invalid cursor or limit' }, 400));
+      }
+      const page = await this.modmail.eventsAfter(after, limit);
+      return this.record(req, url, json(page), `after=${after} events=${page.events.length} next=${page.next}`);
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/modmail/conversations/')) {
+      if (this.modmail === null) return this.record(req, url, json({ error: 'modmail unavailable' }, 503));
+      const id = decodeURIComponent(url.pathname.slice('/v1/modmail/conversations/'.length)).trim();
+      if (!/^[A-Za-z0-9]+$/u.test(id)) return this.record(req, url, json({ error: 'invalid conversation id' }, 400));
+      const conversation = await this.modmail.conversation(id);
+      if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
+      return this.record(req, url, json({ conversation }), `conversation=${id} messages=${conversation.messages.length}`);
     }
 
     if (req.method === 'GET' && url.pathname === '/v1/moderation/reviews/pending') {
