@@ -31,6 +31,10 @@ export type ModerationItem = {
   readonly mediaUrls: readonly string[];
 };
 
+export type ModerationClassifier = {
+  classify(item: ModerationItem): Promise<ModerationClassification>;
+};
+
 export type ModerationAiCfg = {
   readonly key: string;
   readonly model: string;
@@ -112,7 +116,7 @@ const checked = (value: ModerationClassification): ModerationClassification => {
   };
 };
 
-export class RedditModerationClassifier {
+export class RedditModerationClassifier implements ModerationClassifier {
   private readonly api: OpenAISchema<ModerationClassification>;
 
   public constructor(private readonly cfg: ModerationAiCfg) {
