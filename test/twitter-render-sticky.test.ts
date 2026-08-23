@@ -44,6 +44,8 @@ const post = (id: string): RedditPost => ({
   locked: false,
   over18: false,
   crosspostParent: null,
+  score: 0,
+  mediaUrls: [],
 });
 
 describe('Twitter Reddit rendering', () => {
