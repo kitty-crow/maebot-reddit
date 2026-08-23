@@ -1,3 +1,5 @@
+import type { ModerationClassification } from '../mod/classifier.ts';
+
 export type RedditDirectMessage = {
   readonly id: string;
   readonly fullname: string;
@@ -27,6 +29,7 @@ export type DmDeliveryState = 'seeded' | 'pending' | 'attempted' | 'sent' | 'no-
 
 export type DmMessageState = {
   readonly message: RedditDirectMessage;
+  readonly classification: ModerationClassification | null;
   readonly classificationApplied: boolean;
   readonly generatedReply: string | null;
   readonly delivery: DmDeliveryState;
