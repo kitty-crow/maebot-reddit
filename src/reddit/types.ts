@@ -55,6 +55,7 @@ export type RedditSubreddit = {
 export type RedditThingScore = {
   readonly fullname: string;
   readonly score: number;
+  readonly archived: boolean;
 };
 
 export type RedditPost = {
