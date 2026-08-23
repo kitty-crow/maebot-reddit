@@ -141,7 +141,7 @@ export class RedditReadClient {
 
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages(pathFor(name, '/comments'), 100, value => decode.comments(value, 'new comments'), max);
+    return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
   }
 
   private async pages<T>(
