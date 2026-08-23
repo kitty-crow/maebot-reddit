@@ -1,3 +1,7 @@
+import type { RedditModerationCfg } from '../env.ts';
+import type { ModerationClassifier } from '../mod/classifier.ts';
+import type { PrivateResolutionClassifier } from '../mod/privateResolution.ts';
+import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
@@ -9,6 +13,8 @@ export type ModmailWriter = Pick<RedditMutationClient, 'replyModmail'>;
 
 export type ModmailRuntimeTick = {
   readonly relayed: number;
+  readonly audited: number;
+  readonly apologies: number;
   readonly repliesApplied: number;
   readonly failed: number;
 };
@@ -16,9 +22,13 @@ export type ModmailRuntimeTick = {
 export class ModmailRuntime {
   public constructor(
     private readonly subreddit: string,
+    _cfg: RedditModerationCfg,
     private readonly reader: ModmailReader,
     private readonly writer: ModmailWriter,
+    _reputation: ReputationStore,
     private readonly store: ModmailStore,
+    _classifier: ModerationClassifier | null = null,
+    _resolution: PrivateResolutionClassifier | null = null,
     private readonly outbox: ModmailReplyOutbox | null = null,
   ) {}
 
@@ -54,6 +64,8 @@ export class ModmailRuntime {
     const replies = await this.applyReplies();
     return {
       relayed: events.length,
+      audited: 0,
+      apologies: 0,
       repliesApplied: replies.applied,
       failed: replies.failed,
     };
