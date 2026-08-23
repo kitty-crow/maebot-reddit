@@ -1,5 +1,7 @@
 import { render2Mkup } from './web/staticUi.tsx';
 import { modmailBubbleStyles } from './web/bubbles.ts';
+import { modmailMediaRuntime } from './web/media.ts';
+import { modmailMediaStyles } from './web/mediaStyles.ts';
 import { modmailTerminalRuntime } from './web/runtime.ts';
 import { modmailTerminalScrollRuntime } from './web/scroll.ts';
 import { modmailTerminalStyles } from './web/styles.ts';
@@ -17,7 +19,7 @@ const documentMarkup = render2Mkup(
       <meta name="color-scheme" content="dark light" />
       <meta name="theme-color" content="#f7f5fb" />
       <title>Mae · Reddit Modmail</title>
-      <style dangerouslySetInnerHTML={{ __html: `${modmailTerminalStyles}\n${modmailBubbleStyles}\n${modmailTerminalViewportStyles}` }} />
+      <style dangerouslySetInnerHTML={{ __html: `${modmailTerminalStyles}\n${modmailBubbleStyles}\n${modmailMediaStyles}\n${modmailTerminalViewportStyles}` }} />
       <script dangerouslySetInnerHTML={{ __html: modmailTerminalThemeBoot }} />
     </head>
     <body>
@@ -37,18 +39,9 @@ const documentMarkup = render2Mkup(
           </div>
 
           <div className="conversation-summary" aria-label="Conversation details">
-            <div className="summary-item">
-              <span>User</span>
-              <strong id="participant">Opening…</strong>
-            </div>
-            <div className="summary-item">
-              <span>Community</span>
-              <strong id="subreddit">Opening…</strong>
-            </div>
-            <div className="summary-item">
-              <span>Replying as</span>
-              <strong id="identity">Opening…</strong>
-            </div>
+            <div className="summary-item"><span>User</span><strong id="participant">Opening…</strong></div>
+            <div className="summary-item"><span>Community</span><strong id="subreddit">Opening…</strong></div>
+            <div className="summary-item"><span>Replying as</span><strong id="identity">Opening…</strong></div>
           </div>
           <p id="subject" className="subject">Opening conversation…</p>
         </header>
@@ -73,6 +66,17 @@ const documentMarkup = render2Mkup(
             placeholder="Reply to the Reddit user"
             aria-label="Reply to Reddit user"
           />
+          <div className="attachment-controls">
+            <input
+              id="media-picker"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+              multiple
+              hidden
+            />
+            <button id="attach-media" className="attach-button" type="button">📎 Attach media</button>
+            <div id="attachment-drafts" className="attachment-drafts" aria-live="polite" />
+          </div>
           <div className="composer-actions">
             <button id="send" className="action-button primary" type="button">
               <span className="button-copy"><span className="button-title">Send to Reddit</span><small>queue safely</small></span>
@@ -87,7 +91,7 @@ const documentMarkup = render2Mkup(
           </div>
         </footer>
       </main>
-      <script dangerouslySetInnerHTML={{ __html: `${modmailTerminalThemeRuntime}\n${modmailTerminalRuntime}\n${modmailTerminalScrollRuntime}` }} />
+      <script dangerouslySetInnerHTML={{ __html: `${modmailTerminalThemeRuntime}\n${modmailMediaRuntime}\n${modmailTerminalRuntime}\n${modmailTerminalScrollRuntime}` }} />
     </body>
   </html>,
 );
