@@ -16,7 +16,7 @@ const classification = (
 
 describe('runtime reputation policy', () => {
   test('clean contributions add exactly one point and cross tier boundaries', () => {
-    expect(applyModerationClassification({ points: 0, status: 'ordinary' }, classification('clean')))
+    expect(applyModerationClassification({ points: 0, status: 'warned' }, classification('clean')))
       .toMatchObject({ points: 1, tier: 1, status: 'ordinary', remove: false, ban: false });
     expect(applyModerationClassification({ points: 9, status: 'ordinary' }, classification('clean')))
       .toMatchObject({ points: 10, tier: 2 });
@@ -37,8 +37,10 @@ describe('runtime reputation policy', () => {
       .toMatchObject({ points: 0, tier: 0, status: 'warned', remove: false, ban: false });
     expect(applyModerationClassification({ points: 0, status: 'warned' }, classification('low')))
       .toMatchObject({ points: -1, tier: 0, status: 'warned', remove: false, ban: false });
-    expect(applyModerationClassification({ points: -1, status: 'warned' }, classification('low')))
-      .toMatchObject({ points: -2, tier: 0, status: 'uncivil', remove: false, ban: false });
+    expect(applyModerationClassification({ points: -2, status: 'warned' }, classification('low')))
+      .toMatchObject({ points: -3, tier: 0, status: 'warned', remove: false, ban: false });
+    expect(applyModerationClassification({ points: -3, status: 'warned' }, classification('low')))
+      .toMatchObject({ points: -4, tier: 0, status: 'uncivil', remove: false, ban: false });
     expect(applyModerationClassification({ points: -8, status: 'uncivil' }, classification('low')))
       .toMatchObject({ points: -9, tier: 0, status: 'uncivil', remove: false, ban: false });
     expect(applyModerationClassification({ points: -9, status: 'uncivil' }, classification('low')))
@@ -48,8 +50,10 @@ describe('runtime reputation policy', () => {
   test('severe violations wipe positive standing then descend through warned and uncivil to ban on minus ten', () => {
     expect(applyModerationClassification({ points: 423, status: 'ordinary' }, classification('severe')))
       .toMatchObject({ points: -1, tier: 0, status: 'warned', remove: true, ban: false });
-    expect(applyModerationClassification({ points: -1, status: 'warned' }, classification('severe')))
-      .toMatchObject({ points: -2, tier: 0, status: 'uncivil', remove: true, ban: false });
+    expect(applyModerationClassification({ points: -2, status: 'warned' }, classification('severe')))
+      .toMatchObject({ points: -3, tier: 0, status: 'warned', remove: true, ban: false });
+    expect(applyModerationClassification({ points: -3, status: 'warned' }, classification('severe')))
+      .toMatchObject({ points: -4, tier: 0, status: 'uncivil', remove: true, ban: false });
     expect(applyModerationClassification({ points: -8, status: 'uncivil' }, classification('severe')))
       .toMatchObject({ points: -9, tier: 0, status: 'uncivil', remove: true, ban: false });
     expect(applyModerationClassification({ points: -9, status: 'uncivil' }, classification('severe')))
@@ -59,8 +63,8 @@ describe('runtime reputation policy', () => {
   test('warned and uncivil users redeem through clean audited contributions and remain marked through zero', () => {
     expect(applyModerationClassification({ points: -9, status: 'uncivil' }, classification('clean')))
       .toMatchObject({ points: -8, tier: 0, status: 'uncivil', remove: false, ban: false });
-    expect(applyModerationClassification({ points: -2, status: 'uncivil' }, classification('clean')))
-      .toMatchObject({ points: -1, tier: 0, status: 'warned', remove: false, ban: false });
+    expect(applyModerationClassification({ points: -4, status: 'uncivil' }, classification('clean')))
+      .toMatchObject({ points: -3, tier: 0, status: 'warned', remove: false, ban: false });
     expect(applyModerationClassification({ points: -1, status: 'warned' }, classification('clean')))
       .toMatchObject({ points: 0, tier: 0, status: 'warned', remove: false, ban: false });
     expect(applyModerationClassification({ points: 0, status: 'warned' }, classification('clean')))
