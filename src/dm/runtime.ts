@@ -19,7 +19,7 @@ import type { DmMessageState, RedditDirectMessage } from './types.ts';
 
 export type DmReader = Pick<
   RedditReadClient,
-  'unreadDirectMessages' | 'directMessageHistory' | 'sentDirectMessages'
+  'inboxDirectMessages' | 'sentDirectMessages'
 >;
 
 export type DmWriter = Pick<
@@ -110,7 +110,7 @@ export class RedditDmRuntime {
 
   public async bootstrap(maxItems = 1000): Promise<number> {
     if (await this.store.hasBootstrap()) return 0;
-    const history = await this.reader.directMessageHistory(maxItems);
+    const history = await this.reader.inboxDirectMessages(maxItems);
     const incoming = history.filter(message => incomingDirectMessage(message, this.self));
     return await this.store.seed(incoming, Math.floor(Date.now() / 1_000));
   }
@@ -326,7 +326,7 @@ export class RedditDmRuntime {
     }
 
     const recovery = await this.recoverAttempted();
-    const unread = (await this.reader.unreadDirectMessages(maxItems))
+    const inbox = (await this.reader.inboxDirectMessages(maxItems))
       .filter(message => incomingDirectMessage(message, this.self))
       .sort((left, right) => left.createdUtc - right.createdUtc || left.fullname.localeCompare(right.fullname));
 
@@ -337,7 +337,7 @@ export class RedditDmRuntime {
     let skipped = 0;
     let failed = 0;
 
-    for (const message of unread) {
+    for (const message of inbox) {
       try {
         const result = await this.process(message);
         if (result.moderated) moderated += 1;
@@ -353,7 +353,7 @@ export class RedditDmRuntime {
     }
 
     return {
-      inspected: unread.length,
+      inspected: inbox.length,
       moderated,
       replies,
       noReply,
