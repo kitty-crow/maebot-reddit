@@ -31,7 +31,7 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
   const bootstrap: ReputationBootstrap = {
     subreddit: 'catgirlcoin',
     at: 123,
-    userFlairTemplates: [template('mae-id', ':mae:')],
+    userFlairTemplates: [template('mae-id', ':mae:'), template('pawsome-id', 'Pawsome Contributor')],
     postFlairTemplates: [template('minor-id', 'Minor Announcement :lisa:')],
     flairReferences: {
       user: {
@@ -42,6 +42,7 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
         hana: 'hana-id',
         rin: 'rin-id',
         celeste: 'celeste-id',
+        pawsomeContributor: 'pawsome-id',
         warned: 'warned-id',
         uncivil: 'uncivil-id',
         scam: 'scam-id',
@@ -101,6 +102,7 @@ test('bootstrap writes one durable protobuf-backed reputation snapshot and refus
   expect(isMap(userRefs)).toBe(true);
   if (!isMap(userRefs)) throw new Error('user flair references were not persisted');
   expect(userRefs['mae']).toBe('mae-id');
+  expect(userRefs['pawsomeContributor']).toBe('pawsome-id');
 
   await expect(reopened.bootstrap(bootstrap)).rejects.toThrow('already bootstrapped');
 });
