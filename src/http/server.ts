@@ -215,6 +215,15 @@ export class RedditInternalHttpServer {
       return this.record(req, url, json({ reviews }), `reviews=${reviews.length}`);
     }
 
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/moderation/reviews/')) {
+      const rawKey = decodeURIComponent(url.pathname.slice('/v1/moderation/reviews/'.length)).trim();
+      const key = simpleKey(rawKey);
+      if (key === null) return this.record(req, url, json({ error: 'invalid review key' }, 400));
+      const review = await this.moderation.get(key);
+      if (review === null) return this.record(req, url, json({ error: 'review not found' }, 404), `review=${key}`);
+      return this.record(req, url, json({ review }), `review=${key} decision=${review.decision?.choice ?? 'pending'}`);
+    }
+
     if (req.method === 'POST' && url.pathname === '/v1/moderation/reviews/decision') {
       const body = await bodyMap(req);
       if (!isMap(body)) return this.record(req, url, json({ error: 'invalid decision body' }, 400));
