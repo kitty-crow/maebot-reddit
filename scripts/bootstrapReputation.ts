@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { redditConfig } from '../src/env.ts';
@@ -14,6 +15,7 @@ import {
 import {
   ReputationStore,
   type ReputationBootstrap,
+  type ReputationFlairReferences,
   type ReputationSeedSource,
   type ReputationUser,
 } from '../src/reputation/store.ts';
@@ -46,6 +48,12 @@ const exactTemplate = (templates: readonly RedditFlairTemplate[], text: string):
   return match;
 };
 
+const optionalTemplate = (templates: readonly RedditFlairTemplate[], text: string): RedditFlairTemplate | null => {
+  const matches = templates.filter(template => template.text.trim().toLowerCase() === text.toLowerCase());
+  if (matches.length > 1) throw new Error(`Flair ${JSON.stringify(text)} is ambiguous in r/${subreddit}`);
+  return matches[0] ?? null;
+};
+
 const reportTemplate = (template: RedditFlairTemplate): JsonMap => ({
   id: template.id,
   text: template.text,
@@ -55,6 +63,16 @@ const reportTemplate = (template: RedditFlairTemplate): JsonMap => ({
   textColour: template.textColour,
   backgroundColour: template.backgroundColour,
 });
+
+const bootstrapRoll = (username: string): number => {
+  const digest = createHash('sha256')
+    .update('mae-reputation-bootstrap-tier-one\0')
+    .update(subreddit.toLowerCase())
+    .update('\0')
+    .update(lower(username))
+    .digest();
+  return digest.readUIntBE(0, 6) / 281_474_976_710_656;
+};
 
 const user = (
   assignment: RedditFlairAssignment,
@@ -184,10 +202,39 @@ try {
 
   const tierTemplates = new Map<string, RedditFlairTemplate>();
   for (const definition of TIER_FLAIRS) tierTemplates.set(definition.text, exactTemplate(userFlairs, definition.text));
+  const tierTemplate = (text: string): RedditFlairTemplate => {
+    const value = tierTemplates.get(text);
+    if (value === undefined) throw new Error(`Tier flair ${text} was not resolved`);
+    return value;
+  };
+
+  const flairReferences: ReputationFlairReferences = {
+    user: {
+      mae: tierTemplate(':mae:').id,
+      lisa: tierTemplate(':lisa:').id,
+      kita: tierTemplate(':kita:').id,
+      aoi: tierTemplate(':aoi:').id,
+      hana: tierTemplate(':hana:').id,
+      rin: tierTemplate(':rin:').id,
+      celeste: tierTemplate(':celeste:').id,
+      warned: optionalTemplate(userFlairs, 'Warned')?.id ?? null,
+      uncivil: optionalTemplate(userFlairs, 'Uncivil')?.id ?? null,
+      scam: optionalTemplate(userFlairs, 'SCAM')?.id ?? null,
+    },
+    post: {
+      minorAnnouncement: optionalTemplate(postFlairs, 'Minor Announcement :lisa:')?.id ?? null,
+      announcement: optionalTemplate(postFlairs, 'Announcement :catgirl-moon:')?.id ?? null,
+    },
+  };
 
   const moderators = new Set(moderatorRows.map(row => lower(row.name)));
   const banned = new Set(bannedRows.map(row => lower(row.username)));
-  const assignmentByUser = new Map(assignments.map(value => [assignmentKey(value), value]));
+  const assignmentByUser = new Map<string, RedditFlairAssignment>();
+  for (const assignment of assignments) {
+    const key = assignmentKey(assignment);
+    if (assignmentByUser.has(key)) throw new Error(`Duplicate flair assignment returned for u/${assignment.username}`);
+    assignmentByUser.set(key, assignment);
+  }
   const users = new Map<string, ReputationUser>();
 
   for (const assignment of assignments) users.set(assignmentKey(assignment), user(assignment, moderators, banned));
@@ -264,7 +311,7 @@ try {
       continue;
     }
 
-    const desiredText = chooseTierOneFlair();
+    const desiredText = chooseTierOneFlair(() => bootstrapRoll(username));
     const desired = tierTemplates.get(desiredText);
     if (desired === undefined) throw new Error(`Tier-one flair ${desiredText} is missing from resolved inventory`);
     users.set(key, {
@@ -291,6 +338,7 @@ try {
     at: now,
     userFlairTemplates: userFlairs,
     postFlairTemplates: postFlairs,
+    flairReferences,
     users: [...users.values()].sort((a, b) => a.username.localeCompare(b.username)),
     coverage: {
       flairAssignments: assignments.length,
@@ -302,9 +350,6 @@ try {
       note: coverageNote,
     },
   };
-
-  const store = new ReputationStore(statePath);
-  await store.bootstrap(bootstrap, force);
 
   const byTier = new Map<number, number>();
   const byStatus = new Map<string, number>();
@@ -322,12 +367,7 @@ try {
     subreddit,
     statePath,
     coverage: bootstrap.coverage,
-    tierFlairReferences: Object.fromEntries(
-      TIER_FLAIRS.map(definition => {
-        const template = tierTemplates.get(definition.text);
-        return [definition.text, { tier: definition.tier, seedPoints: definition.seedPoints, templateId: template?.id ?? null }];
-      }),
-    ),
+    flairReferences,
     userFlairs: userFlairs.map(reportTemplate),
     postFlairs: postFlairs.map(reportTemplate),
     summary: {
@@ -343,6 +383,24 @@ try {
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
+  const store = new ReputationStore(statePath);
+  await store.bootstrap(bootstrap, force);
+  if (!(await store.hasBootstrap())) throw new Error('Reputation protobuf did not verify after bootstrap');
+
+  console.log('\n=== SEMANTIC FLAIR REFERENCES ===');
+  console.log(`user :mae:                    ${flairReferences.user.mae}`);
+  console.log(`user :lisa:                   ${flairReferences.user.lisa}`);
+  console.log(`user :kita:                   ${flairReferences.user.kita}`);
+  console.log(`user :aoi:                    ${flairReferences.user.aoi}`);
+  console.log(`user :hana:                   ${flairReferences.user.hana}`);
+  console.log(`user :rin:                    ${flairReferences.user.rin}`);
+  console.log(`user :celeste:                ${flairReferences.user.celeste}`);
+  console.log(`user Warned                   ${flairReferences.user.warned ?? 'NOT RESOLVED'}`);
+  console.log(`user Uncivil                  ${flairReferences.user.uncivil ?? 'NOT RESOLVED'}`);
+  console.log(`user SCAM                     ${flairReferences.user.scam ?? 'NOT RESOLVED'}`);
+  console.log(`post Minor Announcement :lisa: ${flairReferences.post.minorAnnouncement ?? 'NOT RESOLVED'}`);
+  console.log(`post Announcement :catgirl-moon: ${flairReferences.post.announcement ?? 'NOT RESOLVED'}`);
+
   console.log('\n=== REPUTATION BOOTSTRAP ===');
   console.log(`protobuf: ${statePath}`);
   console.log(`report:   ${reportPath}`);
@@ -356,6 +414,22 @@ try {
   console.log(`records requiring manual semantic review: ${needsReview}`);
   console.log(`records requiring a tier flair application: ${needsFlair}`);
   console.log(`NOTE: ${coverageNote}`);
+
+  const reviewUsers = bootstrap.users.filter(value => value.needsReview);
+  if (reviewUsers.length > 0) {
+    console.log('\n=== USERS REQUIRING REVIEW ===');
+    for (const value of reviewUsers) {
+      console.log(`u/${value.username}\tflair=${JSON.stringify(value.currentFlairText)}\tcss=${value.currentFlairCssClass ?? '-'}\tsource=${value.source}`);
+    }
+  }
+
+  const flairUsers = bootstrap.users.filter(value => value.needsFlair);
+  if (flairUsers.length > 0) {
+    console.log('\n=== DISCOVERED USERS WITHOUT FLAIR ===');
+    for (const value of flairUsers) {
+      console.log(`u/${value.username}\tpoints=${value.points}\tdesired=${value.desiredFlairText}\ttemplate=${value.desiredFlairTemplateId}`);
+    }
+  }
 } catch (error) {
   console.error(`Reputation bootstrap failed: ${safeError(error)}`);
   process.exitCode = 1;
