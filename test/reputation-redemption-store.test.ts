@@ -91,6 +91,7 @@ const result = (
   verdict,
   rule: verdict === 'clean' ? 'none' : verdict === 'scam' ? 'rule_5' : 'rule_2',
   disposition: verdict === 'clean' || verdict === 'low' ? 'allow' : 'remove',
+  penaltyPoints: verdict === 'clean' ? 0 : verdict === 'low' ? 1 : verdict === 'severe' ? 10 : 999_999_999,
   confidence: 1,
   reason: verdict,
   evidence: [],
@@ -125,6 +126,8 @@ const apply = async (
     author: 'Recovering',
     createdAt: 200,
     score,
+    permalink: `/r/catgirlcoin/${fullname}`,
+    content: `fixture ${fullname}`,
     classification: result(verdict),
     moderatedAt: 201,
   });
