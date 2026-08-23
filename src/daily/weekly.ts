@@ -55,6 +55,7 @@ export class WeeklyRedditRelay {
     let failed = 0;
 
     for (const review of await this.reviews.weekly()) {
+      if (await this.alreadyComplete(review)) continue;
       inspected += 1;
       try {
         const primary = await this.publishPrimary(review);
@@ -73,6 +74,14 @@ export class WeeklyRedditRelay {
       }
     }
     return { inspected, completed, failed };
+  }
+
+  private async alreadyComplete(review: CanonicalWeeklyReview): Promise<boolean> {
+    const primary = await this.state.action(actionKey(review, 'primary'));
+    if (primary?.state !== 'applied' || primary.externalId === null) return false;
+    if (this.singleTarget) return true;
+    const legacy = await this.state.action(actionKey(review, 'legacy'));
+    return legacy?.state === 'applied' && legacy.externalId !== null;
   }
 
   private async publishPrimary(review: CanonicalWeeklyReview): Promise<string | null> {
