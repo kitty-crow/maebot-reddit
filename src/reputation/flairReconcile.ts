@@ -1,5 +1,10 @@
-import type { RedditFlairTemplate } from '../reddit/types.ts';
-import type { ReputationBootstrap, ReputationUser } from './store.ts';
+import type { RedditFlairAssignment, RedditFlairTemplate } from '../reddit/types.ts';
+import { isMap, type Json } from '../types/json.ts';
+import type {
+  ReputationBootstrap,
+  ReputationPendingFlair,
+  ReputationUser,
+} from './store.ts';
 
 export type ReputationFlairWriter = {
   setUserFlairTemplate(
@@ -64,4 +69,41 @@ export const applyBootstrapFlairs = async (
       users,
     },
   };
+};
+
+const normalise = (value: string): string => value.trim().toLowerCase();
+const textOrNull = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
+const flag = (value: Json | undefined): boolean => value === true;
+
+export const authoritativeFlairRestores = (
+  raw: Json,
+  assignments: readonly RedditFlairAssignment[],
+): readonly ReputationPendingFlair[] => {
+  if (!isMap(raw)) throw new Error('Reputation flair reconciliation root must be an object');
+  const users = raw['users'];
+  if (!isMap(users)) throw new Error('Reputation flair reconciliation users map is missing');
+
+  const live = new Map<string, RedditFlairAssignment>();
+  for (const assignment of assignments) live.set(normalise(assignment.username), assignment);
+
+  const restores: ReputationPendingFlair[] = [];
+  for (const value of Object.values(users)) {
+    if (!isMap(value)) continue;
+    if (value['status'] === 'moderator' || flag(value['immutableModeratorFlair'])) continue;
+    if (flag(value['needsFlair'])) continue;
+
+    const username = textOrNull(value['username']);
+    const templateId = textOrNull(value['desiredFlairTemplateId']);
+    const flairText = textOrNull(value['desiredFlairText']);
+    if (username === null || templateId === null || flairText === null) continue;
+
+    const assignment = live.get(normalise(username));
+    const wrongTemplate = assignment === undefined || assignment.templateId !== templateId;
+    const wrongText = assignment === undefined || assignment.text !== flairText;
+    if (!wrongTemplate && !wrongText) continue;
+
+    restores.push({ username, templateId, text: flairText });
+  }
+
+  return restores.sort((a, b) => a.username.localeCompare(b.username));
 };
