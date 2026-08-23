@@ -78,10 +78,7 @@ const bootstrap = (): ReputationBootstrap => ({
       uncivil: 'uncivil-id',
       scam: 'scam-id',
     },
-    post: {
-      minorAnnouncement: 'minor-id',
-      announcement: 'announcement-id',
-    },
+    post: { minorAnnouncement: 'minor-id', announcement: 'announcement-id' },
   },
   users: [{
     username: 'HumanMod',
@@ -156,6 +153,7 @@ const clean = (): ModerationClassification => ({
   verdict: 'clean',
   rule: 'none',
   disposition: 'allow',
+  penaltyPoints: 0,
   confidence: 1,
   reason: 'clean',
   evidence: [],
@@ -165,6 +163,7 @@ const severe = (): ModerationClassification => ({
   verdict: 'severe',
   rule: 'rule_6',
   disposition: 'remove',
+  penaltyPoints: 10,
   confidence: 1,
   reason: 'fud',
   evidence: ['doomposting'],
@@ -174,6 +173,7 @@ const scam = (): ModerationClassification => ({
   verdict: 'scam',
   rule: 'rule_5',
   disposition: 'remove',
+  penaltyPoints: 999_999_999,
   confidence: 1,
   reason: 'promotion',
   evidence: ['malicious promotion'],
@@ -181,7 +181,6 @@ const scam = (): ModerationClassification => ({
 
 class FixtureClassifier implements ModerationClassifier {
   public readonly items: ModerationItem[] = [];
-
   public async classify(item: ModerationItem): Promise<ModerationClassification> {
     this.items.push(item);
     if (item.text.includes('SCAMMER')) return scam();
@@ -194,41 +193,20 @@ class FixtureReader implements ModerationReader {
   public posts: readonly RedditPost[] = [];
   public comments: readonly RedditComment[] = [];
   public assignments: readonly RedditFlairAssignment[] = [{
-    username: 'HumanMod',
-    templateId: 'mod-id',
-    text: 'Moderator:kitty-business:',
-    cssClass: 'm',
+    username: 'HumanMod', templateId: 'mod-id', text: 'Moderator:kitty-business:', cssClass: 'm',
   }];
   public scoreRows: readonly RedditThingScore[] = [];
   public moderatorCalls = 0;
-
   public async me(): Promise<RedditAccount> {
-    return {
-      id: 'mae-id',
-      name: 'this_is_the_mae',
-      createdUtc: 1,
-      linkKarma: 0,
-      commentKarma: 0,
-    };
+    return { id: 'mae-id', name: 'this_is_the_mae', createdUtc: 1, linkKarma: 0, commentKarma: 0 };
   }
-
   public async moderators(): Promise<readonly RedditModerator[]> {
     this.moderatorCalls += 1;
     return [{ name: 'HumanMod', id: 'mod-account', permissions: ['all'] }];
   }
-
-  public async newPosts(): Promise<readonly RedditPost[]> {
-    return this.posts;
-  }
-
-  public async newComments(): Promise<readonly RedditComment[]> {
-    return this.comments;
-  }
-
-  public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> {
-    return this.assignments;
-  }
-
+  public async newPosts(): Promise<readonly RedditPost[]> { return this.posts; }
+  public async newComments(): Promise<readonly RedditComment[]> { return this.comments; }
+  public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> { return this.assignments; }
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
     const wanted = new Set(fullnames);
     return this.scoreRows.filter(value => wanted.has(value.fullname));
@@ -239,27 +217,17 @@ class FixtureWriter implements ModerationWriter {
   public readonly flairs: { username: string; templateId: string }[] = [];
   public readonly removals: string[] = [];
   public readonly bans: string[] = [];
-
-  public async setUserFlairTemplate(
-    _subreddit: string,
-    username: string,
-    templateId: string,
-  ): Promise<void> {
+  public readonly notices: string[] = [];
+  public readonly mutes: string[] = [];
+  public readonly unmutes: string[] = [];
+  public async setUserFlairTemplate(_subreddit: string, username: string, templateId: string): Promise<void> {
     this.flairs.push({ username, templateId });
   }
-
-  public async remove(fullname: string): Promise<void> {
-    this.removals.push(fullname);
-  }
-
-  public async banUser(
-    _subreddit: string,
-    username: string,
-    _reason: string,
-    _note: string,
-  ): Promise<void> {
-    this.bans.push(username);
-  }
+  public async remove(fullname: string): Promise<void> { this.removals.push(fullname); }
+  public async banUser(_subreddit: string, username: string): Promise<void> { this.bans.push(username); }
+  public async sendPrivateMessage(username: string): Promise<void> { this.notices.push(username); }
+  public async muteUser(_subreddit: string, username: string): Promise<void> { this.mutes.push(username); }
+  public async unmuteUser(_subreddit: string, username: string): Promise<void> { this.unmutes.push(username); }
 }
 
 const config = (stateFile: string): RedditModerationCfg => ({
@@ -279,24 +247,14 @@ const fixture = async () => {
   const reader = new FixtureReader();
   const writer = new FixtureWriter();
   const classifier = new FixtureClassifier();
-  const runtime = new RedditModerationRuntime(
-    'catgirlcoin',
-    config(file),
-    reader,
-    writer,
-    reputation,
-    classifier,
-  );
+  const runtime = new RedditModerationRuntime('catgirlcoin', config(file), reader, writer, reputation, classifier);
   return { reputation, reader, writer, classifier, runtime };
 };
 
 describe('live Reddit moderation runtime', () => {
-  test('Mae and moderators are excluded before the classifier while ordinary users are audited', async () => {
+  test('Mae and moderators are excluded before classifier and severe minus ten respects ban threshold', async () => {
     const f = await fixture();
-    f.reader.posts = [
-      post('mae', 'this_is_the_mae', 'Mae announcement'),
-      post('mod', 'HumanMod', 'Moderator announcement'),
-    ];
+    f.reader.posts = [post('mae', 'this_is_the_mae', 'Mae announcement'), post('mod', 'HumanMod', 'Moderator announcement')];
     f.reader.comments = [
       comment('clean', 'OrdinaryUser', 'Had no idea this was still alive tbh.'),
       comment('severe', 'FudUser', 'DEAD END new road map too', 1, ['https://preview.redd.it/dead-end.gif']),
@@ -315,30 +273,27 @@ describe('live Reddit moderation runtime', () => {
       .toEqual(['https://preview.redd.it/dead-end.gif']);
 
     expect(f.writer.removals.sort()).toEqual(['t1_scam', 't1_severe']);
-    expect(f.writer.bans).toEqual(['Scammer']);
+    expect(f.writer.bans.sort()).toEqual(['FudUser', 'Scammer']);
+    expect(f.writer.mutes.sort()).toEqual(['FudUser', 'Scammer']);
+    expect(f.writer.notices.sort()).toEqual(['FudUser', 'Scammer']);
     expect(f.writer.flairs.some(value => value.username === 'OrdinaryUser')).toBe(true);
-    expect(f.writer.flairs).toContainEqual({ username: 'FudUser', templateId: 'warned-id' });
     expect(f.writer.flairs).toContainEqual({ username: 'Scammer', templateId: 'scam-id' });
 
     const raw = await f.reputation.raw();
-    if (!isMap(raw)) throw new Error('runtime state missing');
-    const users = raw['users'];
-    if (!isMap(users)) throw new Error('runtime users missing');
-    const ordinary = users['ordinaryuser'];
+    if (!isMap(raw) || !isMap(raw['users'])) throw new Error('runtime users missing');
+    const ordinary = raw['users']['ordinaryuser'];
     if (!isMap(ordinary)) throw new Error('ordinary user missing');
     expect(ordinary['points']).toBe(1);
     expect(ordinary['tier']).toBe(1);
   });
 
-  test('repeating the same poll does not rerun LLM moderation or replay side effects', async () => {
+  test('repeating same poll does not rerun LLM moderation or replay side effects', async () => {
     const f = await fixture();
     f.reader.comments = [comment('clean', 'OrdinaryUser', 'Catgirl is still a thing?')];
-
     await f.runtime.tick();
     const firstCalls = f.classifier.items.length;
     const firstFlairs = f.writer.flairs.length;
     await f.runtime.tick();
-
     expect(firstCalls).toBe(1);
     expect(f.classifier.items).toHaveLength(1);
     expect(f.writer.flairs).toHaveLength(firstFlairs);
@@ -347,34 +302,21 @@ describe('live Reddit moderation runtime', () => {
     expect(f.reader.moderatorCalls).toBe(1);
   });
 
-  test('manual member flair changes are restored from the database while moderator flair is untouched', async () => {
+  test('manual member flair changes are restored from database while moderator flair is untouched', async () => {
     const f = await fixture();
     f.reader.comments = [comment('clean', 'OrdinaryUser', 'Useful contribution')];
     await f.runtime.tick();
-
     const canonical = f.writer.flairs.find(value => value.username === 'OrdinaryUser');
     if (canonical === undefined) throw new Error('OrdinaryUser did not receive a canonical flair');
     f.reader.comments = [];
     f.reader.assignments = [
-      {
-        username: 'OrdinaryUser',
-        templateId: canonical.templateId === 'mae-id' ? 'kita-id' : 'mae-id',
-        text: canonical.templateId === 'mae-id' ? ':kita:' : ':mae:',
-        cssClass: 'h',
-      },
-      {
-        username: 'HumanMod',
-        templateId: 'mae-id',
-        text: ':mae:',
-        cssClass: 'h',
-      },
+      { username: 'OrdinaryUser', templateId: canonical.templateId === 'mae-id' ? 'kita-id' : 'mae-id', text: canonical.templateId === 'mae-id' ? ':kita:' : ':mae:', cssClass: 'h' },
+      { username: 'HumanMod', templateId: 'mae-id', text: ':mae:', cssClass: 'h' },
     ];
-
     await new Promise(resolve => setTimeout(resolve, 2));
     const before = f.writer.flairs.length;
     const result = await f.runtime.tick();
     const restored = f.writer.flairs.slice(before);
-
     expect(result.flairRestored).toBe(1);
     expect(restored).toEqual([canonical]);
     expect(restored.some(value => value.username === 'HumanMod')).toBe(false);
