@@ -37,6 +37,8 @@ const post = (
   locked: false,
   over18: false,
   crosspostParent,
+  score: 0,
+  mediaUrls: [],
 });
 
 class Reader implements MirrorReader {
