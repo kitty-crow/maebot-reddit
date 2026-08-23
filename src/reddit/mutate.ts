@@ -243,6 +243,11 @@ export class RedditMutationClient {
     }));
   }
 
+  public async markPrivateMessageRead(fullname: string): Promise<void> {
+    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
+    await this.form('/api/read_message', new URLSearchParams({ id: fullname }));
+  }
+
   public async replyModmail(
     conversationId: string,
     body: string,
