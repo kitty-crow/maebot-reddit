@@ -14,6 +14,7 @@ import {
   PAWSOME_FLAIR_TEXT,
   PAWSOME_POINTS,
   REPUTATION_FLOOR,
+  UNCIVIL_CEILING,
 } from '../src/reputation/policy.ts';
 
 const live = CATGIRLCOIN_REPUTATION_FLAIRS;
@@ -136,7 +137,8 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(users.get('Poppy')?.tier).toBe(5);
     expect(users.get('Wendy')?.points).toBe(-1);
     expect(users.get('Wendy')?.status).toBe('warned');
-    expect(users.get('Uma')?.points).toBe(-2);
+    expect(users.get('Uma')?.points).toBe(UNCIVIL_CEILING);
+    expect(users.get('Uma')?.status).toBe('uncivil');
     expect(users.get('Barry')?.points).toBe(REPUTATION_FLOOR);
     expect(users.get('Barry')?.status).toBe('banned');
     expect(users.get('Sam')?.points).toBe(REPUTATION_FLOOR);
