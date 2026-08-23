@@ -2,7 +2,7 @@ import os
 import sys
 from question_cleaner import question_cleaner
 from similar_questions import find_similarity
-from globals import min_karma_post as mkp, min_karma_removal as mkComment, bot_notice, no_flair_notice, banned_css_classes, banned_from_posting, restricted_css_classes, restricted_from_posting
+from globals import bot_notice, no_flair_notice, banned_css_classes, banned_from_posting
 current = os.path.dirname(os.path.realpath(__file__))
 parent_directory = os.path.split(os.path.dirname(current))[0]
 sys.path.append(f"{parent_directory}/common")
@@ -21,10 +21,6 @@ def postMod(submission):
     the_reply = no_flair_notice + bot_notice.replace(" ", "&#x2005;")
   elif submission.author_flair_css_class in banned_css_classes:
     the_reply = banned_from_posting + bot_notice.replace(" ", "&#x2005;")
-  elif (submission.author_flair_css_class in restricted_css_classes) and (author.link_karma < mkp * 10):
-    the_reply = restricted_from_posting + bot_notice.replace(" ", "&#x2005;")
-  elif author.link_karma < mkp:
-      the_reply = mkComment + bot_notice.replace(" ", "&#x2005;")
   if the_reply:
     comment = submission.reply(body=the_reply)
     comment.mod.distinguish(sticky=True)
