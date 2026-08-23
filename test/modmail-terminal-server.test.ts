@@ -88,7 +88,7 @@ describe('focused Reddit Modmail terminal', () => {
   test('issues a short-lived one-conversation terminal and serves hardened no-store HTML', async () => {
     const { server, base } = await fixture();
     const link = await server.issue('abc123', { platform: 'discord', userId: '42', handle: 'AliceMod' });
-    expect(link.url).toStartWith('https://moderation.example/modmail/');
+    expect(link.url.startsWith('https://moderation.example/modmail/')).toBe(true);
 
     const response = await fetch(localUrl(base, link.url));
     expect(response.status).toBe(200);
