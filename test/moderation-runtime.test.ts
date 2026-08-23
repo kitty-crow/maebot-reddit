@@ -16,9 +16,11 @@ import type { RedditModerationCfg } from '../src/env.ts';
 import type {
   RedditAccount,
   RedditComment,
+  RedditFlairAssignment,
   RedditFlairTemplate,
   RedditModerator,
   RedditPost,
+  RedditThingScore,
 } from '../src/reddit/types.ts';
 import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
 import { PAWSOME_FLAIR_TEXT, MODERATOR_POINTS } from '../src/reputation/policy.ts';
@@ -191,6 +193,13 @@ class FixtureClassifier implements ModerationClassifier {
 class FixtureReader implements ModerationReader {
   public posts: readonly RedditPost[] = [];
   public comments: readonly RedditComment[] = [];
+  public assignments: readonly RedditFlairAssignment[] = [{
+    username: 'HumanMod',
+    templateId: 'mod-id',
+    text: 'Moderator:kitty-business:',
+    cssClass: 'm',
+  }];
+  public scoreRows: readonly RedditThingScore[] = [];
   public moderatorCalls = 0;
 
   public async me(): Promise<RedditAccount> {
@@ -214,6 +223,15 @@ class FixtureReader implements ModerationReader {
 
   public async newComments(): Promise<readonly RedditComment[]> {
     return this.comments;
+  }
+
+  public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> {
+    return this.assignments;
+  }
+
+  public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
+    const wanted = new Set(fullnames);
+    return this.scoreRows.filter(value => wanted.has(value.fullname));
   }
 }
 
@@ -248,6 +266,8 @@ const config = (stateFile: string): RedditModerationCfg => ({
   ai: { key: 'unused', model: 'unused', effort: 'low' },
   stateFile,
   batchSize: 100,
+  scoreBatchSize: 100,
+  flairReconcileMs: 1,
 });
 
 const fixture = async () => {
@@ -325,5 +345,38 @@ describe('live Reddit moderation runtime', () => {
     expect(f.writer.removals).toEqual([]);
     expect(f.writer.bans).toEqual([]);
     expect(f.reader.moderatorCalls).toBe(1);
+  });
+
+  test('manual member flair changes are restored from the database while moderator flair is untouched', async () => {
+    const f = await fixture();
+    f.reader.comments = [comment('clean', 'OrdinaryUser', 'Useful contribution')];
+    await f.runtime.tick();
+
+    const canonical = f.writer.flairs.find(value => value.username === 'OrdinaryUser');
+    if (canonical === undefined) throw new Error('OrdinaryUser did not receive a canonical flair');
+    f.reader.comments = [];
+    f.reader.assignments = [
+      {
+        username: 'OrdinaryUser',
+        templateId: canonical.templateId === 'mae-id' ? 'kita-id' : 'mae-id',
+        text: canonical.templateId === 'mae-id' ? ':kita:' : ':mae:',
+        cssClass: 'h',
+      },
+      {
+        username: 'HumanMod',
+        templateId: 'mae-id',
+        text: ':mae:',
+        cssClass: 'h',
+      },
+    ];
+
+    await new Promise(resolve => setTimeout(resolve, 2));
+    const before = f.writer.flairs.length;
+    const result = await f.runtime.tick();
+    const restored = f.writer.flairs.slice(before);
+
+    expect(result.flairRestored).toBe(1);
+    expect(restored).toEqual([canonical]);
+    expect(restored.some(value => value.username === 'HumanMod')).toBe(false);
   });
 });
