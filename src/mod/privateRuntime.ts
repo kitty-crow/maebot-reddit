@@ -68,7 +68,7 @@ export class PrivateModmailRuntime {
   private readonly resolution: PrivateResolutionClassifier;
 
   public constructor(
-    private readonly cfg: ModerationAiCfg,
+    cfg: ModerationAiCfg,
     private readonly relay: ModmailStore,
     private readonly audit: ModmailAuditStore,
     private readonly reputation: PrivateModerationReputation,
@@ -77,7 +77,7 @@ export class PrivateModmailRuntime {
   ) {
     this.classifierFactory = classifierFactory ?? (conversationId => new RedditModerationClassifier(cfg, {
       conversation: true,
-      conversationId,
+      ...(conversationId === undefined ? {} : { conversationId }),
     }));
     this.resolution = resolution ?? new RedditPrivateResolutionClassifier(cfg);
   }
