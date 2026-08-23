@@ -231,11 +231,13 @@ export class RedditInternalHttpServer {
       const key = body['key'];
       const choice = body['choice'];
       const source = platform(body['platform']);
+      const userId = nonEmptyText(body['userId'], 128);
       const userName = nonEmptyText(body['userName'], 128);
       if (
         typeof key !== 'string'
         || (choice !== 'approve' && choice !== 'reject')
         || source === null
+        || userId === null
         || userName === null
       ) {
         return this.record(req, url, json({ error: 'invalid decision body' }, 400));
@@ -243,9 +245,11 @@ export class RedditInternalHttpServer {
       const result = await this.moderation.decide(key, {
         choice,
         platform: source,
+        userId,
         userName,
         at: Math.floor(Date.now() / 1_000),
       });
+      if (result === null) return this.record(req, url, json({ error: 'review not found' }, 404), `review=${key}`);
       return this.record(req, url, json(result), `review=${key} won=${result.won ? 'yes' : 'no'}`);
     }
 
