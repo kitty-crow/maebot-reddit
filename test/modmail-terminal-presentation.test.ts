@@ -130,3 +130,23 @@ test('one durable outbox record cannot be reused to relabel two identical Reddit
   expect(value.messages[0]?.origin).toBe('Discord');
   expect(value.messages[1]?.origin).toBe('Reddit');
 });
+
+test('unclassified Reddit system/deleted-author entries are centred rather than mislabelled as moderators', () => {
+  const systemMessage: ModmailMessage = {
+    id: 'system-1',
+    conversationId: 'abc123',
+    author: null,
+    bodyMarkdown: 'Reddit changed the conversation state.',
+    createdAt: 600,
+    isInternal: false,
+    participatingAs: null,
+  };
+  const value = presentModmailConversation(conversation([systemMessage]), []);
+
+  expect(value.messages[0]).toMatchObject({
+    side: 'internal',
+    sender: '[deleted]',
+    origin: 'Reddit',
+    bodyMarkdown: 'Reddit changed the conversation state.',
+  });
+});
