@@ -4,7 +4,7 @@ import praw
 import prawcore
 from redditbot import RedditBot
 from commands import command_parser
-from globals import min_comment_karma as mck, blacklisted_words, no_flair_notice, bot_notice, banned_css_classes, banned_from_posting
+from globals import blacklisted_words, no_flair_notice, bot_notice, banned_css_classes, banned_from_posting
 current = os.path.dirname(os.path.realpath(__file__))
 parent_directory = os.path.dirname(current)
 sys.path.append(f"{parent_directory}/common")
