@@ -2,10 +2,12 @@ import type { RedditFlairAssignment } from '../reddit/types.ts';
 
 export type ReputationTier = 0 | 1 | 2 | 3 | 4;
 export type ReputationStatus = 'ordinary' | 'warned' | 'uncivil' | 'banned' | 'scam' | 'moderator' | 'unmapped';
+export type OrdinaryTier = Exclude<ReputationTier, 0>;
+export type TierFlairText = ':mae:' | ':lisa:' | ':kita:' | ':aoi:' | ':hana:' | ':rin:' | ':celeste:';
 
 export type TierFlair = {
-  readonly tier: Exclude<ReputationTier, 0>;
-  readonly text: ':mae:' | ':lisa:' | ':kita:' | ':aoi:' | ':hana:' | ':rin:' | ':celeste:';
+  readonly tier: OrdinaryTier;
+  readonly text: TierFlairText;
   readonly seedPoints: 1 | 10 | 100 | 1000;
 };
 
@@ -54,5 +56,19 @@ export const moderationStatus = (
   return null;
 };
 
-export const chooseTierOneFlair = (random: () => number = Math.random): ':mae:' | ':lisa:' =>
-  random() < 0.01 ? ':lisa:' : ':mae:';
+export const chooseFlairForTier = (
+  tier: OrdinaryTier,
+  random: () => number = Math.random,
+): TierFlairText => {
+  const roll = random();
+  if (!Number.isFinite(roll) || roll < 0 || roll >= 1) throw new Error('Reputation flair random source must return [0, 1)');
+  if (tier === 1) return roll < 0.01 ? ':lisa:' : ':mae:';
+  if (tier === 2) return roll < 0.001 ? ':aoi:' : ':kita:';
+  if (tier === 3) return roll < 0.0001 ? ':rin:' : ':hana:';
+  return ':celeste:';
+};
+
+export const chooseTierOneFlair = (random: () => number = Math.random): ':mae:' | ':lisa:' => {
+  const chosen = chooseFlairForTier(1, random);
+  return chosen === ':lisa:' ? ':lisa:' : ':mae:';
+};
