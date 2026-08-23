@@ -9,13 +9,13 @@ const row = (
 ): ReputationRankingRow => ({
   username,
   points,
-  tier,
+  tier: moderator ? 5 : tier,
   status: moderator ? 'moderator' : 'ordinary',
   currentFlairText: moderator ? 'Moderator' : ':mae:',
   immutableModeratorFlair: moderator,
 });
 
-test('reputation ranking keeps moderators first then sorts everyone else by decreasing score', () => {
+test('reputation ranking keeps tier-five moderators first then sorts everyone else by decreasing score', () => {
   const ranked = rankReputationRows([
     row('low', 1, 1),
     row('top', 1200, 4),
@@ -27,6 +27,7 @@ test('reputation ranking keeps moderators first then sorts everyone else by decr
     row('tie-a', 10, 2),
   ]);
 
+  expect(ranked.filter(value => value.status === 'moderator').every(value => value.tier === 5)).toBe(true);
   expect(ranked.map(value => value.username)).toEqual([
     'mod-a',
     'mod-z',
