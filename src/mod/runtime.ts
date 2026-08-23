@@ -1,4 +1,5 @@
 import type { RedditModerationCfg } from '../env.ts';
+import { authoritativeFlairRestores } from '../reputation/flairReconcile.ts';
 import { scoreInventoryFullnames } from '../reputation/inventory.ts';
 import { ReputationStore, type ReputationContributionKind } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
@@ -12,7 +13,10 @@ import {
 } from './classifier.ts';
 import { moderationExemption, moderatorSet } from './exemption.ts';
 
-export type ModerationReader = Pick<RedditReadClient, 'me' | 'moderators' | 'newPosts' | 'newComments' | 'scores'>;
+export type ModerationReader = Pick<
+  RedditReadClient,
+  'me' | 'moderators' | 'newPosts' | 'newComments' | 'scores' | 'userFlairAssignments'
+>;
 export type ModerationWriter = Pick<RedditMutationClient, 'setUserFlairTemplate' | 'remove' | 'banUser'>;
 
 export type RedditModerationTick = {
@@ -20,6 +24,7 @@ export type RedditModerationTick = {
   readonly audited: number;
   readonly exempt: number;
   readonly scoreCredits: number;
+  readonly flairRestored: number;
   readonly effectsApplied: number;
   readonly failed: number;
 };
@@ -77,6 +82,7 @@ export class RedditModerationRuntime {
   private privilegeCache: Privileges | null = null;
   private privilegeUntil = 0;
   private scoreCursor = 0;
+  private nextFlairReconcileAt = 0;
 
   public constructor(
     private readonly subreddit: string,
@@ -155,6 +161,28 @@ export class RedditModerationRuntime {
     let credited = 0;
     for (const value of values) credited += await this.reputation.observeScore(value.fullname, value.score, at);
     return credited;
+  }
+
+  private async reconcileAuthoritativeFlairs(now: number): Promise<{ readonly restored: number; readonly failed: number }> {
+    if (now < this.nextFlairReconcileAt) return { restored: 0, failed: 0 };
+    this.nextFlairReconcileAt = now + this.cfg.flairReconcileMs;
+
+    const assignments = await this.reader.userFlairAssignments(this.subreddit);
+    const restores = authoritativeFlairRestores(await this.reputation.raw(), assignments);
+    let restored = 0;
+    let failed = 0;
+    for (const flair of restores) {
+      try {
+        await this.writer.setUserFlairTemplate(this.subreddit, flair.username, flair.templateId, null);
+        await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
+        restored += 1;
+        console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username}.`);
+      } catch (error) {
+        failed += 1;
+        console.error(`[Reddit reputation] authoritative flair restore failed for u/${flair.username}: ${safeError(error)}`);
+      }
+    }
+    return { restored, failed };
   }
 
   private async applyEffects(): Promise<{ readonly applied: number; readonly failed: number }> {
@@ -239,13 +267,25 @@ export class RedditModerationRuntime {
     }
 
     const effects = await this.applyEffects();
+    let flairRestored = 0;
+    let flairFailed = 0;
+    try {
+      const reconciliation = await this.reconcileAuthoritativeFlairs(Date.now());
+      flairRestored = reconciliation.restored;
+      flairFailed = reconciliation.failed;
+    } catch (error) {
+      flairFailed = 1;
+      console.error(`[Reddit reputation] flair reconciliation failed: ${safeError(error)}`);
+    }
+
     return {
       discovered: items.length,
       audited,
       exempt,
       scoreCredits,
+      flairRestored,
       effectsApplied: effects.applied,
-      failed: failed + effects.failed,
+      failed: failed + effects.failed + flairFailed,
     };
   }
 }
