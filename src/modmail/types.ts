@@ -7,6 +7,8 @@ export type ModmailConversationState =
   | 'filtered'
   | 'unknown';
 
+export type ModmailConversationKind = 'sr_user' | 'sr_sr' | 'internal' | 'unknown';
+
 export type ModmailParticipant = {
   readonly id: string | null;
   readonly name: string | null;
@@ -32,6 +34,7 @@ export type ModmailConversation = {
   readonly subreddit: string;
   readonly subject: string;
   readonly participant: ModmailParticipant | null;
+  readonly kind: ModmailConversationKind;
   readonly state: ModmailConversationState;
   readonly isInternal: boolean;
   readonly isAuto: boolean;
