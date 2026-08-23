@@ -72,6 +72,12 @@ const add = (form: URLSearchParams, name: string, value: string | null): void =>
   if (value !== null && value.length > 0) form.set(name, value);
 };
 
+const modmailConversationId = (id: string): string => {
+  const value = id.trim().replace(/^ModmailConversation_/u, '');
+  if (!/^[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit modmail conversation id ${id}`);
+  return value;
+};
+
 export class RedditMutationClient {
   private readonly fetcher: RedditMutationFetch;
   private readonly sleep: RedditMutationSleep;
@@ -235,6 +241,35 @@ export class RedditMutationClient {
       thing_id: fullname,
       text: body,
     }));
+  }
+
+  public async replyModmail(
+    conversationId: string,
+    body: string,
+    options: { readonly hidden?: boolean; readonly internal?: boolean } = {},
+  ): Promise<void> {
+    const id = modmailConversationId(conversationId);
+    const textBody = body.trim();
+    if (textBody.length === 0) throw new Error('Reddit modmail reply body cannot be empty');
+    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}`, new URLSearchParams({
+      api_type: 'json',
+      body: textBody,
+      isAuthorHidden: String(options.hidden === true),
+      isInternal: String(options.internal === true),
+    }));
+  }
+
+  public async muteModmail(conversationId: string, hours: 72 | 168 | 672): Promise<void> {
+    const id = modmailConversationId(conversationId);
+    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}/mute`, new URLSearchParams({
+      api_type: 'json',
+      num_hours: String(hours),
+    }));
+  }
+
+  public async unmuteModmail(conversationId: string): Promise<void> {
+    const id = modmailConversationId(conversationId);
+    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}/unmute`, new URLSearchParams({ api_type: 'json' }));
   }
 
   public async muteUser(subreddit: string, username: string, note: string): Promise<void> {
