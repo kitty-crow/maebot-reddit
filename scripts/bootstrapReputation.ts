@@ -1,10 +1,12 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { redditConfig } from '../src/env.ts';
 import { planReputationBootstrap } from '../src/reputation/bootstrap.ts';
+import { applyBootstrapFlairs } from '../src/reputation/flairReconcile.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { safeError } from '../src/reddit/error.ts';
+import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
 import type { JsonMap } from '../src/types/json.ts';
 
@@ -15,12 +17,22 @@ const valueArg = (prefix: string): string | null => {
   return value === undefined ? null : value.slice(prefix.length + 1).trim();
 };
 
+const exists = async (path: string): Promise<boolean> => {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const subreddit = (valueArg('--subreddit') ?? cfg.sourceSubreddit).replace(/^r\//iu, '');
 const force = flag('--force');
 const reportPath = resolve(process.cwd(), valueArg('--report') ?? 'data/reputation-bootstrap-report.json');
 const statePath = resolve(process.cwd(), valueArg('--state') ?? 'data/reputation.pb');
 const now = Math.floor(Date.now() / 1_000);
 const client = new RedditReadClient(cfg.auth);
+const writer = new RedditMutationClient(cfg.auth);
 
 const reportTemplate = (template: RedditFlairTemplate): JsonMap => ({
   id: template.id,
@@ -33,6 +45,11 @@ const reportTemplate = (template: RedditFlairTemplate): JsonMap => ({
 });
 
 try {
+  const store = new ReputationStore(statePath);
+  if (!force && await exists(statePath) && await store.hasBootstrap()) {
+    throw new Error('Reputation store is already bootstrapped; pass --force only after reviewing the previous report');
+  }
+
   const [userFlairs, postFlairs, assignments, moderators, bannedUsers, posts, comments] = await Promise.all([
     client.userFlairTemplates(subreddit),
     client.postFlairTemplates(subreddit),
@@ -64,17 +81,32 @@ try {
     posts,
     comments,
   });
-  const bootstrap = plan.bootstrap;
-  const references = bootstrap.flairReferences;
 
+  const pendingFlairs = plan.bootstrap.users
+    .filter(value => value.needsFlair)
+    .map(value => ({
+      username: value.username,
+      templateId: value.desiredFlairTemplateId,
+      flairText: value.desiredFlairText,
+    }));
+
+  if (pendingFlairs.length > 0) {
+    console.log(`\n=== APPLYING ${pendingFlairs.length} DISCOVERED MISSING USER FLAIR(S) ===`);
+  }
+  const reconciled = await applyBootstrapFlairs(plan.bootstrap, writer);
+  const bootstrap = reconciled.bootstrap;
+  const remainingMissing = bootstrap.users.filter(value => value.needsFlair);
+  if (remainingMissing.length > 0) {
+    throw new Error(`Bootstrap left ${remainingMissing.length} discovered user(s) without a required tier flair`);
+  }
+
+  const references = bootstrap.flairReferences;
   const byTier = new Map<number, number>();
   const byStatus = new Map<string, number>();
-  let needsFlair = 0;
   let needsReview = 0;
   for (const value of bootstrap.users) {
     byTier.set(value.tier, (byTier.get(value.tier) ?? 0) + 1);
     byStatus.set(value.status, (byStatus.get(value.status) ?? 0) + 1);
-    if (value.needsFlair) needsFlair += 1;
     if (value.needsReview) needsReview += 1;
   }
 
@@ -90,16 +122,18 @@ try {
       usersPersisted: bootstrap.users.length,
       byTier: Object.fromEntries([...byTier.entries()].sort((a, b) => a[0] - b[0])),
       byStatus: Object.fromEntries([...byStatus.entries()].sort((a, b) => a[0].localeCompare(b[0]))),
-      needsFlair,
+      discoveredWithoutFlair: plan.recentContributorsWithoutFlair,
+      flairsApplied: reconciled.applied,
+      needsFlair: 0,
       needsReview,
     },
+    appliedFlairs: pendingFlairs,
     users: bootstrap.users,
   };
 
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
 
-  const store = new ReputationStore(statePath);
   await store.bootstrap(bootstrap, force);
   if (!(await store.hasBootstrap())) throw new Error('Reputation protobuf did not verify after bootstrap');
 
@@ -111,6 +145,7 @@ try {
   console.log(`user :hana:                     ${references.user.hana}`);
   console.log(`user :rin:                      ${references.user.rin}`);
   console.log(`user :celeste:                  ${references.user.celeste}`);
+  console.log(`user Pawsome Contributor        ${references.user.pawsomeContributor}`);
   console.log(`user Warned                     ${references.user.warned ?? 'NOT RESOLVED'}`);
   console.log(`user Uncivil                    ${references.user.uncivil ?? 'NOT RESOLVED'}`);
   console.log(`user SCAM                       ${references.user.scam ?? 'NOT RESOLVED'}`);
@@ -126,24 +161,26 @@ try {
   console.log(`tier 2: ${byTier.get(2) ?? 0}`);
   console.log(`tier 3: ${byTier.get(3) ?? 0}`);
   console.log(`tier 4: ${byTier.get(4) ?? 0}`);
+  console.log(`tier 5 (Pawsome Contributor): ${byTier.get(5) ?? 0}`);
+  console.log(`tier 9 (moderators): ${byTier.get(9) ?? 0}`);
   console.log(`unflaired contributors found in accessible history: ${plan.recentContributorsWithoutFlair}`);
+  console.log(`tier flairs applied during bootstrap: ${reconciled.applied}`);
+  console.log('discovered users still requiring a tier flair: 0');
   console.log(`records requiring manual semantic review: ${needsReview}`);
-  console.log(`records requiring a tier flair application: ${needsFlair}`);
   console.log(`NOTE: ${bootstrap.coverage.note}`);
+
+  if (pendingFlairs.length > 0) {
+    console.log('\n=== FLAIRS APPLIED ===');
+    for (const value of pendingFlairs) {
+      console.log(`u/${value.username}\tflair=${value.flairText}\ttemplate=${value.templateId}`);
+    }
+  }
 
   const reviewUsers = bootstrap.users.filter(value => value.needsReview);
   if (reviewUsers.length > 0) {
     console.log('\n=== USERS REQUIRING REVIEW ===');
     for (const value of reviewUsers) {
       console.log(`u/${value.username}\tflair=${JSON.stringify(value.currentFlairText)}\tcss=${value.currentFlairCssClass ?? '-'}\tsource=${value.source}`);
-    }
-  }
-
-  const flairUsers = bootstrap.users.filter(value => value.needsFlair);
-  if (flairUsers.length > 0) {
-    console.log('\n=== DISCOVERED USERS WITHOUT FLAIR ===');
-    for (const value of flairUsers) {
-      console.log(`u/${value.username}\tpoints=${value.points}\tdesired=${value.desiredFlairText}\ttemplate=${value.desiredFlairTemplateId}`);
     }
   }
 } catch (error) {
