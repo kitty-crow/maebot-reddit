@@ -86,6 +86,24 @@ export class PrivateModmailRuntime {
     await this.audit.advance(event.sequence, event.conversationId, event.messageId, openaiConversationId);
   }
 
+  public async bootstrap(limit = 100): Promise<number> {
+    if (await this.audit.hasBootstrap()) return 0;
+    let seeded = 0;
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    while (true) {
+      const after = await this.audit.cursor();
+      const page = await this.relay.eventsAfter(after, safeLimit);
+      if (page.events.length === 0) break;
+      for (const event of page.events) {
+        await this.advance(event, null);
+        seeded += 1;
+      }
+      if (page.next <= after) throw new Error('Modmail relay cursor did not advance during private moderation bootstrap');
+    }
+    await this.audit.markBootstrapped();
+    return seeded;
+  }
+
   private async process(event: ModmailRelayEvent): Promise<'audited' | 'apology' | 'skipped'> {
     const auditState = await this.audit.conversation(event.conversationId);
     const openaiConversationId = auditState?.openaiConversationId ?? null;
@@ -152,6 +170,9 @@ export class PrivateModmailRuntime {
   }
 
   public async tick(limit = 100): Promise<PrivateModmailTick> {
+    if (!(await this.audit.hasBootstrap())) {
+      throw new Error('Private modmail moderation must bootstrap existing relay history before processing new events');
+    }
     const after = await this.audit.cursor();
     const page = await this.relay.eventsAfter(after, limit);
     let audited = 0;
