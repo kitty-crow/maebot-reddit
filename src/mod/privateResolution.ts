@@ -37,7 +37,7 @@ export class RedditPrivateResolutionClassifier implements PrivateResolutionClass
   private readonly api: OpenAISchema<PrivateResolution>;
 
   public constructor(private readonly cfg: ModerationAiCfg) {
-    this.api = openaiSchema<PrivateResolution>(cfg.key, resolutionShape, null, { conversation: false });
+    this.api = openaiSchema<PrivateResolution>(cfg.key, resolutionShape, undefined, { conversation: false });
   }
 
   public async classify(text: string): Promise<PrivateResolution> {
