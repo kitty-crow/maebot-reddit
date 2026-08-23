@@ -81,6 +81,7 @@ const moderation = moderationCfg === null || moderationReader === null || modera
       reputation,
       null,
       moderationReviews,
+      moderationPrivileges,
     );
 const modmail = moderationReader === null || moderationWriter === null
   ? null
