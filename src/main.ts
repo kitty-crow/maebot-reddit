@@ -15,6 +15,7 @@ import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { RedditModerationRuntime } from './mod/runtime.ts';
+import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
 import { QuestionEventStore } from './questions/events.ts';
@@ -55,6 +56,7 @@ const postMirror = singleTarget
     );
 const moderationReviews = new ModerationReviewStore();
 const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
+const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env['REDDIT_MODMAIL_OUTBOX_FILE']?.trim() || 'data/modmailReplies.pb'));
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
@@ -78,6 +80,9 @@ const modmail = moderationCfg === null || moderationReader === null || moderatio
       moderationWriter,
       reputation,
       modmailStore,
+      null,
+      null,
+      modmailOutbox,
     );
 
 const pollMs = (() => {
@@ -132,10 +137,14 @@ const tick = async (): Promise<void> => {
       console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
     }
     if (modmailResult !== null && (
-      modmailResult.relayed > 0 || modmailResult.audited > 0 || modmailResult.apologies > 0 || modmailResult.failed > 0
+      modmailResult.relayed > 0
+      || modmailResult.audited > 0
+      || modmailResult.apologies > 0
+      || modmailResult.repliesApplied > 0
+      || modmailResult.failed > 0
     )) {
       console.log(
-        `[Reddit modmail] relayed=${modmailResult.relayed} audited=${modmailResult.audited} apologies=${modmailResult.apologies} failed=${modmailResult.failed}`,
+        `[Reddit modmail] relayed=${modmailResult.relayed} audited=${modmailResult.audited} apologies=${modmailResult.apologies} replies=${modmailResult.repliesApplied} failed=${modmailResult.failed}`,
       );
     }
     if (moderationResult !== null && (
