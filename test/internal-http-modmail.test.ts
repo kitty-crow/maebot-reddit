@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RedditInternalHttpServer } from '../src/http/server.ts';
 import { ModerationReviewStore } from '../src/mod/review.ts';
+import { ModmailMediaService } from '../src/modmail/media/service.ts';
+import { ModmailMediaStore } from '../src/modmail/media/store.ts';
 import { ModmailReplyOutbox } from '../src/modmail/outbox.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
+import { ModmailTerminalServer } from '../src/modmail/terminalServer.ts';
 import type { ModmailConversation } from '../src/modmail/types.ts';
 import { QuestionEventStore } from '../src/questions/events.ts';
 import type { ReputationUser } from '../src/reputation/store.ts';
@@ -81,6 +84,18 @@ const fixture = async (withReputation: boolean) => {
   roots.push(root);
   const modmail = new ModmailStore(join(root, 'modmail.pb'));
   await modmail.sync([conversation()], 100);
+  const outbox = new ModmailReplyOutbox(join(root, 'replies.pb'));
+  const media = new ModmailMediaService(
+    modmail,
+    { uploadMedia: async name => `https://reddit-uploaded-media.s3-accelerate.amazonaws.com/${encodeURIComponent(name)}` },
+    new ModmailMediaStore(join(root, 'media.pb')),
+  );
+  const terminal = new ModmailTerminalServer(
+    { host: '127.0.0.1', port: 0, publicBase: null, ttlSeconds: 3600 },
+    modmail,
+    outbox,
+    media,
+  );
   const server = new RedditInternalHttpServer(
     { host: '127.0.0.1', port: 0, token: 'secret' },
     new QuestionEventStore(join(root, 'questions.pb')),
@@ -89,12 +104,12 @@ const fixture = async (withReputation: boolean) => {
   );
   server.useModmail(
     modmail,
-    new ModmailReplyOutbox(join(root, 'replies.pb')),
-    null,
+    outbox,
+    terminal,
     withReputation ? { user: async () => canonicalUser } : null,
   );
   server.start();
-  return { server, base: server.address() };
+  return { server, base: server.address(), outbox };
 };
 
 describe('Reddit internal Modmail API', () => {
@@ -111,12 +126,7 @@ describe('Reddit internal Modmail API', () => {
       };
       expect(body.conversation.id).toBe('abc123');
       expect(body.conversation.participant?.name).toBe('SomeUser');
-      expect(body.reputation).toEqual({
-        username: 'SomeUser',
-        points: -4,
-        tier: 0,
-        status: 'uncivil',
-      });
+      expect(body.reputation).toEqual({ username: 'SomeUser', points: -4, tier: 0, status: 'uncivil' });
       expect(Object.keys(body.reputation ?? {}).sort()).toEqual(['points', 'status', 'tier', 'username']);
     } finally {
       server.stop();
@@ -142,6 +152,47 @@ describe('Reddit internal Modmail API', () => {
     try {
       const response = await fetch(`${base}/v1/modmail/conversations/abc123`);
       expect(response.status).toBe(401);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('uploads authenticated media and queues a media-only attributed reply by durable attachment id', async () => {
+    const { server, base, outbox } = await fixture(false);
+    try {
+      const upload = await fetch(`${base}/v1/modmail/media/abc123`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret',
+          'content-type': 'image/png',
+          'x-mae-file-name': 'context.png',
+        },
+        body: new Uint8Array([1, 2, 3]),
+      });
+      expect(upload.status).toBe(201);
+      const uploadBody = await upload.json() as { attachment: { id: string; url: string } };
+      expect(uploadBody.attachment.url).toContain('reddit-uploaded-media.s3-accelerate.amazonaws.com');
+
+      const reply = await fetch(`${base}/v1/modmail/replies`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          key: 'discord:media1',
+          conversationId: 'abc123',
+          platform: 'discord',
+          userId: '42',
+          handle: '@AliceMod',
+          text: '',
+          attachmentIds: [uploadBody.attachment.id],
+        }),
+      });
+      expect(reply.status).toBe(202);
+      const pending = await outbox.pending();
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.attachments).toHaveLength(1);
+      expect(pending[0]?.text).toBe('');
+      expect(pending[0]?.bodyMarkdown).toContain('**Attachments:**');
+      expect(pending[0]?.bodyMarkdown).toContain('context.png');
     } finally {
       server.stop();
     }
