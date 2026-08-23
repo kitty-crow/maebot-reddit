@@ -3,13 +3,17 @@ import { readFile } from 'node:fs/promises';
 
 const source = async (path: string): Promise<string> => await readFile(path, 'utf8');
 
-test('focused Modmail page uses shared static TSX rendering without a browser React runtime', async () => {
+test('focused Modmail page uses static TSX rendering without a browser React runtime', async () => {
   const view = await source('src/modmail/terminalPageView.tsx');
+  const staticUi = await source('src/modmail/web/staticUi.tsx');
   const runtime = await source('src/modmail/web/runtime.ts');
   const packageJson = await source('package.json');
-  expect(view).toContain("from '@kittycrypto/website/static-ui'");
+  expect(view).toContain("from './web/staticUi.tsx'");
   expect(view).toContain('render2Mkup(');
-  expect(packageJson).toContain('"@kittycrypto/website": "file:vendor/website"');
+  expect(staticUi).toContain("from 'react-dom/server'");
+  expect(staticUi).toContain('renderToStaticMarkup');
+  expect(packageJson).toContain('"react": "19.2.4"');
+  expect(packageJson).toContain('"react-dom": "19.2.4"');
   expect(runtime).not.toContain('hydrateRoot');
   expect(runtime).not.toContain('createRoot');
 });
@@ -29,8 +33,8 @@ test('focused Modmail theme follows system preference and persists an explicit o
   const theme = await source('src/modmail/web/theme.ts');
   const styles = await source('src/modmail/web/styles.ts');
   expect(theme).toContain("matchMedia('(prefers-color-scheme: dark)')");
-  expect(theme).toContain("localStorage.getItem(key)");
-  expect(theme).toContain("localStorage.setItem(key, current)");
+  expect(theme).toContain('localStorage.getItem(key)');
+  expect(theme).toContain('localStorage.setItem(key, current)');
   expect(styles).toContain(':root[data-theme="dark"]');
   expect(styles).toContain('@media (prefers-color-scheme: dark)');
 });
@@ -64,7 +68,7 @@ test('preview is a busy read-only visual QA thread with app metadata and Lorem I
 test('bubble metadata renders sender, app and timestamp separately from message body', async () => {
   const runtime = await source('src/modmail/web/runtime.ts');
   expect(runtime).toContain("message.sender + ' · ' + message.origin");
-  expect(runtime).toContain("new Date(message.createdAt * 1000).toLocaleString()");
+  expect(runtime).toContain('new Date(message.createdAt * 1000).toLocaleString()');
   expect(runtime).toContain("time.className = 'timestamp'");
   expect(runtime).toContain("body.textContent = message.bodyMarkdown || ''");
 });
