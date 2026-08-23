@@ -22,3 +22,13 @@ test('legacy Reddit karma participation gates are retired', () => {
     expect(source).not.toContain('link_karma <');
   }
 });
+
+test('legacy Python no longer auto-removes no-flair, warned or uncivil contributions', () => {
+  expect(rootMain).not.toContain('comment.mod.remove');
+  expect(rootMain).not.toContain('banned_css_classes');
+  expect(rootMain).not.toContain('db["banned_users"]');
+  expect(rootMain).toContain('if author == reddit.user.me():\n    continue');
+  expect(postModeration).not.toContain('submission.mod.remove');
+  expect(postModeration).not.toContain('banned_css_classes');
+  expect(postModeration).not.toContain('no_flair_notice');
+});
