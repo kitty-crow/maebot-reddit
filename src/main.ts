@@ -113,7 +113,7 @@ if (terminal !== null) console.log(`Focused Reddit modmail terminal listening on
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
-internal?.useModmail(modmailStore, modmailOutbox, terminal);
+internal?.useModmail(modmailStore, modmailOutbox, terminal, reputation);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
