@@ -19,6 +19,14 @@ export const modmailTerminalRuntime = String.raw`
   let closed = false;
   let events = null;
 
+  const platformLabel = platform => platform === 'discord'
+    ? 'Discord'
+    : platform === 'telegram'
+      ? 'Telegram'
+      : platform === 'preview'
+        ? 'Preview'
+        : 'Reddit';
+
   const setConnection = (text, state) => {
     connection.textContent = text;
     connection.dataset.state = state;
@@ -43,19 +51,14 @@ export const modmailTerminalRuntime = String.raw`
     refreshSend();
   });
 
-  const roleFor = (message, participant) => {
-    if (message.isInternal) return 'internal';
-    const author = (message.author && message.author.name || '').toLowerCase();
-    return participant && author === participant.toLowerCase() ? 'participant' : 'moderator';
-  };
-
-  const renderMessages = (conversation, participant) => {
+  const renderMessages = conversation => {
     const signature = JSON.stringify(conversation.messages.map(message => [
       message.id,
       message.bodyMarkdown,
       message.createdAt,
-      message.isInternal,
-      message.author && message.author.name
+      message.side,
+      message.sender,
+      message.origin
     ]));
     if (signature === lastSignature) return;
 
@@ -64,18 +67,26 @@ export const modmailTerminalRuntime = String.raw`
     lastSignature = signature;
     messages.replaceChildren();
 
+    if (conversation.messages.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No messages in this conversation yet.';
+      messages.append(empty);
+      return;
+    }
+
     for (const message of conversation.messages) {
-      const role = roleFor(message, participant);
       const wrapper = document.createElement('article');
-      wrapper.className = 'message-wrapper ' + role;
+      wrapper.className = 'message-wrapper ' + message.side;
 
       const bubble = document.createElement('div');
-      bubble.className = 'message-bubble ' + role;
+      bubble.className = 'message-bubble ' + message.side;
 
       const who = document.createElement('div');
       who.className = 'nickname-strip';
-      const name = message.author && message.author.name || '[deleted]';
-      who.textContent = message.isInternal ? 'Internal note · ' + name : name;
+      who.textContent = message.side === 'internal'
+        ? 'Internal · ' + message.sender + ' · ' + message.origin
+        : message.sender + ' · ' + message.origin;
 
       const body = document.createElement('div');
       body.className = 'message-text';
@@ -101,12 +112,11 @@ export const modmailTerminalRuntime = String.raw`
     const conversation = payload.conversation;
     const moderator = payload.moderator;
     if (!conversation || !moderator) return;
-    const participant = conversation.participant && conversation.participant.name || '[deleted]';
-    participantEl.textContent = 'u/' + participant;
+    participantEl.textContent = conversation.participant ? 'u/' + conversation.participant : '[deleted]';
     subredditEl.textContent = 'r/' + conversation.subreddit;
-    identityEl.textContent = moderator.handle + ' · ' + moderator.platform;
+    identityEl.textContent = moderator.handle + ' · ' + platformLabel(moderator.platform);
     subjectEl.textContent = conversation.subject || '(no subject)';
-    renderMessages(conversation, participant);
+    renderMessages(conversation);
 
     if (conversation.state === 'archived') {
       closed = true;
@@ -158,19 +168,20 @@ export const modmailTerminalRuntime = String.raw`
     render({
       moderator: { handle: '@MaeModerator', platform: 'preview' },
       conversation: {
-        participant: { name: 'ExampleUser' },
+        participant: 'ExampleUser',
         subreddit: 'catgirlcoin',
         subject: 'Responsive bubble and long-message visual QA · synthetic preview',
         state: 'inprogress',
         messages: [
-          { id: 'p1', author: { name: 'ExampleUser' }, bodyMarkdown: 'Hi! This is a short message so we can check the compact purple bubble.', createdAt: now - 780, isInternal: false },
-          { id: 'p2', author: { name: 'ExampleUser' }, bodyMarkdown: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. This intentionally longer participant message checks wrapping, readable line length and how the left-side bubble behaves on a narrow phone.', createdAt: now - 720, isInternal: false },
-          { id: 'p3', author: { name: 'MaeModerator' }, bodyMarkdown: 'Thanks! This is a compact moderator reply on the pink side.', createdAt: now - 610, isInternal: false },
-          { id: 'p4', author: { name: 'MaeModerator' }, bodyMarkdown: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\nA second paragraph checks multiline spacing and whether a longer moderator reply stays comfortable on mobile.', createdAt: now - 545, isInternal: false },
-          { id: 'p5', author: { name: 'Mae' }, bodyMarkdown: 'Synthetic internal staff note. It stays centred and visually neutral so it cannot be confused with either side of the conversation.', createdAt: now - 430, isInternal: true },
-          { id: 'p6', author: { name: 'ExampleUser' }, bodyMarkdown: 'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Supercalifragilisticexpialidocious-very-long-token-example-to-check-overflow@example.invalid', createdAt: now - 320, isInternal: false },
-          { id: 'p7', author: { name: 'MaeModerator' }, bodyMarkdown: 'Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. This final long pink bubble makes the preview tall enough to test scrolling, sticky composition and safe-area spacing.', createdAt: now - 190, isInternal: false },
-          { id: 'p8', author: { name: 'ExampleUser' }, bodyMarkdown: 'Looks good from my side. One last tiny bubble. ✨', createdAt: now - 70, isInternal: false }
+          { id: 'p1', side: 'participant', sender: 'u/ExampleUser', origin: 'Reddit', bodyMarkdown: 'Hi! This is a short message so we can check the compact purple bubble.', createdAt: now - 900 },
+          { id: 'p2', side: 'participant', sender: 'u/ExampleUser', origin: 'Reddit', bodyMarkdown: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. This intentionally longer participant message checks wrapping, readable line length and how the left-side bubble behaves on a narrow phone.', createdAt: now - 830 },
+          { id: 'p3', side: 'moderator', sender: 'u/RedditMod', origin: 'Reddit', bodyMarkdown: 'Thanks! This is a direct Reddit moderator reply, so the pink bubble identifies Reddit as its source.', createdAt: now - 710 },
+          { id: 'p4', side: 'moderator', sender: '@AliceMod', origin: 'Discord', bodyMarkdown: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\nA second paragraph checks multiline spacing. On Reddit this reply carries the plain-text audit prefix, but the trusted web presentation moves that attribution into this bubble header.', createdAt: now - 620 },
+          { id: 'p5', side: 'internal', sender: 'u/Mae', origin: 'Reddit', bodyMarkdown: 'Synthetic internal staff note. It stays centred and visually distinct so it cannot be confused with either side of the conversation.', createdAt: now - 500 },
+          { id: 'p6', side: 'participant', sender: 'u/ExampleUser', origin: 'Reddit', bodyMarkdown: 'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Supercalifragilisticexpialidocious-very-long-token-example-to-check-overflow@example.invalid', createdAt: now - 390 },
+          { id: 'p7', side: 'moderator', sender: '@KarlaMod', origin: 'Telegram', bodyMarkdown: 'Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. This long Telegram-origin pink bubble makes the preview tall enough to test scrolling, mobile safe areas and app attribution.', createdAt: now - 260 },
+          { id: 'p8', side: 'moderator', sender: '@KarlaMod', origin: 'Telegram', bodyMarkdown: 'Consecutive moderator message for spacing.', createdAt: now - 200 },
+          { id: 'p9', side: 'participant', sender: 'u/ExampleUser', origin: 'Reddit', bodyMarkdown: 'Looks good from my side. One last tiny bubble. ✨', createdAt: now - 80 }
         ]
       }
     });
