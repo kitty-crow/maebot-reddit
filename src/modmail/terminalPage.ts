@@ -47,7 +47,7 @@ export const modmailTerminalPage = `<!doctype html>
 (() => {
   'use strict';
   const base = location.pathname.replace(/\/$/, '');
-  const preview = base === '/preview';
+  const preview = base.endsWith('/preview');
   const meta = document.getElementById('meta');
   const messages = document.getElementById('messages');
   const composer = document.getElementById('composer');
