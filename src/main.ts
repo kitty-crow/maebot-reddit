@@ -75,6 +75,8 @@ const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env[
 const terminal = new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
+const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
+const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
 const moderationPrivileges = moderationReader === null
   ? null
@@ -91,15 +93,13 @@ const moderation = moderationCfg === null || moderationReader === null || modera
       moderationReviews,
       moderationPrivileges,
     );
-const modmail = moderationReader === null || moderationWriter === null
-  ? null
-  : new ModmailRuntime(
-      redditCfg.sourceSubreddit,
-      moderationReader,
-      moderationWriter,
-      modmailStore,
-      modmailOutbox,
-    );
+const modmail = new ModmailRuntime(
+  redditCfg.sourceSubreddit,
+  modmailReader,
+  modmailWriter,
+  modmailStore,
+  modmailOutbox,
+);
 const privateModmail = moderationCfg === null || reputation === null
   ? null
   : new PrivateModmailRuntime(
@@ -157,12 +157,10 @@ const tick = async (): Promise<void> => {
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
     let modmailResult = null;
-    if (modmail !== null) {
-      try {
-        modmailResult = await modmail.tick();
-      } catch (error) {
-        console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
-      }
+    try {
+      modmailResult = await modmail.tick();
+    } catch (error) {
+      console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
     }
     let privateModmailResult = null;
     if (privateModmail !== null) {
