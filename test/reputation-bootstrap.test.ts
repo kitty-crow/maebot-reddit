@@ -8,6 +8,7 @@ import type {
   RedditPost,
 } from '../src/reddit/types.ts';
 import { planReputationBootstrap } from '../src/reputation/bootstrap.ts';
+import { MODERATOR_POINTS, PAWSOME_POINTS, REPUTATION_FLOOR } from '../src/reputation/policy.ts';
 
 const flair = (id: string, text: string, cssClass: string | null = null): RedditFlairTemplate => ({
   id,
@@ -29,6 +30,7 @@ const userFlairs = (): readonly RedditFlairTemplate[] => [
   flair('hana', ':hana:'),
   flair('rin', ':rin:'),
   flair('celeste', ':celeste:'),
+  flair('pawsome', 'Pawsome Contributor'),
   flair('warned', 'Warned', 'w'),
   flair('uncivil', 'Uncivil', 'u'),
   flair('scam', 'SCAM', 's'),
@@ -85,7 +87,7 @@ const comment = (id: string, author: string | null): RedditComment => ({
 });
 
 describe('Reddit reputation bootstrap planner', () => {
-  test('seeds tiers, moderation states, immutable tier-five moderators and first contributors', () => {
+  test('seeds ordinary tiers, Pawsome, permanent bans, tier-nine moderators and first contributors', () => {
     const plan = planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 123,
@@ -95,6 +97,7 @@ describe('Reddit reputation bootstrap planner', () => {
         assignment('Alice', 'mae', ':mae:'),
         assignment('Bob', 'kita', ':kita:'),
         assignment('Carol', 'celeste', ':celeste:'),
+        assignment('Poppy', 'pawsome', 'Pawsome Contributor'),
         assignment('Wendy', 'warned', 'Warned', 'w'),
         assignment('Uma', 'uncivil', 'Uncivil', 'u'),
         assignment('Sam', 'scam', 'SCAM', 's'),
@@ -112,14 +115,17 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(users.get('Alice')?.points).toBe(1);
     expect(users.get('Bob')?.points).toBe(10);
     expect(users.get('Carol')?.points).toBe(1000);
+    expect(users.get('Poppy')?.points).toBe(PAWSOME_POINTS);
+    expect(users.get('Poppy')?.tier).toBe(5);
     expect(users.get('Wendy')?.points).toBe(-1);
     expect(users.get('Wendy')?.status).toBe('warned');
     expect(users.get('Uma')?.points).toBe(-2);
-    expect(users.get('Barry')?.points).toBe(-3);
+    expect(users.get('Barry')?.points).toBe(REPUTATION_FLOOR);
     expect(users.get('Barry')?.status).toBe('banned');
-    expect(users.get('Sam')?.points).toBe(-4);
+    expect(users.get('Sam')?.points).toBe(REPUTATION_FLOOR);
     expect(users.get('Sam')?.status).toBe('scam');
-    expect(users.get('Mona')?.tier).toBe(5);
+    expect(users.get('Mona')?.points).toBe(MODERATOR_POINTS);
+    expect(users.get('Mona')?.tier).toBe(9);
     expect(users.get('Mona')?.immutableModeratorFlair).toBe(true);
     expect(users.get('Mona')?.status).toBe('moderator');
     expect(users.get('Lenny')?.needsReview).toBe(true);
@@ -135,6 +141,7 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(plan.recentContributorsWithoutFlair).toBe(1);
 
     expect(plan.bootstrap.flairReferences.user.mae).toBe('mae');
+    expect(plan.bootstrap.flairReferences.user.pawsomeContributor).toBe('pawsome');
     expect(plan.bootstrap.flairReferences.user.warned).toBe('warned');
     expect(plan.bootstrap.flairReferences.user.uncivil).toBe('uncivil');
     expect(plan.bootstrap.flairReferences.user.scam).toBe('scam');
@@ -161,18 +168,18 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(first.desiredFlairTemplateId).toBe(second.desiredFlairTemplateId);
   });
 
-  test('fails closed for missing required tier flair or duplicate user assignment', () => {
+  test('fails closed for a missing required tier flair or duplicate user assignment', () => {
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
-      userFlairs: userFlairs().filter(value => value.text !== ':rin:'),
+      userFlairs: userFlairs().filter(value => value.text !== 'Pawsome Contributor'),
       postFlairs: postFlairs(),
       assignments: [],
       moderators: [],
       bannedUsers: [],
       posts: [],
       comments: [],
-    })).toThrow(':rin:');
+    })).toThrow('Pawsome Contributor');
 
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
