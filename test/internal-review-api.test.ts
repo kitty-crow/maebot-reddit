@@ -102,6 +102,70 @@ describe('canonical Reddit moderation review API', () => {
     });
   });
 
+  test('decision writes require moderator identity and unknown cases fail closed', async () => {
+    const { reviews, base } = await fixture();
+    const created = await reviews.create({
+      key: 'vote-manipulation:t1_example:3',
+      targetKind: 'comment',
+      targetId: 't1_example',
+      subreddit: 'catgirlcoin',
+      permalink: '',
+      author: 'alice',
+      summary: 'Suspicious vote growth.',
+      evidence: [],
+      recommendedAction: 'warn',
+      reason: 'Needs human review.',
+      policy: 'reddit-vote-manipulation/v1',
+      createdAt: 100,
+    });
+    const endpoint = `${base}/v1/moderation/reviews/decision`;
+    const headers = { ...auth, 'content-type': 'application/json' } as const;
+
+    const missingIdentity = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        key: created.key,
+        choice: 'approve',
+        platform: 'telegram',
+        userName: 'telegram-mod',
+      }),
+    });
+    expect(missingIdentity.status).toBe(400);
+
+    const decided = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        key: created.key,
+        choice: 'approve',
+        platform: 'telegram',
+        userId: '42',
+        userName: 'telegram-mod',
+      }),
+    });
+    expect(decided.status).toBe(200);
+    expect((await reviews.get(created.key))?.decision).toMatchObject({
+      choice: 'approve',
+      platform: 'telegram',
+      userId: '42',
+      userName: 'telegram-mod',
+    });
+
+    const missingReview = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        key: 'vote-manipulation:t1_missing:1',
+        choice: 'reject',
+        platform: 'discord',
+        userId: '7',
+        userName: 'discord-mod',
+      }),
+    });
+    expect(missingReview.status).toBe(404);
+  });
+
   test('requires authentication and returns not found for an unknown valid key', async () => {
     const { base } = await fixture();
     expect((await fetch(`${base}/v1/moderation/reviews/unknown-key`)).status).toBe(401);
