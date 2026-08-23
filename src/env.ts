@@ -72,6 +72,13 @@ export type RedditModerationCfg = {
   readonly flairReconcileMs: number;
 };
 
+export type RedditDmCfg = {
+  readonly replyAi: ModerationAiCfg;
+  readonly persona: string;
+  readonly stateFile: string;
+  readonly batchSize: number;
+};
+
 export type LoopbackApiCfg = {
   readonly base: string;
   readonly token: string;
@@ -117,6 +124,20 @@ export const redditModerationConfig = (): RedditModerationCfg | null => {
     batchSize: Math.min(100, positive('REDDIT_MODERATION_BATCH_SIZE', '100')),
     scoreBatchSize: Math.min(100, positive('REDDIT_SCORE_BATCH_SIZE', '100')),
     flairReconcileMs: positive('REDDIT_FLAIR_RECONCILE_MS', '300000'),
+  };
+};
+
+export const redditDmConfig = (): RedditDmCfg | null => {
+  if (!enabled('REDDIT_DM_ENABLED')) return null;
+  return {
+    replyAi: {
+      key: req('OPENAI_API_KEY'),
+      model: opt('REDDIT_DM_MODEL', 'gpt-5.6-luna'),
+      effort: effort('REDDIT_DM_EFFORT', 'low'),
+    },
+    persona: req('REDDIT_MAE_PERSONA'),
+    stateFile: resolve(process.cwd(), opt('REDDIT_DM_STATE_FILE', 'data/directMessages.pb')),
+    batchSize: Math.min(100, positive('REDDIT_DM_BATCH_SIZE', '100')),
   };
 };
 
