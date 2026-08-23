@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { ModerationClassification } from '../src/mod/classifier.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
 import { PAWSOME_FLAIR_TEXT } from '../src/reputation/policy.ts';
-import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
+import { ReputationStore, type ReputationBootstrap, type ReputationContributionKind } from '../src/reputation/store.ts';
 import { isMap, type JsonMap } from '../src/types/json.ts';
 
 const roots: string[] = [];
@@ -60,7 +60,7 @@ const bootstrap = (): ReputationBootstrap => ({
   },
   users: [{
     username: 'Recovering',
-    points: -2,
+    points: -4,
     tier: 0,
     status: 'uncivil',
     currentFlairTemplateId: 'uncivil-id',
@@ -104,15 +104,24 @@ const user = async (store: ReputationStore, username: string): Promise<JsonMap> 
   return value;
 };
 
+const contribution = async (store: ReputationStore, fullname: string): Promise<JsonMap> => {
+  const raw = await store.raw();
+  if (!isMap(raw) || !isMap(raw['contributions'])) throw new Error('contributions map missing');
+  const value = raw['contributions'][fullname];
+  if (!isMap(value)) throw new Error(`${fullname} missing`);
+  return value;
+};
+
 const apply = async (
   store: ReputationStore,
   fullname: string,
   verdict: ModerationClassification['verdict'],
   score = 1,
+  kind: ReputationContributionKind = 'comment',
 ): Promise<void> => {
   await store.applyModeration({
     fullname,
-    kind: 'comment',
+    kind,
     author: 'Recovering',
     createdAt: 200,
     score,
@@ -130,12 +139,12 @@ const fixture = async (): Promise<ReputationStore> => {
 };
 
 describe('persisted reputation redemption', () => {
-  test('clean audited contributions redeem uncivil through warned and zero to ordinary tier one', async () => {
+  test('clean audited comments redeem uncivil through warned and zero to ordinary tier one', async () => {
     const store = await fixture();
 
     await apply(store, 't1_clean1', 'clean');
     expect(await user(store, 'Recovering')).toMatchObject({
-      points: -1,
+      points: -3,
       tier: 0,
       status: 'warned',
       desiredFlairTemplateId: 'warned-id',
@@ -144,15 +153,13 @@ describe('persisted reputation redemption', () => {
 
     await store.markFlairApplied('Recovering', 'warned-id', ' ');
     await apply(store, 't1_clean2', 'clean');
-    expect(await user(store, 'Recovering')).toMatchObject({
-      points: 0,
-      tier: 0,
-      status: 'warned',
-      desiredFlairTemplateId: 'warned-id',
-      needsFlair: false,
-    });
-
+    expect(await user(store, 'Recovering')).toMatchObject({ points: -2, tier: 0, status: 'warned' });
     await apply(store, 't1_clean3', 'clean');
+    expect(await user(store, 'Recovering')).toMatchObject({ points: -1, tier: 0, status: 'warned' });
+    await apply(store, 't1_clean4', 'clean');
+    expect(await user(store, 'Recovering')).toMatchObject({ points: 0, tier: 0, status: 'warned' });
+
+    await apply(store, 't1_clean5', 'clean');
     const redeemed = await user(store, 'Recovering');
     expect(redeemed['points']).toBe(1);
     expect(redeemed['tier']).toBe(1);
@@ -161,17 +168,32 @@ describe('persisted reputation redemption', () => {
     expect(redeemed['needsFlair']).toBe(true);
   });
 
-  test('confirmed Reddit score gains on a clean contribution also redeem negative reputation', async () => {
+  test('uncivil posts are audited but removed and cannot be used as clean redemption contributions', async () => {
+    const store = await fixture();
+    await apply(store, 't3_cleanpost', 'clean', 1, 'post');
+
+    expect(await user(store, 'Recovering')).toMatchObject({ points: -4, status: 'uncivil', tier: 0 });
+    expect(await contribution(store, 't3_cleanpost')).toMatchObject({
+      verdict: 'clean',
+      removeRequired: true,
+      banRequired: false,
+    });
+
+    await apply(store, 't1_comment', 'clean');
+    expect(await user(store, 'Recovering')).toMatchObject({ points: -3, status: 'warned', tier: 0 });
+  });
+
+  test('confirmed Reddit score gains on a clean comment also redeem negative reputation', async () => {
     const store = await fixture();
     await apply(store, 't1_score', 'clean', 1);
-    expect((await user(store, 'Recovering'))['points']).toBe(-1);
+    expect((await user(store, 'Recovering'))['points']).toBe(-3);
 
     expect(await store.observeScore('t1_score', 2, 300)).toBe(0);
     expect(await store.observeScore('t1_score', 2, 301)).toBe(1);
-    expect(await user(store, 'Recovering')).toMatchObject({ points: 0, status: 'warned', tier: 0 });
+    expect(await user(store, 'Recovering')).toMatchObject({ points: -2, status: 'warned', tier: 0 });
 
-    expect(await store.observeScore('t1_score', 3, 302)).toBe(0);
-    expect(await store.observeScore('t1_score', 3, 303)).toBe(1);
+    expect(await store.observeScore('t1_score', 5, 302)).toBe(0);
+    expect(await store.observeScore('t1_score', 5, 303)).toBe(3);
     const redeemed = await user(store, 'Recovering');
     expect(redeemed['points']).toBe(1);
     expect(redeemed['status']).toBe('ordinary');
@@ -185,12 +207,12 @@ describe('persisted reputation redemption', () => {
     expect(await store.observeScore('t1_fuzzy', 5, 400)).toBe(0);
     expect(await store.observeScore('t1_fuzzy', 2, 401)).toBe(0);
     expect(await store.observeScore('t1_fuzzy', 2, 402)).toBe(1);
-    expect((await user(store, 'Recovering'))['points']).toBe(0);
+    expect((await user(store, 'Recovering'))['points']).toBe(-2);
 
     await apply(store, 't1_low', 'low', 1);
-    expect((await user(store, 'Recovering'))['points']).toBe(-1);
+    expect((await user(store, 'Recovering'))['points']).toBe(-3);
     expect(await store.observeScore('t1_low', 20, 500)).toBe(0);
     expect(await store.observeScore('t1_low', 20, 501)).toBe(0);
-    expect((await user(store, 'Recovering'))['points']).toBe(-1);
+    expect((await user(store, 'Recovering'))['points']).toBe(-3);
   });
 });
