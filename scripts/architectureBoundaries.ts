@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 
 const roots = ['src', 'scripts', 'test'];
+const activeRoots = new Set(['src', 'scripts']);
 const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[] = [
   { pattern: /twitter\.pb/iu, reason: 'Reddit must not open canonical Twitter storage' },
   { pattern: /FxTwitter/iu, reason: 'Reddit must not instantiate a Twitter watcher' },
@@ -16,11 +17,11 @@ const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[
 
 const hits: string[] = [];
 
-const scan = async (dir: string): Promise<void> => {
+const scan = async (dir: string, active: boolean): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const file = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await scan(file);
+      await scan(file, active);
       continue;
     }
     if (extname(file) !== '.ts') continue;
@@ -29,10 +30,13 @@ const scan = async (dir: string): Promise<void> => {
     for (const rule of forbidden) {
       if (rule.pattern.test(raw)) hits.push(`${relative(process.cwd(), file)}: ${rule.reason}`);
     }
+    if (active && /deprecated[\\/]legacy-python/iu.test(raw)) {
+      hits.push(`${relative(process.cwd(), file)}: active TypeScript must not depend on deprecated legacy Python code`);
+    }
   }
 };
 
-for (const root of roots) await scan(root);
+for (const root of roots) await scan(root, activeRoots.has(root));
 if (hits.length > 0) {
   console.error(`Architecture boundary violations:\n${hits.join('\n')}`);
   process.exit(1);
