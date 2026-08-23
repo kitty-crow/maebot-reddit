@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { TwitterClient } from '../vendor/maebot-twitter/src/index.ts';
+import { LiveWeeklyRedditPublisher, WeeklyRedditRelay } from './daily/weekly.ts';
 import {
   dailyReviewApiConfig,
   internalApiConfig,
@@ -30,6 +31,12 @@ const state = new RedditStateStore(redditCfg.stateFile);
 const reviews = new DailyReviewClient(reviewCfg);
 const publisher = new LiveTwitterRedditPublisher(redditCfg);
 const bridge = new TwitterRedditBridge(twitter, state, reviews, publisher, undefined, singleTarget);
+const weekly = new WeeklyRedditRelay(
+  reviews,
+  state,
+  new LiveWeeklyRedditPublisher(redditCfg),
+  singleTarget,
+);
 const postMirror = singleTarget
   ? null
   : new BidirectionalPostMirror(
@@ -61,6 +68,7 @@ const tick = async (): Promise<void> => {
     const delivery = await bridge.deliverPending();
     const mirror = postMirror === null ? null : await postMirror.tick();
     const review = await bridge.syncReviews();
+    const weeklyResult = await weekly.sync();
     if (mirror !== null && (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0)) {
       console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
     }
@@ -69,6 +77,9 @@ const tick = async (): Promise<void> => {
     }
     if (review.inspected > 0 || review.completed > 0 || review.failed > 0) {
       console.log(`[Reddit Twitter bridge] reviews inspected=${review.inspected} completed=${review.completed} failed=${review.failed}`);
+    }
+    if (weeklyResult.inspected > 0 || weeklyResult.completed > 0 || weeklyResult.failed > 0) {
+      console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
     }
   } finally {
     ticking = false;
@@ -117,7 +128,7 @@ if (singleTarget) {
   console.log(`Mae Reddit single-subreddit mode starting for r/${redditCfg.primarySubreddit}.`);
   console.log('Cross-subreddit mirroring and migration are disabled until distinct source/primary subreddits are configured.');
 } else {
-  console.log(`Mae Reddit Twitter consumer and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
+  console.log(`Mae Reddit Twitter consumer, weekly Daily Task relay and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
 }
 console.log('Legacy comment/submission moderation ingestion is intentionally offline during this cutover window.');
 
