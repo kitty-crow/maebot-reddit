@@ -69,6 +69,7 @@ export type RedditModerationCfg = {
   readonly stateFile: string;
   readonly batchSize: number;
   readonly scoreBatchSize: number;
+  readonly flairReconcileMs: number;
 };
 
 export type LoopbackApiCfg = {
@@ -108,6 +109,7 @@ export const redditModerationConfig = (): RedditModerationCfg | null => {
     stateFile: resolve(process.cwd(), opt('REDDIT_REPUTATION_STATE_FILE', 'data/reputation.pb')),
     batchSize: Math.min(100, positive('REDDIT_MODERATION_BATCH_SIZE', '100')),
     scoreBatchSize: Math.min(100, positive('REDDIT_SCORE_BATCH_SIZE', '100')),
+    flairReconcileMs: positive('REDDIT_FLAIR_RECONCILE_MS', '300000'),
   };
 };
 
