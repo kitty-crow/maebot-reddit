@@ -14,6 +14,7 @@ export const scoreInventoryFullnames = (raw: Json): readonly string[] => {
   const fullnames: string[] = [];
   for (const contribution of Object.values(contributions)) {
     if (!isMap(contribution) || contribution['exempt'] === true) continue;
+    if (contribution['verdict'] !== 'clean') continue;
     const fullname = text(contribution['fullname']);
     const author = text(contribution['author']);
     if (fullname === null || author === null) continue;
