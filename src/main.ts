@@ -14,8 +14,10 @@ import {
 import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
+import { PrivateModmailRuntime } from './mod/privateRuntime.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { RedditModerationRuntime } from './mod/runtime.ts';
+import { ModmailAuditStore } from './modmail/auditStore.ts';
 import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
@@ -59,6 +61,7 @@ const postMirror = singleTarget
     );
 const moderationReviews = new ModerationReviewStore();
 const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
+const modmailAudit = new ModmailAuditStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_AUDIT_FILE']?.trim() || 'data/modmailAudit.pb'));
 const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env['REDDIT_MODMAIL_OUTBOX_FILE']?.trim() || 'data/modmailReplies.pb'));
 const terminal = terminalCfg === null ? null : new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
@@ -87,6 +90,14 @@ const modmail = moderationCfg === null || moderationReader === null || moderatio
       null,
       null,
       modmailOutbox,
+    );
+const privateModmail = moderationCfg === null || reputation === null
+  ? null
+  : new PrivateModmailRuntime(
+      moderationCfg.ai,
+      modmailStore,
+      modmailAudit,
+      reputation,
     );
 
 const pollMs = (() => {
@@ -123,6 +134,14 @@ const tick = async (): Promise<void> => {
         console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
       }
     }
+    let privateModmailResult = null;
+    if (privateModmail !== null) {
+      try {
+        privateModmailResult = await privateModmail.tick();
+      } catch (error) {
+        console.error(`[Reddit private moderation] tick failed: ${safeError(error)}`);
+      }
+    }
     let moderationResult = null;
     if (moderation !== null) {
       try {
@@ -145,13 +164,21 @@ const tick = async (): Promise<void> => {
     }
     if (modmailResult !== null && (
       modmailResult.relayed > 0
-      || modmailResult.audited > 0
-      || modmailResult.apologies > 0
       || modmailResult.repliesApplied > 0
       || modmailResult.failed > 0
     )) {
       console.log(
-        `[Reddit modmail] relayed=${modmailResult.relayed} audited=${modmailResult.audited} apologies=${modmailResult.apologies} replies=${modmailResult.repliesApplied} failed=${modmailResult.failed}`,
+        `[Reddit modmail] relayed=${modmailResult.relayed} replies=${modmailResult.repliesApplied} failed=${modmailResult.failed}`,
+      );
+    }
+    if (privateModmailResult !== null && (
+      privateModmailResult.inspected > 0
+      || privateModmailResult.audited > 0
+      || privateModmailResult.apologies > 0
+      || privateModmailResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit private moderation] inspected=${privateModmailResult.inspected} audited=${privateModmailResult.audited} apologies=${privateModmailResult.apologies} skipped=${privateModmailResult.skipped} failed=${privateModmailResult.failed}`,
       );
     }
     if (moderationResult !== null && (
@@ -223,6 +250,10 @@ if (moderation === null) {
   console.log(`LLM post/comment/modmail moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
 }
 
+if (privateModmail !== null) {
+  const seeded = await privateModmail.bootstrap();
+  console.log(`Private modmail moderation activation boundary established; existing relay events skipped=${seeded}.`);
+}
 if (postMirror !== null) await postMirror.tick();
 await startupSmoke();
 await tick();
