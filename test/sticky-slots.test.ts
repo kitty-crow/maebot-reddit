@@ -20,15 +20,17 @@ const post = (id: string, stickied: boolean): RedditPost => ({
   crosspostParent: null,
 });
 
-describe('Reddit sticky discovery', () => {
-  test('derives the first two sticky slots from hot-listing order', async () => {
+describe('Reddit highlight discovery', () => {
+  test('derives the first four API-visible highlight slots from hot-listing order', async () => {
     const first = post('one', true);
     const ordinary = post('ordinary', false);
     const second = post('two', true);
+    const third = post('three', true);
+    const fourth = post('four', true);
     const reader: StickyReader = {
-      hotPosts: async () => [first, ordinary, second],
+      hotPosts: async () => [first, ordinary, second, third, fourth],
     };
-    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([first, second]);
+    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([first, second, third, fourth]);
   });
 
   test('returns empty slots without calling the unreliable sticky endpoint', async () => {
@@ -40,15 +42,17 @@ describe('Reddit sticky discovery', () => {
         return [post('ordinary', false)];
       },
     };
-    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([null, null]);
+    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([null, null, null, null]);
     expect(calls).toBe(1);
   });
 
-  test('ignores additional stickied listing entries beyond Reddit migration slots 1 and 2', async () => {
+  test('ignores listing entries beyond the four slots exposed by the OAuth sticky API', async () => {
     const first = post('one', true);
     const second = post('two', true);
     const third = post('three', true);
-    const reader: StickyReader = { hotPosts: async () => [first, second, third] };
-    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([first, second]);
+    const fourth = post('four', true);
+    const fifth = post('five', true);
+    const reader: StickyReader = { hotPosts: async () => [first, second, third, fourth, fifth] };
+    expect(await readStickySlots(reader, 'catgirlcoin')).toEqual([first, second, third, fourth]);
   });
 });
