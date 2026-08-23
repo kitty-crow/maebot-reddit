@@ -1,4 +1,6 @@
 import type { RedditAuthCfg } from '../env.ts';
+import { directMessages } from '../dm/decode.ts';
+import type { RedditDirectMessage } from '../dm/types.ts';
 import { modmailConversation, modmailConversations } from '../modmail/decode.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 import type { Json } from '../types/json.ts';
@@ -146,6 +148,22 @@ export class RedditReadClient {
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
     return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
+  }
+
+  public async unreadDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages('/message/unread', 100, value => {
+      const page = directMessages(value, 'unread private messages');
+      return { items: page.messages, after: page.after };
+    }, max);
+  }
+
+  public async directMessageHistory(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages('/message/messages', 100, value => {
+      const page = directMessages(value, 'private message history');
+      return { items: page.messages, after: page.after };
+    }, max);
   }
 
   public async modmailConversations(name: string, limit = 100): Promise<ModmailConversationPage> {
