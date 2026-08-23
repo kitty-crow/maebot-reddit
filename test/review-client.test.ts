@@ -15,7 +15,7 @@ describe('Daily Review client', () => {
     expect(await client.twitter('NyaOnEarth', '1234567890')).toBeNull();
   });
 
-  test('decodes only the canonical decision payload and sends bearer auth', async () => {
+  test('decodes only the canonical Twitter decision payload and sends bearer auth', async () => {
     const fetcher: DailyReviewFetch = async (input, init) => {
       expect(String(input)).toContain('/v1/twitter/NyaOnEarth/1234567890');
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer review-secret');
@@ -37,6 +37,47 @@ describe('Daily Review client', () => {
       decision: { choice: 'approve', at: 42 },
       applied: true,
     });
+  });
+
+  test('decodes only approved and applied weekly summaries with attachment metadata', async () => {
+    const fetcher: DailyReviewFetch = async (input, init) => {
+      expect(String(input)).toContain('/v1/weekly?after=100');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer review-secret');
+      return new Response(JSON.stringify({
+        reviews: [{
+          key: 'weekly:2026-08-23',
+          weekStart: '2026-08-23',
+          markdown: 'Weekly summary',
+          decision: { choice: 'approve', at: 110 },
+          applied: true,
+          media: { kind: 'image', mime: 'image/png', size: 1234 },
+        }],
+      }), { status: 200 });
+    };
+    const client = new DailyReviewClient(cfg, fetcher);
+    expect(await client.weekly(100)).toEqual([{
+      key: 'weekly:2026-08-23',
+      weekStart: '2026-08-23',
+      markdown: 'Weekly summary',
+      decision: { choice: 'approve', at: 110 },
+      applied: true,
+      media: { kind: 'image', mime: 'image/png', size: 1234 },
+    }]);
+  });
+
+  test('rejects malformed weekly review states instead of posting them', async () => {
+    const fetcher: DailyReviewFetch = async () => new Response(JSON.stringify({
+      reviews: [{
+        key: 'weekly:2026-08-23',
+        weekStart: '2026-08-23',
+        markdown: 'Not actually approved',
+        decision: { choice: 'reject', at: 110 },
+        applied: true,
+        media: null,
+      }],
+    }));
+    const client = new DailyReviewClient(cfg, fetcher);
+    await expect(client.weekly()).rejects.toThrow('non-approved weekly review');
   });
 
   test('does not surface server response bodies or the bearer token in errors', async () => {
