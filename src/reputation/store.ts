@@ -37,6 +37,7 @@ export type ReputationFlairReferences = {
     readonly hana: string;
     readonly rin: string;
     readonly celeste: string;
+    readonly pawsomeContributor: string;
     readonly warned: string | null;
     readonly uncivil: string | null;
     readonly scam: string | null;
@@ -117,6 +118,7 @@ const referencesJson = (value: ReputationFlairReferences): JsonMap => ({
     hana: value.user.hana,
     rin: value.user.rin,
     celeste: value.user.celeste,
+    pawsomeContributor: value.user.pawsomeContributor,
     warned: value.user.warned,
     uncivil: value.user.uncivil,
     scam: value.user.scam,
