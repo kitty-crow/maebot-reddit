@@ -25,9 +25,23 @@ const redditHandle = (name: string | null): string => name === null ? '[deleted]
 
 const sideFor = (conversation: ModmailConversation, message: ModmailMessage): TerminalMessageSide => {
   if (message.isInternal) return 'internal';
+  if (
+    message.author?.isModerator === true
+    || message.author?.isAdmin === true
+    || message.participatingAs === 'moderator'
+  ) return 'moderator';
+  if (
+    message.author?.isParticipant === true
+    || message.participatingAs === 'participant_user'
+  ) return 'participant';
+
   const author = message.author?.name?.toLowerCase() ?? null;
   const participant = conversation.participant?.name?.toLowerCase() ?? null;
-  return author !== null && participant !== null && author === participant ? 'participant' : 'moderator';
+  if (author !== null && participant !== null && author === participant) return 'participant';
+
+  // Reddit can emit system/deleted-author entries that are neither participant
+  // nor moderator speech. Keep those centred instead of falsely attributing them.
+  return 'internal';
 };
 
 const appliedMatch = (
