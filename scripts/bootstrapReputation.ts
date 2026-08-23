@@ -169,8 +169,8 @@ try {
     client.userFlairAssignments(subreddit),
     client.moderators(subreddit),
     client.bannedUsers(subreddit),
-    client.newPosts(subreddit, 100),
-    client.newComments(subreddit, 100),
+    client.newPostsHistory(subreddit, 1000),
+    client.newCommentsHistory(subreddit, 1000),
   ]);
 
   console.log(`=== r/${subreddit} USER FLAIRS (${userFlairs.length}) ===`);
@@ -285,7 +285,7 @@ try {
     });
   }
 
-  const coverageNote = 'Reddit does not expose a complete subscriber/member roster. Flaired users are complete from /api/flairlist; unflair users are discoverable only when they appear in accessible contribution listings. This bootstrap records unflair authors seen in the latest 100 posts and latest 100 comments and future runtime ingestion must add unseen contributors on first contribution.';
+  const coverageNote = 'Reddit does not expose a complete subscriber/member roster. Flaired users are complete from /api/flairlist; unflair users are discoverable only when they appear in accessible contribution listings. This bootstrap records unflair authors found across the maximum accessible /new and /comments listing history (up to 1000 of each) and future runtime ingestion must add unseen contributors on first contribution.';
   const bootstrap: ReputationBootstrap = {
     subreddit,
     at: now,
@@ -352,7 +352,7 @@ try {
   console.log(`tier 2: ${byTier.get(2) ?? 0}`);
   console.log(`tier 3: ${byTier.get(3) ?? 0}`);
   console.log(`tier 4: ${byTier.get(4) ?? 0}`);
-  console.log(`recent contributors missing flair: ${recentContributorsWithoutFlair}`);
+  console.log(`unflaired contributors found in accessible history: ${recentContributorsWithoutFlair}`);
   console.log(`records requiring manual semantic review: ${needsReview}`);
   console.log(`records requiring a tier flair application: ${needsFlair}`);
   console.log(`NOTE: ${coverageNote}`);
