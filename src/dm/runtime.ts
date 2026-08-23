@@ -88,7 +88,8 @@ export class RedditDmRuntime {
   public constructor(
     private readonly subreddit: string,
     private readonly self: string,
-    cfg: ModerationAiCfg,
+    moderationCfg: ModerationAiCfg,
+    replyCfg: ModerationAiCfg,
     persona: string,
     private readonly reader: DmReader,
     private readonly writer: DmWriter,
@@ -99,12 +100,12 @@ export class RedditDmRuntime {
     replyFactory: DmReplyFactory | null = null,
     resolution: PrivateResolutionClassifier | null = null,
   ) {
-    this.moderationFactory = moderationFactory ?? (conversationId => new RedditModerationClassifier(cfg, {
+    this.moderationFactory = moderationFactory ?? (conversationId => new RedditModerationClassifier(moderationCfg, {
       conversation: true,
       ...(conversationId === undefined ? {} : { conversationId }),
     }));
-    this.replyFactory = replyFactory ?? (conversationId => new MaeRedditDmResponder(cfg, persona, conversationId));
-    this.resolution = resolution ?? new RedditPrivateResolutionClassifier(cfg);
+    this.replyFactory = replyFactory ?? (conversationId => new MaeRedditDmResponder(replyCfg, persona, conversationId));
+    this.resolution = resolution ?? new RedditPrivateResolutionClassifier(moderationCfg);
   }
 
   public async bootstrap(maxItems = 1000): Promise<number> {
@@ -154,7 +155,6 @@ export class RedditDmRuntime {
         current = await this.store.setClassification(current.message.fullname, exemptClassification());
       } else {
         const classifier = this.moderationFactory(conversation.moderationConversationId ?? undefined);
-        const user = await this.reputation.user(username);
         const history = moderationHistoryFor(await this.reputation.raw(), username);
         const result = await classifier.classify({
           kind: 'dm',
@@ -173,9 +173,6 @@ export class RedditDmRuntime {
           classifier.conversationId ?? conversation.moderationConversationId,
           conversation.responseConversationId,
         );
-        if (user?.status === 'moderator' || user?.immutableModeratorFlair === true) {
-          throw new Error(`Moderator u/${username} reached Reddit DM reputation mutation boundary`);
-        }
       }
     }
 
