@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DailyMedia, Tweet, TwitterApi, TwitterItem, TwitterPlatform } from '../vendor/maebot-twitter/src/index.ts';
-import type { CanonicalDailyReview, DailyReviewApi } from '../src/review/client.ts';
+import type { CanonicalDailyReview, CanonicalWeeklyReview, DailyReviewApi } from '../src/review/client.ts';
 import { RedditStateStore } from '../src/store/state.ts';
 import {
   TwitterRedditBridge,
@@ -66,6 +66,7 @@ class FakeTwitter implements TwitterApi {
 class FakeReviews implements DailyReviewApi {
   public constructor(public value: CanonicalDailyReview | null) {}
   public async twitter(): Promise<CanonicalDailyReview | null> { return this.value; }
+  public async weekly(): Promise<readonly CanonicalWeeklyReview[]> { return []; }
 }
 
 class FakePublisher implements TwitterRedditPublisher {
