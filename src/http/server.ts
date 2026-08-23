@@ -3,6 +3,7 @@ import type { ModmailReplyOutbox } from '../modmail/outbox.ts';
 import type { ModmailStore } from '../modmail/store.ts';
 import type { ModmailTerminalServer } from '../modmail/terminalServer.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
+import type { ReputationStore } from '../reputation/store.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
 export type RedditInternalHttpCfg = {
@@ -12,6 +13,8 @@ export type RedditInternalHttpCfg = {
 };
 
 export type RedditInternalHttpLogger = (line: string) => void;
+
+type ModmailReputationReader = Pick<ReputationStore, 'user'>;
 
 const json = (value: object, status = 200): Response => new Response(JSON.stringify(value), {
   status,
@@ -55,6 +58,7 @@ export class RedditInternalHttpServer {
   private modmail: ModmailStore | null = null;
   private modmailReplies: ModmailReplyOutbox | null = null;
   private modmailTerminal: ModmailTerminalServer | null = null;
+  private modmailReputation: ModmailReputationReader | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -67,11 +71,13 @@ export class RedditInternalHttpServer {
     store: ModmailStore,
     replies: ModmailReplyOutbox,
     terminal: ModmailTerminalServer | null,
+    reputation: ModmailReputationReader | null = null,
   ): void {
     if (this.server !== null) throw new Error('Modmail services must be attached before the Reddit internal API starts');
     this.modmail = store;
     this.modmailReplies = replies;
     this.modmailTerminal = terminal;
+    this.modmailReputation = reputation;
   }
 
   public start(): void {
@@ -189,7 +195,16 @@ export class RedditInternalHttpServer {
       if (!/^[A-Za-z0-9]+$/u.test(id)) return this.record(req, url, json({ error: 'invalid conversation id' }, 400));
       const conversation = await this.modmail.conversation(id);
       if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
-      return this.record(req, url, json({ conversation }), `conversation=${id} messages=${conversation.messages.length}`);
+      const participant = conversation.participant?.name ?? null;
+      const reputation = participant === null || this.modmailReputation === null
+        ? null
+        : await this.modmailReputation.user(participant);
+      return this.record(
+        req,
+        url,
+        json({ conversation, reputation }),
+        `conversation=${id} messages=${conversation.messages.length} reputation=${reputation?.points ?? 'none'}`,
+      );
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/modmail/replies') return await this.reply(req, url);
