@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 platform='reddit'
-default_ref='agent/ts-overhaul'
+default_ref='feature/reddit-reputation-bootstrap'
 ref="${1:-$default_ref}"
 live="${MAE_LIVE_DIR:-/home/kitty/server/mae/reddit}"
 remote="${MAE_CI_REMOTE:-}"
@@ -56,13 +56,14 @@ git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
 git -C "$repo" submodule update --init --recursive
 
 cd "$repo"
+printf '  candidate SHA: %s\n' "$(git rev-parse HEAD)"
 # Install exactly the dependency graph committed in bun.lock.
 bun ci
 
 # The TypeScript Reddit runtime is self-contained. Legacy Python/common state is
 # migration evidence only and is deliberately not a prerequisite for host CI.
-# Migration-specific snapshot verification belongs in the migration tools/tests,
-# not the runtime build gate.
+# Production reputation.pb is never opened or copied by this script: validation
+# runs only inside the disposable clone with test-owned temporary stores.
 run_clean bun run ci
 mkdir -p "$build"
 run_clean bun build ./src/main.ts --target=bun --outdir "$build"
