@@ -23,7 +23,7 @@ export type DmConversationState = {
   readonly responseConversationId: string | null;
 };
 
-export type DmDeliveryState = 'pending' | 'attempted' | 'sent' | 'no-reply';
+export type DmDeliveryState = 'seeded' | 'pending' | 'attempted' | 'sent' | 'no-reply';
 
 export type DmMessageState = {
   readonly message: RedditDirectMessage;
