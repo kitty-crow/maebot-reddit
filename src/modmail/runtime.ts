@@ -12,16 +12,18 @@ import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
+import { ModmailReplyOutbox } from './outbox.ts';
 import type { ModmailRelayEvent } from './store.ts';
 import { ModmailStore } from './store.ts';
 
-export type ModmailReader = Pick<RedditReadClient, 'modmailConversations'>;
-export type ModmailWriter = Pick<RedditMutationClient, 'unmuteModmail'>;
+export type ModmailReader = Pick<RedditReadClient, 'modmailConversations' | 'modmailConversation'>;
+export type ModmailWriter = Pick<RedditMutationClient, 'unmuteModmail' | 'replyModmail'>;
 
 export type ModmailRuntimeTick = {
   readonly relayed: number;
   readonly audited: number;
   readonly apologies: number;
+  readonly repliesApplied: number;
   readonly failed: number;
 };
 
@@ -50,6 +52,7 @@ export class ModmailRuntime {
     private readonly store: ModmailStore,
     classifier: ModerationClassifier | null = null,
     resolution: PrivateResolutionClassifier | null = null,
+    private readonly outbox: ModmailReplyOutbox | null = null,
   ) {
     this.classifier = classifier ?? new RedditModerationClassifier(cfg.ai);
     this.resolution = resolution ?? new RedditPrivateResolutionClassifier(cfg.ai);
@@ -95,6 +98,32 @@ export class ModmailRuntime {
     return 'apology';
   }
 
+  private async applyReplies(): Promise<{ readonly applied: number; readonly failed: number }> {
+    if (this.outbox === null) return { applied: 0, failed: 0 };
+    let applied = 0;
+    let failed = 0;
+    for (const reply of await this.outbox.pending()) {
+      try {
+        const before = await this.reader.modmailConversation(reply.conversationId, false);
+        const alreadyPresent = before.messages.some(message =>
+          message.bodyMarkdown.trim() === reply.bodyMarkdown
+          && message.createdAt >= Math.max(0, reply.createdAt - 60)
+          && (message.participatingAs === 'moderator' || message.author?.isModerator === true));
+        if (!alreadyPresent) await this.writer.replyModmail(reply.conversationId, reply.bodyMarkdown);
+        await this.outbox.markApplied(reply.key);
+        const after = alreadyPresent ? before : await this.reader.modmailConversation(reply.conversationId, false);
+        await this.store.sync([after]);
+        applied += 1;
+      } catch (error) {
+        failed += 1;
+        const safe = safeError(error);
+        await this.outbox.markFailed(reply.key, safe);
+        console.error(`[Reddit modmail] outbound reply ${reply.key} failed: ${safe}`);
+      }
+    }
+    return { applied, failed };
+  }
+
   public async tick(): Promise<ModmailRuntimeTick> {
     const page = await this.reader.modmailConversations(this.subreddit, 100);
     const events = await this.store.sync(page.conversations);
@@ -114,6 +143,13 @@ export class ModmailRuntime {
         console.error(`[Reddit modmail] ${event.key} failed: ${safeError(error)}`);
       }
     }
-    return { relayed: events.length, audited, apologies, failed };
+    const replies = await this.applyReplies();
+    return {
+      relayed: events.length,
+      audited,
+      apologies,
+      repliesApplied: replies.applied,
+      failed: failed + replies.failed,
+    };
   }
 }
