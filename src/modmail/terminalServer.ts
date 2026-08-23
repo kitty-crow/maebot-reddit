@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import type { ModmailTerminalCfg } from '../env.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
+import type { ModmailMediaAttachment } from './media/types.ts';
+import type { ModmailMediaService } from './media/service.ts';
 import { ModmailReplyOutbox } from './outbox.ts';
 import { modmailTerminalPage } from './terminalPage.ts';
 import { presentModmailConversation } from './terminalPresentation.ts';
@@ -23,7 +25,7 @@ const encoder = new TextEncoder();
 
 const pageHeaders = (): Headers => new Headers({
   'cache-control': 'no-store, private',
-  'content-security-policy': "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+  'content-security-policy': "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://i.redd.it blob:; media-src 'self' https://reddit-uploaded-media.s3-accelerate.amazonaws.com https://v.redd.it blob:; base-uri 'none'; form-action 'none'",
   'content-type': 'text/html; charset=utf-8',
   'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
   'referrer-policy': 'no-referrer',
@@ -50,7 +52,19 @@ const tokenFrom = (pathname: string): { readonly token: string; readonly action:
 const requestId = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9._:-]{8,128}$/u.test(value) ? value : null;
 
+const attachmentIds = (value: Json | undefined): readonly string[] | null => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 8) return null;
+  const ids = value.filter((item): item is string => typeof item === 'string' && /^[A-Za-z0-9_-]{12,128}$/u.test(item));
+  return ids.length === value.length ? ids : null;
+};
+
 const safeHandle = (value: string): string => value.trim().slice(0, 128);
+const fileName = (value: string | null): string | null => {
+  if (value === null) return null;
+  const name = value.trim();
+  return name.length > 0 && name.length <= 180 ? name : null;
+};
 
 export class ModmailTerminalServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
@@ -62,6 +76,7 @@ export class ModmailTerminalServer {
     private readonly cfg: ModmailTerminalCfg,
     private readonly store: ModmailStore,
     private readonly outbox: ModmailReplyOutbox,
+    private readonly media: ModmailMediaService | null = null,
   ) {}
 
   public start(): void {
@@ -113,6 +128,22 @@ export class ModmailTerminalServer {
       url: new URL(`modmail/${encodeURIComponent(session.token)}/`, base).toString(),
       expiresAt: session.expiresAt,
     };
+  }
+
+  public async uploadMedia(
+    conversationId: string,
+    name: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<ModmailMediaAttachment> {
+    if (this.media === null) throw new Error('Modmail media upload is unavailable');
+    return await this.media.upload({ conversationId, name, mimeType, bytes });
+  }
+
+  public async resolveMedia(conversationId: string, ids: readonly string[]): Promise<readonly ModmailMediaAttachment[]> {
+    if (ids.length === 0) return [];
+    if (this.media === null) throw new Error('Modmail media upload is unavailable');
+    return await this.media.resolve(conversationId, ids);
   }
 
   private removeClient(token: string, client: TerminalClient): void {
@@ -211,6 +242,21 @@ export class ModmailTerminalServer {
     });
   }
 
+  private async upload(req: Request, session: ModmailTerminalSession): Promise<Response> {
+    const name = fileName(req.headers.get('x-mae-file-name'));
+    const mimeType = (req.headers.get('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    if (name === null || mimeType.length === 0) return json({ error: 'invalid media upload metadata' }, 400);
+    try {
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      const attachment = await this.uploadMedia(session.conversationId, name, mimeType, bytes);
+      return json({ attachment }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'media upload failed';
+      const status = message.includes('20 MB') || message.includes('Unsupported') || message.includes('filename') ? 400 : 503;
+      return json({ error: message }, status);
+    }
+  }
+
   private async reply(req: Request, token: string): Promise<Response> {
     const session = await this.store.terminalSession(token);
     if (session === null) return json({ error: 'terminal session unavailable' }, 404);
@@ -218,13 +264,23 @@ export class ModmailTerminalServer {
     if (!isMap(raw)) return json({ error: 'invalid reply body' }, 400);
     const id = requestId(raw['requestId']);
     const text = typeof raw['text'] === 'string' ? raw['text'].trim() : '';
-    if (id === null || text.length === 0 || text.length > 10_000) return json({ error: 'invalid reply body' }, 400);
+    const ids = attachmentIds(raw['attachmentIds']);
+    if (id === null || ids === null || text.length > 10_000 || (text.length === 0 && ids.length === 0)) {
+      return json({ error: 'invalid reply body' }, 400);
+    }
+    let attachments: readonly ModmailMediaAttachment[];
+    try {
+      attachments = await this.resolveMedia(session.conversationId, ids);
+    } catch {
+      return json({ error: 'invalid or unavailable attachment' }, 400);
+    }
     const tokenHash = createHash('sha256').update(token).digest('hex').slice(0, 24);
     const queued = await this.outbox.queue({
       key: `terminal:${tokenHash}:${id}`,
       conversationId: session.conversationId,
       moderator: session.moderator,
       text,
+      attachments,
     });
     return json({ queued: true, key: queued.key }, 202);
   }
@@ -253,6 +309,7 @@ export class ModmailTerminalServer {
       return new Response(modmailTerminalPage, { status: 200, headers: pageHeaders() });
     }
     if (req.method === 'GET' && path.action === 'stream') return await this.stream(path.token);
+    if (req.method === 'POST' && path.action === 'media') return await this.upload(req, session);
     if (req.method === 'POST' && path.action === 'reply') return await this.reply(req, path.token);
     if (req.method === 'POST' && path.action === 'close') return await this.close(path.token);
     return json({ error: 'not found' }, 404);
