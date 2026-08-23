@@ -82,17 +82,13 @@ const moderation = moderationCfg === null || moderationReader === null || modera
       null,
       moderationReviews,
     );
-const modmail = moderationCfg === null || moderationReader === null || moderationWriter === null || reputation === null
+const modmail = moderationReader === null || moderationWriter === null
   ? null
   : new ModmailRuntime(
       redditCfg.sourceSubreddit,
-      moderationCfg,
       moderationReader,
       moderationWriter,
-      reputation,
       modmailStore,
-      null,
-      null,
       modmailOutbox,
     );
 const privateModmail = moderationCfg === null || reputation === null
