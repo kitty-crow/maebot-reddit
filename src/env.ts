@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { resolve } from 'node:path';
+import type { ModerationAiCfg } from './mod/classifier.ts';
 
 const req = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -29,6 +30,25 @@ const port = (name: string, value: string): number => {
   return parsed;
 };
 
+const positive = (name: string, fallback: string): number => {
+  const parsed = Number(opt(name, fallback));
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+};
+
+const enabled = (name: string): boolean => {
+  const raw = maybe(name)?.toLowerCase() ?? 'false';
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  throw new Error(`${name} must be true or false`);
+};
+
+const effort = (name: string, fallback: ModerationAiCfg['effort']): ModerationAiCfg['effort'] => {
+  const value = opt(name, fallback);
+  if (value === 'none' || value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max') return value;
+  throw new Error(`${name} is not a supported reasoning effort`);
+};
+
 export type RedditAuthCfg = {
   readonly clientId: string;
   readonly clientSecret: string;
@@ -42,6 +62,12 @@ export type RedditCfg = {
   readonly sourceSubreddit: string;
   readonly primarySubreddit: string;
   readonly stateFile: string;
+};
+
+export type RedditModerationCfg = {
+  readonly ai: ModerationAiCfg;
+  readonly stateFile: string;
+  readonly batchSize: number;
 };
 
 export type LoopbackApiCfg = {
@@ -69,6 +95,19 @@ export const redditConfig = (): RedditCfg => ({
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
   stateFile: resolve(process.cwd(), opt('REDDIT_STATE_FILE', 'data/reddit.pb')),
 });
+
+export const redditModerationConfig = (): RedditModerationCfg | null => {
+  if (!enabled('REDDIT_MODERATION_ENABLED')) return null;
+  return {
+    ai: {
+      key: req('OPENAI_API_KEY'),
+      model: req('REDDIT_MODERATION_MODEL'),
+      effort: effort('REDDIT_MODERATION_EFFORT', 'low'),
+    },
+    stateFile: resolve(process.cwd(), opt('REDDIT_REPUTATION_STATE_FILE', 'data/reputation.pb')),
+    batchSize: Math.min(100, positive('REDDIT_MODERATION_BATCH_SIZE', '100')),
+  };
+};
 
 export const twitterApiConfig = (): LoopbackApiCfg => ({
   base: req('TWITTER_API_URL'),
