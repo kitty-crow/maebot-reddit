@@ -59,6 +59,24 @@ export class ModmailAuditStore {
     return conversationFrom(conversations[conversationId]);
   }
 
+  public async rememberConversation(conversationId: string, openaiConversationId: string): Promise<void> {
+    if (conversationId.trim().length === 0) throw new Error('Modmail audit conversation id is required');
+    if (openaiConversationId.trim().length === 0) throw new Error('OpenAI conversation id is required');
+    await this.store.edit(current => {
+      const value = root(current);
+      const conversations = value['conversations'];
+      if (!isMap(conversations)) throw new Error('Modmail audit conversation map is missing');
+      const previous = conversationFrom(conversations[conversationId]);
+      conversations[conversationId] = {
+        conversationId,
+        openaiConversationId,
+        lastSequence: previous?.lastSequence ?? 0,
+        lastMessageId: previous?.lastMessageId ?? null,
+      };
+      return value;
+    });
+  }
+
   public async advance(
     sequence: number,
     conversationId: string,
