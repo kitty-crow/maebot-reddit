@@ -1,7 +1,6 @@
 import type { ModerationClassification } from '../mod/classifier.ts';
 import {
   BAN_TRIGGER_POINTS,
-  RECOVERABLE_REPUTATION_FLOOR,
   REPUTATION_FLOOR,
   UNCIVIL_CEILING,
   clampReputationPoints,
@@ -70,36 +69,35 @@ export const applyPositiveCredits = (
   };
 };
 
-const deductOne = (subject: ReputationSubject, remove: boolean): ReputationTransition => {
-  const next = subject.points - 1;
+const deduct = (
+  subject: ReputationSubject,
+  points: number,
+  remove: boolean,
+): ReputationTransition => {
+  if (!Number.isSafeInteger(points) || points < 1) {
+    throw new Error('Reputation deduction must be a positive safe integer');
+  }
+  const next = subject.points - points;
   if (next <= BAN_TRIGGER_POINTS) return permanent('banned');
-  return active(Math.max(RECOVERABLE_REPUTATION_FLOOR, next), remove);
-};
-
-const severe = (subject: ReputationSubject): ReputationTransition => {
-  if (subject.status === 'scam') return permanent('scam');
-  if (subject.status === 'banned') return permanent('banned');
-
-  // A severe violation wipes all positive standing on the first offence.
-  // Once already warned/uncivil, each further violation deepens the debt by one.
-  if (subject.points >= 0) return active(-1, true);
-  return deductOne(subject, true);
+  return active(clampReputationPoints(next), remove);
 };
 
 const low = (subject: ReputationSubject): ReputationTransition => {
   if (subject.status === 'scam') return permanent('scam');
   if (subject.status === 'banned') return permanent('banned');
+  return deduct(subject, 1, false);
+};
 
-  const next = clampReputationPoints(subject.points - 1);
-  if (next <= BAN_TRIGGER_POINTS) return permanent('banned');
-  if (next <= 0) return active(Math.max(RECOVERABLE_REPUTATION_FLOOR, next), false);
-  return {
-    points: next,
-    tier: tierForPoints(next),
-    status: 'ordinary',
-    remove: false,
-    ban: false,
-  };
+const severe = (
+  subject: ReputationSubject,
+  classification: ModerationClassification,
+): ReputationTransition => {
+  if (subject.status === 'scam') return permanent('scam');
+  if (subject.status === 'banned') return permanent('banned');
+  if (classification.penaltyPoints < 10) {
+    throw new Error('Severe moderation must deduct at least 10 reputation points');
+  }
+  return deduct(subject, classification.penaltyPoints, true);
 };
 
 const clean = (subject: ReputationSubject): ReputationTransition => applyPositiveCredits(subject, 1);
@@ -111,7 +109,7 @@ export const applyModerationClassification = (
   if (classification.verdict === 'clean') return clean(subject);
   if (classification.verdict === 'low') return low(subject);
   if (classification.verdict === 'scam') return permanent('scam');
-  return severe(subject);
+  return severe(subject, classification);
 };
 
 export const applyContributionPolicy = (
