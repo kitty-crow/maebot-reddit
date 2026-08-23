@@ -121,7 +121,7 @@ const assignmentUser = (
     return {
       username,
       points: 0,
-      tier: 0,
+      tier: 5,
       status: 'moderator',
       currentFlairTemplateId: assignment.templateId,
       currentFlairText: assignment.text,
@@ -217,7 +217,7 @@ const assignmentUser = (
 const moderatorUser = (username: string, at: number): ReputationUser => ({
   username,
   points: 0,
-  tier: 0,
+  tier: 5,
   status: 'moderator',
   currentFlairTemplateId: null,
   currentFlairText: null,
