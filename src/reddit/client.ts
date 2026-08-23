@@ -113,7 +113,7 @@ export class RedditReadClient {
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
-    return decode.rules(await this.get(pathFor(name, '/about/rules'));
+    return decode.rules(await this.get(pathFor(name, '/about/rules')));
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
@@ -164,10 +164,6 @@ export class RedditReadClient {
       const page = directMessages(value, 'unread private messages');
       return { items: page.messages, after: page.after };
     }, max);
-  }
-
-  public async directMessageHistory(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    return await this.inboxDirectMessages(maxItems);
   }
 
   public async sentDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
