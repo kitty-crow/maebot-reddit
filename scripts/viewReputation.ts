@@ -1,7 +1,8 @@
+import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
+import { stdout } from 'node:process';
 import { rankReputationRows, type ReputationRankingRow } from '../src/reputation/ranking.ts';
 import { parseMap } from '../src/types/json.ts';
 import { arrVal, boolVal, mapVal, numVal, optStr, strVal } from '../src/types/value.ts';
@@ -58,9 +59,13 @@ const printHeader = (start: number, end: number): void => {
   console.log('-'.repeat(Math.min(130, 4 + 2 + userWidth + 2 + 12 + 2 + 4 + 2 + flairWidth + 2 + 16)));
 };
 
-const rl = createInterface({ input: stdin, output: stdout });
+// Read commands from the controlling terminal rather than inherited stdin.
+// This keeps the viewer interactive even when launched from a shell heredoc.
+const ttyInput = createReadStream('/dev/tty');
+const rl = createInterface({ input: ttyInput, output: stdout });
 try {
-  for (let start = 0; start < ranked.length; start += pageSize) {
+  let closed = false;
+  for (let start = 0; start < ranked.length && !closed; start += pageSize) {
     const end = Math.min(start + pageSize, ranked.length);
     printHeader(start, end);
     for (let index = start; index < end; index += 1) {
@@ -81,8 +86,7 @@ try {
       if (answer === '') break;
       if (answer === 'x') {
         console.log('Closed reputation viewer.');
-        process.exitCode = 0;
-        start = ranked.length;
+        closed = true;
         break;
       }
       console.log('Press Enter for the next page, or type x then press Enter to close.');
@@ -90,4 +94,5 @@ try {
   }
 } finally {
   rl.close();
+  ttyInput.destroy();
 }
