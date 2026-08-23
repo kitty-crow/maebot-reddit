@@ -6,14 +6,12 @@ platform='reddit'
 default_ref='agent/ts-overhaul'
 ref="${1:-$default_ref}"
 live="${MAE_LIVE_DIR:-/home/kitty/server/mae/reddit}"
-common="${MAE_COMMON_DIR:-/home/kitty/server/mae/common}"
 remote="${MAE_CI_REMOTE:-}"
 
 for command in git bun; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 2; }
 done
 [ -d "$live" ] || { echo "Live Reddit directory not found: $live" >&2; exit 2; }
-[ -d "$common" ] || { echo "Live common directory not found: $common" >&2; exit 2; }
 
 if [ -z "$remote" ]; then
   remote="$(git -C "$live" remote get-url origin 2>/dev/null || true)"
@@ -22,7 +20,6 @@ fi
 
 root="$(mktemp -d "/tmp/mae-${platform}-ci.XXXXXXXX")"
 repo="$root/repo"
-snapshot="$root/live-snapshot"
 build="$root/build"
 tmp="$root/tmp"
 ephemeral="ci/${platform}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -62,11 +59,10 @@ cd "$repo"
 # Install exactly the dependency graph committed in bun.lock.
 bun ci
 
-# Copy legacy production state into /tmp. No live file is opened for writing.
-run_clean bun run scripts/legacySnapshot.ts "$live" "$snapshot" "$common"
-run_clean bun run scripts/hostSnapshotProbe.ts "$snapshot"
-
-# Deterministic source checks, tests and a real Bun runtime bundle.
+# The TypeScript Reddit runtime is self-contained. Legacy Python/common state is
+# migration evidence only and is deliberately not a prerequisite for host CI.
+# Migration-specific snapshot verification belongs in the migration tools/tests,
+# not the runtime build gate.
 run_clean bun run ci
 mkdir -p "$build"
 run_clean bun build ./src/main.ts --target=bun --outdir "$build"
@@ -84,4 +80,4 @@ if git submodule status --recursive | grep -Eq '^[+-]'; then
 fi
 
 printf 'PASS Mae %s host CI for %s\n' "$platform" "$(git rev-parse --short HEAD)"
-printf 'All live fixtures and build output were confined to %s and will now be deleted.\n' "$root"
+printf 'All build/test output was confined to %s and will now be deleted.\n' "$root"
