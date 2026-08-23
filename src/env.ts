@@ -83,6 +83,13 @@ export type InternalApiCfg = {
   readonly token: string;
 };
 
+export type ModmailTerminalCfg = {
+  readonly host: string;
+  readonly port: number;
+  readonly publicBase: string;
+  readonly ttlSeconds: number;
+};
+
 export const redditConfig = (): RedditCfg => ({
   auth: {
     // Preserve the production Python deployment's credential names so the
@@ -134,5 +141,25 @@ export const internalApiConfig = (): InternalApiCfg | null => {
     host: opt('REDDIT_INTERNAL_API_HOST', '127.0.0.1'),
     port: port('REDDIT_INTERNAL_API_PORT', rawPort),
     token,
+  };
+};
+
+export const modmailTerminalConfig = (): ModmailTerminalCfg | null => {
+  const publicBase = maybe('REDDIT_MODMAIL_WEBAPP_BASE');
+  const rawPort = maybe('REDDIT_MODMAIL_WEBAPP_PORT');
+  if (publicBase === null && rawPort === null) return null;
+  if (publicBase === null || rawPort === null) {
+    throw new Error('REDDIT_MODMAIL_WEBAPP_BASE and REDDIT_MODMAIL_WEBAPP_PORT must be configured together');
+  }
+  const url = new URL(publicBase);
+  if (url.protocol !== 'https:') throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must use HTTPS');
+  if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) {
+    throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must be a clean HTTPS base URL');
+  }
+  return {
+    host: opt('REDDIT_MODMAIL_WEBAPP_HOST', '127.0.0.1'),
+    port: port('REDDIT_MODMAIL_WEBAPP_PORT', rawPort),
+    publicBase: url.toString().replace(/\/$/u, ''),
+    ttlSeconds: Math.min(86_400, Math.max(300, positive('REDDIT_MODMAIL_WEBAPP_TTL_SECONDS', '3600'))),
   };
 };
