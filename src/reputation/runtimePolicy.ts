@@ -32,7 +32,7 @@ const permanent = (status: 'banned' | 'scam'): ReputationTransition => ({
 
 const activeStatus = (points: number): ReputationStatus => {
   if (points >= 1) return 'ordinary';
-  if (points <= -2) return 'uncivil';
+  if (points <= -4) return 'uncivil';
   return 'warned';
 };
 
