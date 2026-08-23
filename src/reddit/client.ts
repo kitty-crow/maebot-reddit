@@ -1,4 +1,6 @@
 import type { RedditAuthCfg } from '../env.ts';
+import { modmailConversation, modmailConversations } from '../modmail/decode.ts';
+import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { numVal, strVal } from '../types/value.ts';
@@ -144,6 +146,24 @@ export class RedditReadClient {
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
     return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
+  }
+
+  public async modmailConversations(name: string, limit = 100): Promise<ModmailConversationPage> {
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const query = new URLSearchParams({
+      entity: name,
+      limit: String(safeLimit),
+      sort: 'recent',
+      state: 'all',
+    });
+    return modmailConversations(await this.get(`/api/mod/conversations?${query}`));
+  }
+
+  public async modmailConversation(id: string, markRead = false): Promise<ModmailConversation> {
+    const value = id.trim().replace(/^ModmailConversation_/u, '');
+    if (!/^[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit modmail conversation id ${id}`);
+    const query = new URLSearchParams({ markRead: String(markRead) });
+    return modmailConversation(await this.get(`/api/mod/conversations/${encodeURIComponent(value)}?${query}`));
   }
 
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
