@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto';
 import type { ModerationClassification } from '../mod/classifier.ts';
 import type { RedditFlairTemplate } from '../reddit/types.ts';
-import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { Store } from '../store/store.ts';
+import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import {
   chooseFlairForTier,
   type OrdinaryTier,
   type ReputationStatus,
   type ReputationTier,
 } from './policy.ts';
-import { applyModerationClassification } from './runtimePolicy.ts';
+import {
+  applyModerationClassification,
+  applyPositiveCredits,
+} from './runtimePolicy.ts';
 
 export type ReputationSeedSource =
   | 'tier-flair'
@@ -195,24 +198,42 @@ const mapField = (value: JsonMap, name: string): JsonMap => {
   return field;
 };
 
-const textOrNull = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
+const textOrNull = (value: Json | undefined): string | null =>
+  typeof value === 'string' ? value : null;
+
 const bool = (value: Json | undefined): boolean => value === true;
+
 const integer = (value: Json | undefined, fallback = 0): number =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback;
 
 const tier = (value: Json | undefined): ReputationTier =>
-  value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 9 ? value : 0;
+  value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 9
+    ? value
+    : 0;
 
 const status = (value: Json | undefined): ReputationStatus => {
-  if (value === 'ordinary' || value === 'warned' || value === 'uncivil' || value === 'banned'
-    || value === 'scam' || value === 'moderator' || value === 'unmapped') return value;
+  if (
+    value === 'ordinary'
+    || value === 'warned'
+    || value === 'uncivil'
+    || value === 'banned'
+    || value === 'scam'
+    || value === 'moderator'
+    || value === 'unmapped'
+  ) return value;
   return 'unmapped';
 };
 
 const source = (value: Json | undefined): ReputationSeedSource => {
-  if (value === 'tier-flair' || value === 'status-flair' || value === 'reddit-ban'
-    || value === 'recent-unflaired-contributor' || value === 'live-contribution'
-    || value === 'moderator' || value === 'unmapped-flair') return value;
+  if (
+    value === 'tier-flair'
+    || value === 'status-flair'
+    || value === 'reddit-ban'
+    || value === 'recent-unflaired-contributor'
+    || value === 'live-contribution'
+    || value === 'moderator'
+    || value === 'unmapped-flair'
+  ) return value;
   return 'live-contribution';
 };
 
@@ -254,7 +275,9 @@ const blankUser = (username: string, at: number): ReputationUser => ({
 });
 
 const refText = (value: Json | undefined, name: string): string => {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`Missing reputation flair reference ${name}`);
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing reputation flair reference ${name}`);
+  }
   return value;
 };
 
@@ -283,15 +306,28 @@ const referencesFrom = (value: JsonMap): ReputationFlairReferences => {
   };
 };
 
-const catalogueText = (value: JsonMap, templateId: string): string => {
+const catalogueField = (
+  value: JsonMap,
+  templateId: string,
+  field: 'text' | 'cssClass',
+): string | null => {
   const catalog = mapField(value, 'flairCatalog');
   const users = catalog['user'];
   if (!Array.isArray(users)) throw new Error('Reputation user flair catalog is invalid');
   for (const item of users) {
-    if (!isMap(item)) continue;
-    if (item['id'] === templateId && typeof item['text'] === 'string') return item['text'];
+    if (!isMap(item) || item['id'] !== templateId) continue;
+    const selected = item[field];
+    if (selected === null) return null;
+    if (typeof selected === 'string') return selected;
+    throw new Error(`Flair template ${templateId} has an invalid ${field}`);
   }
   throw new Error(`Flair template ${templateId} is missing from the reputation catalog`);
+};
+
+const catalogueText = (value: JsonMap, templateId: string): string => {
+  const text = catalogueField(value, templateId, 'text');
+  if (text === null) throw new Error(`Flair template ${templateId} has no text`);
+  return text;
 };
 
 const stableRoll = (username: string, targetTier: OrdinaryTier, eventKey: string): number => {
@@ -332,6 +368,7 @@ const desiredFor = (
   eventKey: string,
 ): { readonly id: string | null; readonly text: string | null } => {
   const refs = referencesFrom(value);
+
   if (nextStatus === 'warned') {
     if (refs.user.warned === null) throw new Error('Warned flair reference is unavailable');
     return { id: refs.user.warned, text: catalogueText(value, refs.user.warned) };
@@ -356,7 +393,11 @@ const desiredFor = (
   return ordinaryFlair(refs, previous.username, nextTier, eventKey);
 };
 
-const contributionJson = (input: ReputationContributionInput, remove: boolean, ban: boolean): JsonMap => ({
+const contributionJson = (
+  input: ReputationContributionInput,
+  remove: boolean,
+  ban: boolean,
+): JsonMap => ({
   fullname: input.fullname,
   kind: input.kind,
   author: input.author,
@@ -407,14 +448,13 @@ const exemptContributionJson = (
   banApplied: true,
 });
 
-const journal = (
-  value: JsonMap,
-  key: string,
-  body: JsonMap,
-): void => {
+const journal = (value: JsonMap, key: string, body: JsonMap): void => {
   const entries = mapField(value, 'reputationJournal');
   if (entries[key] === undefined) entries[key] = body;
 };
+
+const scoreEligibleStatus = (value: ReputationStatus): boolean =>
+  value === 'ordinary' || value === 'warned' || value === 'uncivil';
 
 export class ReputationStore {
   private readonly store: Store;
@@ -425,7 +465,10 @@ export class ReputationStore {
 
   public async hasBootstrap(): Promise<boolean> {
     const value = await this.store.read();
-    return isMap(value) && value['schema'] === 1 && typeof value['bootstrappedAt'] === 'number' && value['bootstrappedAt'] > 0;
+    return isMap(value)
+      && value['schema'] === 1
+      && typeof value['bootstrappedAt'] === 'number'
+      && value['bootstrappedAt'] > 0;
   }
 
   public async bootstrap(value: ReputationBootstrap, force = false): Promise<void> {
@@ -487,7 +530,9 @@ export class ReputationStore {
       const existingContribution = contributions[input.fullname];
       if (existingContribution !== undefined) {
         const existingUser = userFrom(users[key]);
-        if (existingUser === null) throw new Error(`Contribution ${input.fullname} exists without user ${input.author}`);
+        if (existingUser === null) {
+          throw new Error(`Contribution ${input.fullname} exists without user ${input.author}`);
+        }
         output = existingUser;
         return value;
       }
@@ -496,6 +541,7 @@ export class ReputationStore {
       if (previous.status === 'moderator' || previous.immutableModeratorFlair) {
         throw new Error(`Moderator u/${input.author} reached reputation mutation boundary`);
       }
+
       const transition = applyModerationClassification(previous, input.classification);
       const desired = desiredFor(
         value,
@@ -516,6 +562,7 @@ export class ReputationStore {
         needsReview: false,
         source: previous.source === 'unmapped-flair' ? 'live-contribution' : previous.source,
       };
+
       users[key] = userJson(next);
       contributions[input.fullname] = contributionJson(input, transition.remove, transition.ban);
       journal(value, `moderation:${input.fullname}`, {
@@ -533,67 +580,73 @@ export class ReputationStore {
       output = next;
       return value;
     });
+
     if (output === null) throw new Error('Reputation moderation transaction produced no user');
     return output;
   }
 
   public async observeScore(fullname: string, score: number, at: number): Promise<number> {
     if (!Number.isSafeInteger(score)) throw new Error('Reddit score must be a safe integer');
-    let credited = 0;
+    let awarded = 0;
+
     await this.store.edit(current => {
       const value = root(current);
       const contributions = mapField(value, 'contributions');
       const contribution = contributions[fullname];
       if (!isMap(contribution) || bool(contribution['exempt'])) return value;
+      if (contribution['verdict'] !== 'clean') return value;
+
       const author = textOrNull(contribution['author']);
       if (author === null) return value;
       const users = mapField(value, 'users');
       const userKey = author.toLowerCase();
       const previous = userFrom(users[userKey]);
-      if (previous === null || previous.status !== 'ordinary') return value;
+      if (previous === null || !scoreEligibleStatus(previous.status)) return value;
 
       const creditedScore = integer(contribution['creditedScore'], score);
       let pendingHigh = integer(contribution['pendingHigh'], creditedScore);
       let pendingSeen = integer(contribution['pendingSeen']);
+
       if (score <= creditedScore) {
         contribution['pendingHigh'] = creditedScore;
         contribution['pendingSeen'] = 0;
         return value;
       }
+
       if (pendingSeen === 0 || score < pendingHigh) {
         pendingHigh = score;
         pendingSeen = 1;
       } else {
-        pendingHigh = Math.max(pendingHigh, score);
+        // Keep the lower confirmed candidate. A higher second sample confirms
+        // the previous candidate but is not itself credited until confirmed.
         pendingSeen += 1;
       }
+
       contribution['pendingHigh'] = pendingHigh;
       contribution['pendingSeen'] = pendingSeen;
       if (pendingSeen < 2) return value;
 
-      credited = pendingHigh - creditedScore;
-      const synthetic: ModerationClassification = {
-        verdict: 'clean',
-        rule: 'none',
-        disposition: 'allow',
-        confidence: 1,
-        reason: 'Stable Reddit score high-water increase.',
-        evidence: [],
-      };
-      let nextPoints = previous.points;
-      for (let index = 0; index < credited; index += 1) {
-        nextPoints = applyModerationClassification({ points: nextPoints, status: 'ordinary' }, synthetic).points;
-      }
-      const nextTier = applyModerationClassification({ points: nextPoints - 1, status: 'ordinary' }, synthetic).tier;
-      const desired = desiredFor(value, previous, nextPoints, nextTier, 'ordinary', `score:${fullname}:${pendingHigh}`);
+      const redditDelta = pendingHigh - creditedScore;
+      const transition = applyPositiveCredits(previous, redditDelta);
+      awarded = Math.max(0, transition.points - previous.points);
+      const desired = desiredFor(
+        value,
+        previous,
+        transition.points,
+        transition.tier,
+        transition.status,
+        `score:${fullname}:${pendingHigh}`,
+      );
       const next: ReputationUser = {
         ...previous,
-        points: nextPoints,
-        tier: nextTier,
+        points: transition.points,
+        tier: transition.tier,
+        status: transition.status,
         desiredFlairTemplateId: desired.id,
         desiredFlairText: desired.text,
         needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
       };
+
       users[userKey] = userJson(next);
       contribution['creditedScore'] = pendingHigh;
       contribution['pendingHigh'] = pendingHigh;
@@ -604,13 +657,17 @@ export class ReputationStore {
         username: author,
         at,
         redditScore: pendingHigh,
-        delta: credited,
+        redditDelta,
+        pointsAwarded: awarded,
         beforePoints: previous.points,
-        afterPoints: nextPoints,
+        afterPoints: next.points,
+        beforeStatus: previous.status,
+        afterStatus: next.status,
       });
       return value;
     });
-    return credited;
+
+    return awarded;
   }
 
   public async pendingEffects(): Promise<ReputationPendingEffects> {
@@ -623,22 +680,41 @@ export class ReputationStore {
 
     for (const raw of Object.values(users)) {
       const user = userFrom(raw);
-      if (user === null || !user.needsFlair || user.desiredFlairTemplateId === null || user.desiredFlairText === null) continue;
+      if (
+        user === null
+        || !user.needsFlair
+        || user.desiredFlairTemplateId === null
+        || user.desiredFlairText === null
+      ) continue;
       if (user.status === 'moderator' || user.immutableModeratorFlair) continue;
-      flairs.push({ username: user.username, templateId: user.desiredFlairTemplateId, text: user.desiredFlairText });
+      flairs.push({
+        username: user.username,
+        templateId: user.desiredFlairTemplateId,
+        text: user.desiredFlairText,
+      });
     }
+
     for (const raw of Object.values(contributions)) {
       if (!isMap(raw) || bool(raw['exempt'])) continue;
-      const fullname = textOrNull(raw['fullname']);
+      const contributionFullname = textOrNull(raw['fullname']);
       const author = textOrNull(raw['author']);
-      if (fullname === null || author === null) continue;
-      if (bool(raw['removeRequired']) && !bool(raw['removeApplied'])) removals.push({ fullname });
-      if (bool(raw['banRequired']) && !bool(raw['banApplied'])) bans.push({ fullname, username: author });
+      if (contributionFullname === null || author === null) continue;
+      if (bool(raw['removeRequired']) && !bool(raw['removeApplied'])) {
+        removals.push({ fullname: contributionFullname });
+      }
+      if (bool(raw['banRequired']) && !bool(raw['banApplied'])) {
+        bans.push({ fullname: contributionFullname, username: author });
+      }
     }
+
     return { flairs, removals, bans };
   }
 
-  public async markFlairApplied(username: string, templateId: string, text: string): Promise<void> {
+  public async markFlairApplied(
+    username: string,
+    templateId: string,
+    text: string,
+  ): Promise<void> {
     await this.store.edit(current => {
       const value = root(current);
       const users = mapField(value, 'users');
@@ -649,6 +725,7 @@ export class ReputationStore {
         ...previous,
         currentFlairTemplateId: templateId,
         currentFlairText: text,
+        currentFlairCssClass: catalogueField(value, templateId, 'cssClass'),
         desiredFlairTemplateId: templateId,
         desiredFlairText: text,
         needsFlair: false,
@@ -665,7 +742,10 @@ export class ReputationStore {
     await this.markContributionEffect(fullname, 'banApplied');
   }
 
-  private async markContributionEffect(fullname: string, field: 'removeApplied' | 'banApplied'): Promise<void> {
+  private async markContributionEffect(
+    fullname: string,
+    field: 'removeApplied' | 'banApplied',
+  ): Promise<void> {
     await this.store.edit(current => {
       const value = root(current);
       const contributions = mapField(value, 'contributions');
