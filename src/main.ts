@@ -107,11 +107,12 @@ const tick = async (): Promise<void> => {
       moderationResult.audited > 0
       || moderationResult.exempt > 0
       || moderationResult.scoreCredits > 0
+      || moderationResult.flairRestored > 0
       || moderationResult.effectsApplied > 0
       || moderationResult.failed > 0
     )) {
       console.log(
-        `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
+        `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} flairRestored=${moderationResult.flairRestored} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
       );
     }
   } finally {
