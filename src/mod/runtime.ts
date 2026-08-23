@@ -95,10 +95,7 @@ export class RedditModerationRuntime {
   }
 
   private async process(item: RuntimeItem, privileges: Privileges): Promise<'audited' | 'exempt' | 'seen'> {
-    if (await this.reputation.hasContribution(item.fullname)) {
-      await this.reputation.observeScore(item.fullname, item.score, Math.floor(Date.now() / 1_000));
-      return 'seen';
-    }
+    if (await this.reputation.hasContribution(item.fullname)) return 'seen';
     if (item.author === null) return 'seen';
     const exemption = moderationExemption(item.author, privileges.botUsername, privileges.moderators);
     if (exemption !== null) {
@@ -195,8 +192,11 @@ export class RedditModerationRuntime {
         if (result === 'audited') audited += 1;
         if (result === 'exempt') exempt += 1;
         if (existed) {
-          const credited = await this.reputation.observeScore(item.fullname, item.score, Math.floor(Date.now() / 1_000));
-          scoreCredits += credited;
+          scoreCredits += await this.reputation.observeScore(
+            item.fullname,
+            item.score,
+            Math.floor(Date.now() / 1_000),
+          );
         }
       } catch (error) {
         failed += 1;
