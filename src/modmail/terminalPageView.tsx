@@ -1,4 +1,4 @@
-import { render2Mkup } from '@kittycrypto/website/static-ui';
+import { render2Mkup } from './web/staticUi.tsx';
 import { modmailBubbleStyles } from './web/bubbles.ts';
 import { modmailTerminalRuntime } from './web/runtime.ts';
 import { modmailTerminalStyles } from './web/styles.ts';
