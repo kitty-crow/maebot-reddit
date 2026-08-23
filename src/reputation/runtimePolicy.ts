@@ -1,5 +1,7 @@
 import type { ModerationClassification } from '../mod/classifier.ts';
 import {
+  BAN_TRIGGER_POINTS,
+  RECOVERABLE_REPUTATION_FLOOR,
   REPUTATION_FLOOR,
   clampReputationPoints,
   tierForPoints,
@@ -28,47 +30,68 @@ const permanent = (status: 'banned' | 'scam'): ReputationTransition => ({
   ban: true,
 });
 
+const activeStatus = (points: number): ReputationStatus => {
+  if (points >= 1) return 'ordinary';
+  if (points <= -2) return 'uncivil';
+  return 'warned';
+};
+
+const active = (
+  points: number,
+  remove: boolean,
+): ReputationTransition => ({
+  points,
+  tier: tierForPoints(points),
+  status: activeStatus(points),
+  remove,
+  ban: false,
+});
+
+const deductOne = (subject: ReputationSubject, remove: boolean): ReputationTransition => {
+  const next = subject.points - 1;
+  if (next <= BAN_TRIGGER_POINTS) return permanent('banned');
+  return active(Math.max(RECOVERABLE_REPUTATION_FLOOR, next), remove);
+};
+
 const severe = (subject: ReputationSubject): ReputationTransition => {
   if (subject.status === 'scam') return permanent('scam');
   if (subject.status === 'banned') return permanent('banned');
-  if (subject.status === 'uncivil') return permanent('banned');
-  if (subject.status === 'warned') {
-    return { points: -2, tier: 0, status: 'uncivil', remove: true, ban: false };
-  }
-  return { points: -1, tier: 0, status: 'warned', remove: true, ban: false };
+
+  // A severe violation wipes all positive standing on the first offence.
+  // Once already warned/uncivil, each further violation deepens the debt by one.
+  if (subject.points >= 0) return active(-1, true);
+  return deductOne(subject, true);
 };
 
 const low = (subject: ReputationSubject): ReputationTransition => {
   if (subject.status === 'scam') return permanent('scam');
   if (subject.status === 'banned') return permanent('banned');
-  if (subject.status === 'warned' || subject.status === 'uncivil') {
-    return {
-      points: subject.points,
-      tier: 0,
-      status: subject.status,
-      remove: false,
-      ban: false,
-    };
-  }
-  const points = clampReputationPoints(subject.points - 1);
-  if (points < 0) return { points: -1, tier: 0, status: 'warned', remove: false, ban: false };
-  return { points, tier: tierForPoints(points), status: 'ordinary', remove: false, ban: false };
+
+  const next = clampReputationPoints(subject.points - 1);
+  if (next <= BAN_TRIGGER_POINTS) return permanent('banned');
+  if (next <= 0) return active(Math.max(RECOVERABLE_REPUTATION_FLOOR, next), false);
+  return {
+    points: next,
+    tier: tierForPoints(next),
+    status: 'ordinary',
+    remove: false,
+    ban: false,
+  };
 };
 
 const clean = (subject: ReputationSubject): ReputationTransition => {
   if (subject.status === 'scam') return permanent('scam');
   if (subject.status === 'banned') return permanent('banned');
-  if (subject.status === 'warned' || subject.status === 'uncivil') {
-    return {
-      points: subject.points,
-      tier: 0,
-      status: subject.status,
-      remove: false,
-      ban: false,
-    };
-  }
-  const points = clampReputationPoints(Math.max(0, subject.points) + 1);
-  return { points, tier: tierForPoints(points), status: 'ordinary', remove: false, ban: false };
+
+  const points = clampReputationPoints(subject.points + 1);
+  if (points <= 0) return active(points, false);
+  return {
+    points,
+    tier: tierForPoints(points),
+    status: 'ordinary',
+    remove: false,
+    ban: false,
+  };
 };
 
 export const applyModerationClassification = (
