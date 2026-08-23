@@ -1,9 +1,10 @@
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 
-export const REPUTATION_CEILING = 999_999_999;
 export const REPUTATION_FLOOR = -999_999_999;
 export const PAWSOME_POINTS = 9_999;
-export const MODERATOR_POINTS = REPUTATION_CEILING;
+export const MEMBER_REPUTATION_CEILING = PAWSOME_POINTS;
+export const MODERATOR_REPUTATION_CEILING = 999_999_999;
+export const MODERATOR_POINTS = MODERATOR_REPUTATION_CEILING;
 
 export type ReputationTier = 0 | 1 | 2 | 3 | 4 | 5 | 9;
 export type ReputationStatus = 'ordinary' | 'warned' | 'uncivil' | 'banned' | 'scam' | 'moderator' | 'unmapped';
@@ -37,9 +38,10 @@ export const TIER_FLAIRS: readonly TierFlair[] = [
 
 const normalise = (value: string | null): string => value?.trim().toLowerCase() ?? '';
 
-export const clampReputationPoints = (points: number): number => {
+export const clampReputationPoints = (points: number, moderator = false): number => {
   if (!Number.isSafeInteger(points)) throw new Error('Reputation points must be a safe integer');
-  return Math.max(REPUTATION_FLOOR, Math.min(REPUTATION_CEILING, points));
+  const ceiling = moderator ? MODERATOR_REPUTATION_CEILING : MEMBER_REPUTATION_CEILING;
+  return Math.max(REPUTATION_FLOOR, Math.min(ceiling, points));
 };
 
 export const tierForPoints = (points: number): ReputationTier => {
