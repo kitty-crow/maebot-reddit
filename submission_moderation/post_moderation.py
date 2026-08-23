@@ -2,7 +2,6 @@ import os
 import sys
 from question_cleaner import question_cleaner
 from similar_questions import find_similarity
-from globals import bot_notice, no_flair_notice, banned_css_classes, banned_from_posting
 current = os.path.dirname(os.path.realpath(__file__))
 parent_directory = os.path.split(os.path.dirname(current))[0]
 sys.path.append(f"{parent_directory}/common")
@@ -16,18 +15,11 @@ def postMod(submission):
   author = submission.author
   if author in ("catgirl_rie", "catgirlcoin"):
     return
-  the_reply = ""
-  if not submission.author_flair_text:
-    the_reply = no_flair_notice + bot_notice.replace(" ", "&#x2005;")
-  elif submission.author_flair_css_class in banned_css_classes:
-    the_reply = banned_from_posting + bot_notice.replace(" ", "&#x2005;")
-  if the_reply:
-    comment = submission.reply(body=the_reply)
-    comment.mod.distinguish(sticky=True)
-    submission.mod.remove()
-    custom_print(f"Submission removed: https://reddit.com{submission.permalink}")
-    return False
-  if "Question" in submission.link_flair_text:
+
+  # Legacy no-flair and uncivil auto-removal is intentionally retired. The
+  # TypeScript LLM + reputation runtime is the sole moderation authority and
+  # warned/uncivil users retain a redemption path through audited activity.
+  if submission.link_flair_text and "Question" in submission.link_flair_text:
     return question_post(submission)
   return True
   
@@ -43,11 +35,11 @@ def question_post(submission):
     )
     return False
 
-  if not question_cleaner(submission):  # Ensures that the submission follows the question standard.
+  if not question_cleaner(submission):
     return False
-  if not find_similarity(submission):  # Finds the similarity between the latest submission and previous questions
+  if not find_similarity(submission):
     return False
-  custom_print(str(submission.title)) # If the question is not too similar to previous ones, add it to the log
-  db[submission_id] = submission.title  # Add question to the database
-  submission.reply(body = submission_id)  # Reply with the submission ID to handle with best_answer.py
+  custom_print(str(submission.title))
+  db[submission_id] = submission.title
+  submission.reply(body = submission_id)
   return True
