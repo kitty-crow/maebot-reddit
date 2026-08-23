@@ -7,6 +7,7 @@ import type {
   RedditModerator,
   RedditPost,
 } from '../reddit/types.ts';
+import { catgirlcoinFlairReferences } from './liveFlairs.ts';
 import {
   MODERATOR_POINTS,
   PAWSOME_FLAIR_TEXT,
@@ -94,6 +95,8 @@ export const resolveFlairReferences = (
   userFlairs: readonly RedditFlairTemplate[],
   postFlairs: readonly RedditFlairTemplate[],
 ): ReputationFlairReferences => {
+  if (lower(subreddit) === 'catgirlcoin') return catgirlcoinFlairReferences(userFlairs, postFlairs);
+
   const tiers = tierReferences(subreddit, userFlairs);
   return {
     user: {
