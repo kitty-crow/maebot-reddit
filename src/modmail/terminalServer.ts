@@ -4,6 +4,7 @@ import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { ModmailReplyOutbox } from './outbox.ts';
 import { modmailTerminalPage } from './terminalPage.ts';
+import { presentModmailConversation } from './terminalPresentation.ts';
 import { ModmailStore } from './store.ts';
 import type { ModmailModeratorIdentity, ModmailTerminalSession } from './types.ts';
 
@@ -130,7 +131,15 @@ export class ModmailTerminalServer {
     if (session === null) return null;
     const conversation = await this.store.conversation(session.conversationId);
     if (conversation === null) return null;
-    return { session, payload: { conversation, moderator: session.moderator, expiresAt: session.expiresAt } };
+    const appliedReplies = await this.outbox.appliedForConversation(session.conversationId);
+    return {
+      session,
+      payload: {
+        conversation: presentModmailConversation(conversation, appliedReplies),
+        moderator: session.moderator,
+        expiresAt: session.expiresAt,
+      },
+    };
   }
 
   private async writeSnapshot(token: string, client: TerminalClient): Promise<void> {
