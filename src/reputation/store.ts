@@ -28,6 +28,25 @@ export type ReputationUser = {
   readonly seededAt: number;
 };
 
+export type ReputationFlairReferences = {
+  readonly user: {
+    readonly mae: string;
+    readonly lisa: string;
+    readonly kita: string;
+    readonly aoi: string;
+    readonly hana: string;
+    readonly rin: string;
+    readonly celeste: string;
+    readonly warned: string | null;
+    readonly uncivil: string | null;
+    readonly scam: string | null;
+  };
+  readonly post: {
+    readonly minorAnnouncement: string | null;
+    readonly announcement: string | null;
+  };
+};
+
 export type ReputationBootstrapCoverage = {
   readonly flairAssignments: number;
   readonly moderators: number;
@@ -43,6 +62,7 @@ export type ReputationBootstrap = {
   readonly at: number;
   readonly userFlairTemplates: readonly RedditFlairTemplate[];
   readonly postFlairTemplates: readonly RedditFlairTemplate[];
+  readonly flairReferences: ReputationFlairReferences;
   readonly users: readonly ReputationUser[];
   readonly coverage: ReputationBootstrapCoverage;
 };
@@ -52,6 +72,7 @@ const initial = (): JsonMap => ({
   subreddit: '',
   bootstrappedAt: 0,
   flairCatalog: { user: [], post: [] },
+  flairReferences: { user: {}, post: {} },
   users: {},
   contributions: {},
   reputationJournal: {},
@@ -85,6 +106,25 @@ const userJson = (value: ReputationUser): JsonMap => ({
   needsReview: value.needsReview,
   source: value.source,
   seededAt: value.seededAt,
+});
+
+const referencesJson = (value: ReputationFlairReferences): JsonMap => ({
+  user: {
+    mae: value.user.mae,
+    lisa: value.user.lisa,
+    kita: value.user.kita,
+    aoi: value.user.aoi,
+    hana: value.user.hana,
+    rin: value.user.rin,
+    celeste: value.user.celeste,
+    warned: value.user.warned,
+    uncivil: value.user.uncivil,
+    scam: value.user.scam,
+  },
+  post: {
+    minorAnnouncement: value.post.minorAnnouncement,
+    announcement: value.post.announcement,
+  },
 });
 
 const coverageJson = (value: ReputationBootstrapCoverage): JsonMap => ({
@@ -126,6 +166,7 @@ export class ReputationStore {
           user: value.userFlairTemplates.map(templateJson),
           post: value.postFlairTemplates.map(templateJson),
         },
+        flairReferences: referencesJson(value.flairReferences),
         users,
         contributions: {},
         reputationJournal: {},
