@@ -208,6 +208,49 @@ describe('private modmail moderation runtime', () => {
     expect(classified).toHaveLength(1);
   });
 
+  test('resumes the same OpenAI conversation across later participant messages and intervening human moderator replies', async () => {
+    const { relay, audit } = await fixture();
+    const historic = message('m1', 'historic message', 100);
+    await relay.sync([conversation([historic])], 100);
+
+    const classifiers: Array<string | undefined> = [];
+    const classified: ModerationItem[] = [];
+    const runtime = new PrivateModmailRuntime(
+      { key: 'test', model: 'test', effort: 'low' },
+      relay,
+      audit,
+      fakeReputation(),
+      conversationId => {
+        classifiers.push(conversationId);
+        return {
+          conversationId: conversationId ?? 'conv_modmail_abc',
+          classify: async item => {
+            classified.push(item);
+            return clean;
+          },
+        };
+      },
+      { classify: async () => ({ genuineApology: false, reason: 'no' }) },
+    );
+    await runtime.bootstrap();
+
+    const userOne = message('m2', 'First live participant message.', 200);
+    await relay.sync([conversation([historic, userOne])], 200);
+    expect((await runtime.tick()).audited).toBe(1);
+
+    const modReply = message('m3', 'Human moderator reply between user messages.', 250, moderator);
+    const userTwo = message('m4', 'Second live participant message.', 300);
+    await relay.sync([conversation([historic, userOne, modReply, userTwo])], 300);
+    expect(await runtime.tick()).toMatchObject({ audited: 1, skipped: 1, failed: 0 });
+
+    expect(classifiers).toEqual([undefined, 'conv_modmail_abc']);
+    expect(classified).toHaveLength(2);
+    expect(classified[1]?.text).toContain('Human moderator reply between user messages.');
+    expect(classified[1]?.text).toContain('Second live participant message.');
+    expect((await audit.conversation('abc'))?.openaiConversationId).toBe('conv_modmail_abc');
+    expect(await audit.cursor()).toBe(3);
+  });
+
   test('a failed participant audit does not advance past the failed event', async () => {
     const { relay, audit } = await fixture();
     const first = message('m1', 'initial historic message', 100);
