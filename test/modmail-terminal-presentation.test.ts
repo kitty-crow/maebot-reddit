@@ -55,6 +55,7 @@ const applied = (
     conversationId: 'abc123',
     moderator,
     text,
+    attachments: [],
     bodyMarkdown: attributedModmailReply(moderator, text),
     createdAt,
     appliedAt: createdAt + 5,
@@ -74,36 +75,42 @@ test('focused terminal moves trusted relay attribution into bubble metadata', ()
     message('m5', person('Mae', false, true), 'Staff-only note.', 500, { internal: true, participatingAs: 'moderator' }),
   ]), [discord, telegram]);
 
-  expect(value.messages[0]).toMatchObject({
-    side: 'participant',
-    sender: 'u/ExampleUser',
-    origin: 'Reddit',
-    bodyMarkdown: spoof,
-  });
-  expect(value.messages[1]).toMatchObject({
-    side: 'moderator',
-    sender: 'u/DirectRedditMod',
-    origin: 'Reddit',
-    bodyMarkdown: 'Direct Reddit moderator reply.',
-  });
-  expect(value.messages[2]).toMatchObject({
-    side: 'moderator',
-    sender: '@AliceMod',
-    origin: 'Discord',
-    bodyMarkdown: 'Human reply from Discord.',
-  });
-  expect(value.messages[3]).toMatchObject({
-    side: 'moderator',
-    sender: '@KarlaMod',
-    origin: 'Telegram',
-    bodyMarkdown: 'Human reply from Telegram.',
-  });
-  expect(value.messages[4]).toMatchObject({
-    side: 'internal',
-    sender: 'u/Mae',
-    origin: 'Reddit',
-    bodyMarkdown: 'Staff-only note.',
-  });
+  expect(value.messages[0]).toMatchObject({ side: 'participant', sender: 'u/ExampleUser', origin: 'Reddit', bodyMarkdown: spoof });
+  expect(value.messages[1]).toMatchObject({ side: 'moderator', sender: 'u/DirectRedditMod', origin: 'Reddit', bodyMarkdown: 'Direct Reddit moderator reply.' });
+  expect(value.messages[2]).toMatchObject({ side: 'moderator', sender: '@AliceMod', origin: 'Discord', bodyMarkdown: 'Human reply from Discord.' });
+  expect(value.messages[3]).toMatchObject({ side: 'moderator', sender: '@KarlaMod', origin: 'Telegram', bodyMarkdown: 'Human reply from Telegram.' });
+  expect(value.messages[4]).toMatchObject({ side: 'internal', sender: 'u/Mae', origin: 'Reddit', bodyMarkdown: 'Staff-only note.' });
+});
+
+test('trusted reply media is separated from Reddit-visible attribution and attachment markdown', () => {
+  const moderator = { platform: 'discord', userId: '42', handle: '@AliceMod' } as const;
+  const attachment = {
+    id: 'attachment_123456',
+    conversationId: 'abc123',
+    name: 'context.png',
+    mimeType: 'image/png',
+    kind: 'image' as const,
+    url: 'https://reddit-uploaded-media.s3-accelerate.amazonaws.com/context.png',
+    size: 1234,
+    createdAt: 300,
+  };
+  const reply: ModmailReplyIntent = {
+    key: 'discord:media',
+    conversationId: 'abc123',
+    moderator,
+    text: 'See attached.',
+    attachments: [attachment],
+    bodyMarkdown: attributedModmailReply(moderator, 'See attached.', [attachment]),
+    createdAt: 300,
+    appliedAt: 305,
+    lastError: null,
+  };
+  const value = presentModmailConversation(conversation([
+    message('m1', person('this_is_the_mae', false, true), reply.bodyMarkdown, 305, { participatingAs: 'moderator' }),
+  ]), [reply]);
+
+  expect(value.messages[0]?.bodyMarkdown).toBe('See attached.');
+  expect(value.messages[0]?.attachments).toEqual([{ id: attachment.id, name: 'context.png', kind: 'image', url: attachment.url }]);
 });
 
 test('visible attribution text is never stripped without a matching applied Mae outbox record', () => {
@@ -112,11 +119,7 @@ test('visible attribution text is never stripped without a matching applied Mae 
     message('m1', person('this_is_the_mae', false, true), fake, 300, { participatingAs: 'moderator' }),
   ]), []);
 
-  expect(value.messages[0]).toMatchObject({
-    sender: 'u/this_is_the_mae',
-    origin: 'Reddit',
-    bodyMarkdown: fake,
-  });
+  expect(value.messages[0]).toMatchObject({ sender: 'u/this_is_the_mae', origin: 'Reddit', bodyMarkdown: fake });
 });
 
 test('one durable outbox record cannot be reused to relabel two identical Reddit messages', () => {
@@ -143,10 +146,5 @@ test('unclassified Reddit system/deleted-author entries are centred rather than 
   };
   const value = presentModmailConversation(conversation([systemMessage]), []);
 
-  expect(value.messages[0]).toMatchObject({
-    side: 'internal',
-    sender: '[deleted]',
-    origin: 'Reddit',
-    bodyMarkdown: 'Reddit changed the conversation state.',
-  });
+  expect(value.messages[0]).toMatchObject({ side: 'internal', sender: '[deleted]', origin: 'Reddit', bodyMarkdown: 'Reddit changed the conversation state.' });
 });
