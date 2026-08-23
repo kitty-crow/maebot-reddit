@@ -148,8 +148,8 @@ export const modmailTerminalConfig = (): ModmailTerminalCfg | null => {
   const publicBase = maybe('REDDIT_MODMAIL_WEBAPP_BASE');
   const rawPort = maybe('REDDIT_MODMAIL_WEBAPP_PORT');
   if (publicBase === null && rawPort === null) return null;
-  if (publicBase === null || rawPort === null) {
-    throw new Error('REDDIT_MODMAIL_WEBAPP_BASE and REDDIT_MODMAIL_WEBAPP_PORT must be configured together');
+  if (publicBase === null) {
+    throw new Error('REDDIT_MODMAIL_WEBAPP_BASE is required when REDDIT_MODMAIL_WEBAPP_PORT is configured');
   }
   const url = new URL(publicBase);
   if (url.protocol !== 'https:') throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must use HTTPS');
@@ -158,7 +158,7 @@ export const modmailTerminalConfig = (): ModmailTerminalCfg | null => {
   }
   return {
     host: opt('REDDIT_MODMAIL_WEBAPP_HOST', '127.0.0.1'),
-    port: port('REDDIT_MODMAIL_WEBAPP_PORT', rawPort),
+    port: port('REDDIT_MODMAIL_WEBAPP_PORT', rawPort ?? '8892'),
     publicBase: url.toString().replace(/\/$/u, ''),
     ttlSeconds: Math.min(86_400, Math.max(300, positive('REDDIT_MODMAIL_WEBAPP_TTL_SECONDS', '3600'))),
   };
