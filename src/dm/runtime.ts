@@ -166,12 +166,12 @@ export class RedditDmRuntime {
           mediaUrls: [],
           history,
         });
-        current = await this.store.setClassification(current.message.fullname, result);
-        await this.store.rememberConversations(
+        current = await this.store.setClassificationWithConversation(
+          current.message.fullname,
+          result,
           thread,
           username,
           classifier.conversationId ?? conversation.moderationConversationId,
-          conversation.responseConversationId,
         );
       }
     }
@@ -243,24 +243,25 @@ export class RedditDmRuntime {
       classification: state.classification,
       reputation: reputation === null ? null : { points: reputation.points, status: reputation.status },
     });
+    const responseConversationId = responder.conversationId ?? conversation.responseConversationId;
 
     if (!decision.respond) {
-      const next = await this.store.markNoReply(state.message.fullname, Math.floor(Date.now() / 1_000));
-      await this.store.rememberConversations(
+      const next = await this.store.markNoReplyWithConversation(
+        state.message.fullname,
+        Math.floor(Date.now() / 1_000),
         thread,
         username,
-        conversation.moderationConversationId,
-        responder.conversationId ?? conversation.responseConversationId,
+        responseConversationId,
       );
       return { state: next, decision };
     }
 
-    const next = await this.store.setReply(state.message.fullname, decision.text);
-    await this.store.rememberConversations(
+    const next = await this.store.setReplyWithConversation(
+      state.message.fullname,
+      decision.text,
       thread,
       username,
-      conversation.moderationConversationId,
-      responder.conversationId ?? conversation.responseConversationId,
+      responseConversationId,
     );
     return { state: next, decision };
   }
