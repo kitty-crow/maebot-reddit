@@ -13,17 +13,27 @@ The command never creates or copies Reddit flair templates. Existing live Reddit
 
 ## Inventory
 
-The bootstrap reads the configured source subreddit and records:
+The bootstrap reads the configured source subreddit and records every user/post flair template, moderator, banned user, flair assignment, and authors discoverable in Reddit's accessible `/new` and `/comments` history, up to 1,000 items from each listing.
 
-- every user flair template returned by Reddit, including its template ID;
-- every post flair template returned by Reddit, including its template ID;
-- semantic references to the ordinary tier flair IDs, including `Pawsome Contributor`, and where present Warned, Uncivil, SCAM, `Minor Announcement :lisa:` and `Announcement :catgirl-moon:`;
-- the complete moderator listing;
-- the complete banned-user listing available to the bot;
-- every user flair assignment returned by `/api/flairlist`;
-- authors discoverable in Reddit's accessible `/new` post and `/comments` history, up to 1,000 items from each listing.
+For `r/catgirlcoin`, the live reputation-related inventory captured on 23 August 2026 is now recorded in source and validated by exact template ID before bootstrap proceeds:
 
-The ordinary tier flair templates are required and the bootstrap fails closed if any is missing or ambiguous. Status/announcement semantic references are reported as unresolved rather than guessed when no unique exact text match exists; the complete raw flair catalog remains in both the report and protobuf state for review.
+| Meaning | Template ID | Live text / CSS |
+| --- | --- | --- |
+| Tier 1 Mae | `c287b8ea-94bc-11ec-ac69-aab48f042082` | `:mae:` / `h` |
+| Tier 1 Lisa | `db95e19a-94bc-11ec-b636-d6d9f3ebf86d` | `:lisa:` / `h` |
+| Tier 2 Kita | `c9271cd6-94bc-11ec-b2f4-3e0827c16db5` | `:kita:` / `h` |
+| Tier 2 Aoi | `e48e5160-94bc-11ec-b456-860cd7017d9e` | `:aoi:` / `h` |
+| Tier 3 Hana | `d44f2694-94bc-11ec-a039-eec865a675c1` | `:hana:` / `h` |
+| Tier 3 Rin | `e9b4c9f8-94bc-11ec-b636-d6d9f3ebf86d` | `:rin:` / `h` |
+| Tier 4 Celeste | `d8018552-94bc-11ec-a4d1-22f06121d139` | `:celeste:` / `h` |
+| Tier 5 Pawsome | `a31e3b22-3e55-11ec-bb6b-ceedb0263d7d` | `Pawsome contributor :catgirl-moon:` / `h` |
+| Warned | `bc2db8c4-29d5-11ed-a76f-163c4ee499e0` | blank text / `w` |
+| Uncivil | `e37b5534-91ce-11ec-84c8-7602fd74d2f2` | blank text / `u` |
+| SCAM | `fec5118a-4ff2-11ed-922e-96e4dc818f74` | `SCAM` / `s` |
+| Minor Announcement | `a6fef792-9100-11ec-aa84-9a9e4751ff9e` | `Minor Announcement :lisa:` |
+| Announcement | `807098b2-3b72-11ec-a37b-aa7cb124a04e` | `Announcement :catgirl-moon:` |
+
+The bootstrap fails closed if any of those recorded `r/catgirlcoin` IDs is absent or if its expected text/CSS semantics have changed. This prevents a renamed or replaced flair from being silently guessed.
 
 Reddit does not expose a complete subscriber roster. Therefore users with no flair and no contribution in the accessible listing window cannot be inventoried before they next participate. Runtime contribution ingestion must create and flair those users on their first observed clean contribution.
 
@@ -37,7 +47,7 @@ Existing ordinary flair holders are seeded from the tier they were manually assi
 | `:kita:` / `:aoi:` | 2 | 10 |
 | `:hana:` / `:rin:` | 3 | 100 |
 | `:celeste:` | 4 | 1000 |
-| `Pawsome Contributor` | 5 | 9999 |
+| `Pawsome contributor :catgirl-moon:` | 5 | 9999 |
 
 The positive member boundaries are:
 
@@ -45,7 +55,7 @@ The positive member boundaries are:
 - 10–99: tier 2
 - 100–999: tier 3
 - 1000–9998: tier 4
-- 9999: tier 5, `Pawsome Contributor`
+- 9999: tier 5, Pawsome contributor
 
 9,999 is the hard ceiling for every non-moderator account. Positive participation or vote-score credit must never move a normal user above 9,999.
 
