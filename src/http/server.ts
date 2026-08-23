@@ -203,9 +203,12 @@ export class RedditInternalHttpServer {
       const conversation = await this.modmail.conversation(id);
       if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
       const participant = conversation.participant?.name ?? null;
-      const reputation = participant === null || this.modmailReputation === null
+      const user = participant === null || this.modmailReputation === null
         ? null
         : await this.modmailReputation.user(participant);
+      const reputation = user === null
+        ? null
+        : { username: user.username, points: user.points, tier: user.tier, status: user.status };
       return this.record(
         req,
         url,
