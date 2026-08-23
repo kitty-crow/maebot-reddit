@@ -266,7 +266,6 @@ export class RedditModerationRuntime {
       console.error(`[Reddit reputation] score inventory sampling failed: ${safeError(error)}`);
     }
 
-    const effects = await this.applyEffects();
     let flairRestored = 0;
     let flairFailed = 0;
     try {
@@ -278,6 +277,7 @@ export class RedditModerationRuntime {
       console.error(`[Reddit reputation] flair reconciliation failed: ${safeError(error)}`);
     }
 
+    const effects = await this.applyEffects();
     return {
       discovered: items.length,
       audited,
