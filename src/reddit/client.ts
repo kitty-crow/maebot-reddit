@@ -150,6 +150,14 @@ export class RedditReadClient {
     return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
   }
 
+  public async inboxDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages('/message/inbox', 100, value => {
+      const page = directMessages(value, 'private message inbox');
+      return { items: page.messages, after: page.after };
+    }, max);
+  }
+
   public async unreadDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
     return await this.pages('/message/unread', 100, value => {
@@ -159,11 +167,7 @@ export class RedditReadClient {
   }
 
   public async directMessageHistory(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages('/message/messages', 100, value => {
-      const page = directMessages(value, 'private message history');
-      return { items: page.messages, after: page.after };
-    }, max);
+    return await this.inboxDirectMessages(maxItems);
   }
 
   public async sentDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
