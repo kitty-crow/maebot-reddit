@@ -9,6 +9,7 @@ import type {
 } from '../reddit/types.ts';
 import {
   MODERATOR_POINTS,
+  PAWSOME_FLAIR_TEXT,
   REPUTATION_FLOOR,
   TIER_FLAIRS,
   chooseTierOneFlair,
@@ -55,6 +56,20 @@ const exactTemplate = (
   return matches[0] ?? null;
 };
 
+const cssTemplate = (
+  subreddit: string,
+  templates: readonly RedditFlairTemplate[],
+  cssClass: string,
+): RedditFlairTemplate => {
+  const matches = templates.filter(template => lower(template.cssClass ?? '') === lower(cssClass));
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one user flair with css=${JSON.stringify(cssClass)} in r/${subreddit}; found ${matches.length}`);
+  }
+  const match = matches[0];
+  if (match === undefined) throw new Error(`Required user flair css=${cssClass} disappeared`);
+  return match;
+};
+
 const tierReferences = (
   subreddit: string,
   userFlairs: readonly RedditFlairTemplate[],
@@ -89,14 +104,14 @@ export const resolveFlairReferences = (
       hana: tierTemplate(tiers, ':hana:').id,
       rin: tierTemplate(tiers, ':rin:').id,
       celeste: tierTemplate(tiers, ':celeste:').id,
-      pawsomeContributor: tierTemplate(tiers, 'Pawsome Contributor').id,
-      warned: exactTemplate(subreddit, userFlairs, 'Warned', false)?.id ?? null,
-      uncivil: exactTemplate(subreddit, userFlairs, 'Uncivil', false)?.id ?? null,
-      scam: exactTemplate(subreddit, userFlairs, 'SCAM', false)?.id ?? null,
+      pawsomeContributor: tierTemplate(tiers, PAWSOME_FLAIR_TEXT).id,
+      warned: cssTemplate(subreddit, userFlairs, 'w').id,
+      uncivil: cssTemplate(subreddit, userFlairs, 'u').id,
+      scam: cssTemplate(subreddit, userFlairs, 's').id,
     },
     post: {
-      minorAnnouncement: exactTemplate(subreddit, postFlairs, 'Minor Announcement :lisa:', false)?.id ?? null,
-      announcement: exactTemplate(subreddit, postFlairs, 'Announcement :catgirl-moon:', false)?.id ?? null,
+      minorAnnouncement: exactTemplate(subreddit, postFlairs, 'Minor Announcement :lisa:', true)?.id ?? null,
+      announcement: exactTemplate(subreddit, postFlairs, 'Announcement :catgirl-moon:', true)?.id ?? null,
     },
   };
 };
