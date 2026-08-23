@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ModmailTerminalCfg } from '../env.ts';
+import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { ModmailReplyOutbox } from './outbox.ts';
 import { ModmailStore } from './store.ts';
@@ -205,7 +206,7 @@ const tokenFrom = (pathname: string): { readonly token: string; readonly action:
   return token.length > 0 ? { token, action } : null;
 };
 
-const requestId = (value: unknown): string | null =>
+const requestId = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9._:-]{8,128}$/u.test(value) ? value : null;
 
 const safeHandle = (value: string): string => value.trim().slice(0, 128);
