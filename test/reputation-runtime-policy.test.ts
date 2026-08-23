@@ -3,12 +3,21 @@ import type { ModerationClassification } from '../src/mod/classifier.ts';
 import { REPUTATION_FLOOR } from '../src/reputation/policy.ts';
 import { applyModerationClassification } from '../src/reputation/runtimePolicy.ts';
 
+const defaultPenalty = (verdict: ModerationClassification['verdict']): number => {
+  if (verdict === 'clean') return 0;
+  if (verdict === 'low') return 1;
+  if (verdict === 'severe') return 10;
+  return 999_999_999;
+};
+
 const classification = (
   verdict: ModerationClassification['verdict'],
+  penaltyPoints = defaultPenalty(verdict),
 ): ModerationClassification => ({
   verdict,
   rule: verdict === 'clean' ? 'none' : verdict === 'scam' ? 'rule_5' : 'rule_6',
   disposition: verdict === 'clean' || verdict === 'low' ? 'allow' : 'remove',
+  penaltyPoints,
   confidence: 1,
   reason: verdict,
   evidence: [],
@@ -47,16 +56,16 @@ describe('runtime reputation policy', () => {
       .toEqual({ points: REPUTATION_FLOOR, tier: 0, status: 'banned', remove: true, ban: true });
   });
 
-  test('severe violations wipe positive standing then descend through warned and uncivil to ban on minus ten', () => {
+  test('severe violations deduct at least ten points and can use a harsher LLM-selected amount', () => {
     expect(applyModerationClassification({ points: 423, status: 'ordinary' }, classification('severe')))
-      .toMatchObject({ points: -1, tier: 0, status: 'warned', remove: true, ban: false });
-    expect(applyModerationClassification({ points: -2, status: 'warned' }, classification('severe')))
-      .toMatchObject({ points: -3, tier: 0, status: 'warned', remove: true, ban: false });
-    expect(applyModerationClassification({ points: -3, status: 'warned' }, classification('severe')))
-      .toMatchObject({ points: -4, tier: 0, status: 'uncivil', remove: true, ban: false });
-    expect(applyModerationClassification({ points: -8, status: 'uncivil' }, classification('severe')))
+      .toMatchObject({ points: 413, tier: 3, status: 'ordinary', remove: true, ban: false });
+    expect(applyModerationClassification({ points: 423, status: 'ordinary' }, classification('severe', 50)))
+      .toMatchObject({ points: 373, tier: 3, status: 'ordinary', remove: true, ban: false });
+    expect(applyModerationClassification({ points: 19, status: 'ordinary' }, classification('severe')))
+      .toMatchObject({ points: 9, tier: 1, status: 'ordinary', remove: true, ban: false });
+    expect(applyModerationClassification({ points: 1, status: 'ordinary' }, classification('severe')))
       .toMatchObject({ points: -9, tier: 0, status: 'uncivil', remove: true, ban: false });
-    expect(applyModerationClassification({ points: -9, status: 'uncivil' }, classification('severe')))
+    expect(applyModerationClassification({ points: 0, status: 'warned' }, classification('severe')))
       .toEqual({ points: REPUTATION_FLOOR, tier: 0, status: 'banned', remove: true, ban: true });
   });
 
