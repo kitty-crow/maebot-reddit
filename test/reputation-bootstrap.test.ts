@@ -153,10 +153,17 @@ describe('Reddit reputation bootstrap planner', () => {
       posts: [post('p1', 'StableUser')],
       comments: [],
     } as const;
-    const first = planReputationBootstrap(inventory).bootstrap.users[0];
-    const second = planReputationBootstrap(inventory).bootstrap.users[0];
-    expect(first?.desiredFlairText).toBe(second?.desiredFlairText);
-    expect(first?.desiredFlairTemplateId).toBe(second?.desiredFlairTemplateId);
+    const first = planReputationBootstrap(inventory).bootstrap.users.map(value => ({
+      desiredFlairText: value.desiredFlairText,
+      desiredFlairTemplateId: value.desiredFlairTemplateId,
+    }));
+    const second = planReputationBootstrap(inventory).bootstrap.users.map(value => ({
+      desiredFlairText: value.desiredFlairText,
+      desiredFlairTemplateId: value.desiredFlairTemplateId,
+    }));
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first).toEqual(second);
   });
 
   test('fails closed for missing required tier flair or duplicate user assignment', () => {
