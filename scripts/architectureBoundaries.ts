@@ -16,6 +16,10 @@ const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[
 ];
 
 const hits: string[] = [];
+const sourceFile = (file: string): boolean => {
+  const extension = extname(file);
+  return extension === '.ts' || extension === '.tsx';
+};
 
 const scan = async (dir: string, active: boolean): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -24,7 +28,7 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
       await scan(file, active);
       continue;
     }
-    if (extname(file) !== '.ts') continue;
+    if (!sourceFile(file)) continue;
     if (file.endsWith('architectureBoundaries.ts')) continue;
     const raw = await readFile(file, 'utf8');
     for (const rule of forbidden) {
