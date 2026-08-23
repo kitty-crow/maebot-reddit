@@ -157,7 +157,13 @@ export class RedditInternalHttpServer {
       return this.record(req, url, json(link, 201), `conversation=${id} platform=${source}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'terminal unavailable';
-      const status = message.includes('Unknown modmail conversation') ? 404 : message.includes('archived') ? 409 : 400;
+      const status = message.includes('Unknown modmail conversation')
+        ? 404
+        : message.includes('archived')
+          ? 409
+          : message.includes('public base is not configured')
+            ? 503
+            : 400;
       return this.record(req, url, json({ error: message }, status), `conversation=${id}`);
     }
   }
