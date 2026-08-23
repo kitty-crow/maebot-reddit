@@ -10,7 +10,7 @@ import {
   type ReputationTier,
 } from './policy.ts';
 import {
-  applyModerationClassification,
+  applyContributionPolicy,
   applyPositiveCredits,
 } from './runtimePolicy.ts';
 
@@ -542,7 +542,7 @@ export class ReputationStore {
         throw new Error(`Moderator u/${input.author} reached reputation mutation boundary`);
       }
 
-      const transition = applyModerationClassification(previous, input.classification);
+      const transition = applyContributionPolicy(previous, input.kind, input.classification);
       const desired = desiredFor(
         value,
         previous,
@@ -572,10 +572,13 @@ export class ReputationStore {
         at: input.moderatedAt,
         verdict: input.classification.verdict,
         rule: input.classification.rule,
+        contentKind: input.kind,
         beforePoints: previous.points,
         afterPoints: next.points,
         beforeStatus: previous.status,
         afterStatus: next.status,
+        remove: transition.remove,
+        ban: transition.ban,
       });
       output = next;
       return value;
@@ -617,8 +620,6 @@ export class ReputationStore {
         pendingHigh = score;
         pendingSeen = 1;
       } else {
-        // Keep the lower confirmed candidate. A higher second sample confirms
-        // the previous candidate but is not itself credited until confirmed.
         pendingSeen += 1;
       }
 
