@@ -54,6 +54,27 @@ const nonEmptyText = (value: Json | undefined, max: number): string | null => {
   return text.length > 0 && text.length <= max ? text : null;
 };
 
+const optionalText = (value: Json | undefined, max: number): string | null => {
+  if (value === undefined) return '';
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length <= max ? text : null;
+};
+
+const attachmentIds = (value: Json | undefined): readonly string[] | null => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 8) return null;
+  const ids = value.filter((item): item is string =>
+    typeof item === 'string' && /^[A-Za-z0-9_-]{12,128}$/u.test(item));
+  return ids.length === value.length ? ids : null;
+};
+
+const uploadName = (value: string | null): string | null => {
+  if (value === null) return null;
+  const name = value.trim();
+  return name.length > 0 && name.length <= 180 ? name : null;
+};
+
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
@@ -123,20 +144,53 @@ export class RedditInternalHttpServer {
     const source = platform(raw['platform']);
     const userId = nonEmptyText(raw['userId'], 128);
     const handle = nonEmptyText(raw['handle'], 128);
-    const text = nonEmptyText(raw['text'], 10_000);
-    if (key === null || id === null || source === null || userId === null || handle === null || text === null) {
+    const text = optionalText(raw['text'], 10_000);
+    const ids = attachmentIds(raw['attachmentIds']);
+    if (
+      key === null || id === null || source === null || userId === null || handle === null
+      || text === null || ids === null || (text.length === 0 && ids.length === 0)
+    ) {
       return this.record(req, url, json({ error: 'invalid reply body' }, 400));
     }
     const conversation = await this.modmail.conversation(id);
     if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
     if (conversation.state === 'archived') return this.record(req, url, json({ error: 'conversation archived' }, 409));
+    let attachments = [];
+    if (ids.length > 0) {
+      if (this.modmailTerminal === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
+      try {
+        attachments = [...await this.modmailTerminal.resolveMedia(id, ids)];
+      } catch {
+        return this.record(req, url, json({ error: 'invalid or unavailable attachment' }, 400));
+      }
+    }
     const queued = await this.modmailReplies.queue({
       key,
       conversationId: id,
       moderator: { platform: source, userId, handle },
       text,
+      attachments,
     });
     return this.record(req, url, json({ queued: true, reply: queued }, 202), `conversation=${id} key=${key}`);
+  }
+
+  private async media(req: Request, url: URL, id: string): Promise<Response> {
+    if (this.modmailTerminal === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
+    const name = uploadName(req.headers.get('x-mae-file-name'));
+    const mimeType = (req.headers.get('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    if (name === null || mimeType.length === 0) return this.record(req, url, json({ error: 'invalid media upload metadata' }, 400));
+    try {
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      const attachment = await this.modmailTerminal.uploadMedia(id, name, mimeType, bytes);
+      return this.record(req, url, json({ attachment }, 201), `conversation=${id} attachment=${attachment.id}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'media upload failed';
+      const status = message.includes('not found') ? 404
+        : message.includes('archived') ? 409
+          : message.includes('20 MB') || message.includes('Unsupported') || message.includes('filename') ? 400
+            : 503;
+      return this.record(req, url, json({ error: message }, status), `conversation=${id}`);
+    }
   }
 
   private async terminal(req: Request, url: URL): Promise<Response> {
@@ -217,6 +271,11 @@ export class RedditInternalHttpServer {
       );
     }
 
+    if (req.method === 'POST' && url.pathname.startsWith('/v1/modmail/media/')) {
+      const id = decodeURIComponent(url.pathname.slice('/v1/modmail/media/'.length)).trim();
+      if (!/^[A-Za-z0-9]+$/u.test(id)) return this.record(req, url, json({ error: 'invalid conversation id' }, 400));
+      return await this.media(req, url, id);
+    }
     if (req.method === 'POST' && url.pathname === '/v1/modmail/replies') return await this.reply(req, url);
     if (req.method === 'POST' && url.pathname === '/v1/modmail/terminal-sessions') return await this.terminal(req, url);
 
