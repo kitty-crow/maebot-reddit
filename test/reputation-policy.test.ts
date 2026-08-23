@@ -16,7 +16,7 @@ const assignment = (text: string | null, cssClass: string | null = null): Reddit
 });
 
 describe('Reddit reputation tier policy', () => {
-  test('uses the agreed point boundaries including tier four only above 999', () => {
+  test('uses the agreed ordinary point boundaries and never derives moderator tier five from points', () => {
     expect(tierForPoints(0)).toBe(0);
     expect(tierForPoints(1)).toBe(1);
     expect(tierForPoints(9)).toBe(1);
@@ -25,6 +25,7 @@ describe('Reddit reputation tier policy', () => {
     expect(tierForPoints(100)).toBe(3);
     expect(tierForPoints(999)).toBe(3);
     expect(tierForPoints(1000)).toBe(4);
+    expect(tierForPoints(1_000_000)).toBe(4);
   });
 
   test('seeds existing ordinary flair holders at the floor of their current tier', () => {
