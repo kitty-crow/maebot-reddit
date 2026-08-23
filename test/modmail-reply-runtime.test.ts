@@ -6,8 +6,6 @@ import { ModmailReplyOutbox, attributedModmailReply } from '../src/modmail/outbo
 import { ModmailRuntime, type ModmailReader, type ModmailWriter } from '../src/modmail/runtime.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
 import type { ModmailConversation, ModmailMessage } from '../src/modmail/types.ts';
-import type { RedditModerationCfg } from '../src/env.ts';
-import type { ReputationStore } from '../src/reputation/store.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -57,14 +55,6 @@ const conversation = (messages: readonly ModmailMessage[], updated = 100): Modma
   messages,
 });
 
-const cfg: RedditModerationCfg = {
-  ai: { key: 'unused', model: 'unused', effort: 'low' },
-  stateFile: 'unused',
-  batchSize: 100,
-  scoreBatchSize: 100,
-  flairReconcileMs: 300_000,
-};
-
 class Reader implements ModmailReader {
   public current = conversation([baseMessage]);
 
@@ -107,13 +97,9 @@ const fixture = async () => {
   await relay.sync([reader.current], 100);
   const runtime = new ModmailRuntime(
     'catgirlcoin',
-    cfg,
     reader,
     writer,
-    {} as ReputationStore,
     relay,
-    null,
-    null,
     outbox,
   );
   return { relay, outbox, reader, writer, runtime };
@@ -142,6 +128,7 @@ describe('cross-platform Reddit Modmail reply runtime', () => {
       conversationId: 'abc123',
       author: 'this_is_the_mae',
       participatingAs: 'moderator',
+      relayOrigin: 'discord',
       bodyMarkdown: attributedModmailReply(
         { platform: 'discord', userId: '42', handle: 'AliceMod' },
         'I am reviewing your appeal.',
@@ -183,6 +170,7 @@ describe('cross-platform Reddit Modmail reply runtime', () => {
     const page = await relay.eventsAfter(0);
     expect(page.events).toHaveLength(1);
     expect(page.events[0]?.bodyMarkdown).toBe(body);
+    expect(page.events[0]?.relayOrigin).toBe('discord');
 
     const second = await runtime.tick();
     expect(second.repliesApplied).toBe(0);
