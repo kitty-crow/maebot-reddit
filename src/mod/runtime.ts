@@ -4,7 +4,11 @@ import { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditComment, RedditPost } from '../reddit/types.ts';
-import { RedditModerationClassifier, type ModerationItem } from './classifier.ts';
+import {
+  RedditModerationClassifier,
+  type ModerationClassifier,
+  type ModerationItem,
+} from './classifier.ts';
 import { moderationExemption, moderatorSet } from './exemption.ts';
 
 export type RedditModerationTick = {
@@ -65,7 +69,7 @@ const commentItem = (comment: RedditComment): RuntimeItem => ({
 });
 
 export class RedditModerationRuntime {
-  private readonly classifier: RedditModerationClassifier;
+  private readonly classifier: ModerationClassifier;
   private privilegeCache: Privileges | null = null;
   private privilegeUntil = 0;
 
@@ -75,8 +79,9 @@ export class RedditModerationRuntime {
     private readonly reader: RedditReadClient,
     private readonly writer: RedditMutationClient,
     private readonly reputation: ReputationStore,
+    classifier: ModerationClassifier | null = null,
   ) {
-    this.classifier = new RedditModerationClassifier(cfg.ai);
+    this.classifier = classifier ?? new RedditModerationClassifier(cfg.ai);
   }
 
   private async privileges(): Promise<Privileges> {
