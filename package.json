@@ -20,12 +20,17 @@
   },
   "dependencies": {
     "@kittycrypto/server": "file:vendor/server",
+    "@kittycrypto/website": "file:vendor/website",
     "dotenv": "^17.2.4",
-    "protobufjs": "^8.0.3"
+    "protobufjs": "^8.0.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   },
   "devDependencies": {
     "@types/bun": "1.2.18",
     "@types/node": "^25.3.2",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "typescript": "^5.9.3"
   }
 }
