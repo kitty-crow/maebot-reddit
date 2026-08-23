@@ -7,3 +7,6 @@
 [submodule "vendor/maebot-twitter"]
 	path = vendor/maebot-twitter
 	url = https://github.com/kitty-crow/maebot-twitter.git
+[submodule "vendor/website"]
+	path = vendor/website
+	url = https://github.com/kittyCrypto-gg/website.git
