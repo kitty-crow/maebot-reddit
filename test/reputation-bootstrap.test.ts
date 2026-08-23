@@ -8,40 +8,50 @@ import type {
   RedditPost,
 } from '../src/reddit/types.ts';
 import { planReputationBootstrap } from '../src/reputation/bootstrap.ts';
-import { MODERATOR_POINTS, PAWSOME_POINTS, REPUTATION_FLOOR } from '../src/reputation/policy.ts';
+import {
+  MODERATOR_POINTS,
+  PAWSOME_FLAIR_TEXT,
+  PAWSOME_POINTS,
+  REPUTATION_FLOOR,
+} from '../src/reputation/policy.ts';
 
-const flair = (id: string, text: string, cssClass: string | null = null): RedditFlairTemplate => ({
+const flair = (
+  id: string,
+  text: string,
+  cssClass: string | null = null,
+  modOnly = false,
+): RedditFlairTemplate => ({
   id,
   text,
   cssClass,
   textColour: 'dark',
   backgroundColour: null,
-  modOnly: false,
+  modOnly,
   textEditable: false,
   allowableContent: 'all',
   maxEmojis: 1,
 });
 
 const userFlairs = (): readonly RedditFlairTemplate[] => [
-  flair('mae', ':mae:'),
-  flair('lisa', ':lisa:'),
-  flair('kita', ':kita:'),
-  flair('aoi', ':aoi:'),
-  flair('hana', ':hana:'),
-  flair('rin', ':rin:'),
-  flair('celeste', ':celeste:'),
-  flair('pawsome', 'Pawsome Contributor'),
-  flair('warned', 'Warned', 'w'),
-  flair('uncivil', 'Uncivil', 'u'),
-  flair('scam', 'SCAM', 's'),
-  flair('moderator', 'Moderator'),
+  flair('mae', ':mae:', 'h'),
+  flair('lisa', ':lisa:', 'h'),
+  flair('kita', ':kita:', 'h'),
+  flair('aoi', ':aoi:', 'h'),
+  flair('hana', ':hana:', 'h'),
+  flair('rin', ':rin:', 'h'),
+  flair('celeste', ':celeste:', 'h'),
+  flair('pawsome', PAWSOME_FLAIR_TEXT, 'h', true),
+  flair('warned', ' ', 'w', true),
+  flair('uncivil', ' ', 'u', true),
+  flair('scam', 'SCAM', 's', true),
+  flair('moderator', 'Moderator:kitty-business:', 'm', true),
   flair('legacy', 'Legacy Special'),
 ];
 
 const postFlairs = (): readonly RedditFlairTemplate[] => [
   flair('minor', 'Minor Announcement :lisa:'),
   flair('announcement', 'Announcement :catgirl-moon:'),
-  flair('question', 'Question'),
+  flair('question', 'Question :hana:'),
 ];
 
 const assignment = (username: string, templateId: string, text: string, cssClass: string | null = null): RedditFlairAssignment => ({
@@ -87,22 +97,22 @@ const comment = (id: string, author: string | null): RedditComment => ({
 });
 
 describe('Reddit reputation bootstrap planner', () => {
-  test('seeds ordinary tiers, Pawsome, permanent bans, tier-nine moderators and first contributors', () => {
+  test('seeds exact live tiers, Pawsome, moderation states, permanent bans, tier-nine moderators and first contributors', () => {
     const plan = planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 123,
       userFlairs: userFlairs(),
       postFlairs: postFlairs(),
       assignments: [
-        assignment('Alice', 'mae', ':mae:'),
-        assignment('Bob', 'kita', ':kita:'),
-        assignment('Carol', 'celeste', ':celeste:'),
-        assignment('Poppy', 'pawsome', 'Pawsome Contributor'),
-        assignment('Wendy', 'warned', 'Warned', 'w'),
-        assignment('Uma', 'uncivil', 'Uncivil', 'u'),
+        assignment('Alice', 'mae', ':mae:', 'h'),
+        assignment('Bob', 'kita', ':kita:', 'h'),
+        assignment('Carol', 'celeste', ':celeste:', 'h'),
+        assignment('Poppy', 'pawsome', PAWSOME_FLAIR_TEXT, 'h'),
+        assignment('Wendy', 'warned', ' ', 'w'),
+        assignment('Uma', 'uncivil', ' ', 'u'),
         assignment('Sam', 'scam', 'SCAM', 's'),
-        assignment('Barry', 'mae', ':mae:'),
-        assignment('Mona', 'moderator', 'Moderator'),
+        assignment('Barry', 'mae', ':mae:', 'h'),
+        assignment('Mona', 'moderator', 'Moderator:kitty-business:', 'm'),
         assignment('Lenny', 'legacy', 'Legacy Special'),
       ],
       moderators: [moderator('Mona')],
@@ -168,19 +178,45 @@ describe('Reddit reputation bootstrap planner', () => {
     expect(first.desiredFlairTemplateId).toBe(second.desiredFlairTemplateId);
   });
 
-  test('fails closed for a missing required tier flair or duplicate user assignment', () => {
+  test('fails closed when any canonical live reputation flair is missing or ambiguous', () => {
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
-      userFlairs: userFlairs().filter(value => value.text !== 'Pawsome Contributor'),
+      userFlairs: userFlairs().filter(value => value.text !== PAWSOME_FLAIR_TEXT),
       postFlairs: postFlairs(),
       assignments: [],
       moderators: [],
       bannedUsers: [],
       posts: [],
       comments: [],
-    })).toThrow('Pawsome Contributor');
+    })).toThrow(PAWSOME_FLAIR_TEXT);
 
+    expect(() => planReputationBootstrap({
+      subreddit: 'catgirlcoin',
+      at: 1,
+      userFlairs: userFlairs().filter(value => value.cssClass !== 'w'),
+      postFlairs: postFlairs(),
+      assignments: [],
+      moderators: [],
+      bannedUsers: [],
+      posts: [],
+      comments: [],
+    })).toThrow('css="w"');
+
+    expect(() => planReputationBootstrap({
+      subreddit: 'catgirlcoin',
+      at: 1,
+      userFlairs: userFlairs(),
+      postFlairs: postFlairs().filter(value => value.text !== 'Announcement :catgirl-moon:'),
+      assignments: [],
+      moderators: [],
+      bannedUsers: [],
+      posts: [],
+      comments: [],
+    })).toThrow('Announcement :catgirl-moon:');
+  });
+
+  test('fails closed for duplicate user assignment', () => {
     expect(() => planReputationBootstrap({
       subreddit: 'catgirlcoin',
       at: 1,
@@ -192,24 +228,5 @@ describe('Reddit reputation bootstrap planner', () => {
       posts: [],
       comments: [],
     })).toThrow('Duplicate flair assignment');
-  });
-
-  test('leaves optional status and announcement references unresolved rather than guessing', () => {
-    const plan = planReputationBootstrap({
-      subreddit: 'catgirlcoin',
-      at: 1,
-      userFlairs: userFlairs().filter(value => !['Warned', 'Uncivil', 'SCAM'].includes(value.text)),
-      postFlairs: postFlairs().filter(value => !value.text.includes('Announcement')),
-      assignments: [],
-      moderators: [],
-      bannedUsers: [],
-      posts: [],
-      comments: [],
-    });
-    expect(plan.bootstrap.flairReferences.user.warned).toBeNull();
-    expect(plan.bootstrap.flairReferences.user.uncivil).toBeNull();
-    expect(plan.bootstrap.flairReferences.user.scam).toBeNull();
-    expect(plan.bootstrap.flairReferences.post.minorAnnouncement).toBeNull();
-    expect(plan.bootstrap.flairReferences.post.announcement).toBeNull();
   });
 });
