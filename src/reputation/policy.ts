@@ -3,6 +3,8 @@ import type { RedditFlairAssignment } from '../reddit/types.ts';
 export const REPUTATION_FLOOR = -999_999_999;
 export const RECOVERABLE_REPUTATION_FLOOR = -9;
 export const BAN_TRIGGER_POINTS = -10;
+export const WARNED_FLOOR = -3;
+export const UNCIVIL_CEILING = -4;
 export const PAWSOME_POINTS = 9_999;
 export const MEMBER_REPUTATION_CEILING = PAWSOME_POINTS;
 export const MODERATOR_REPUTATION_CEILING = 999_999_999;
@@ -73,7 +75,7 @@ export const moderationStatus = (
   }
   if (redditBanned) return { status: 'banned', points: REPUTATION_FLOOR };
   if (text === 'uncivil' || text.includes('uncivil') || css === 'u') {
-    return { status: 'uncivil', points: -2 };
+    return { status: 'uncivil', points: UNCIVIL_CEILING };
   }
   if (text === 'warned' || text.includes('warn') || css === 'w') {
     return { status: 'warned', points: -1 };
