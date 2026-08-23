@@ -47,6 +47,26 @@ const active = (
   ban: false,
 });
 
+export const applyPositiveCredits = (
+  subject: ReputationSubject,
+  credits: number,
+): ReputationTransition => {
+  if (!Number.isSafeInteger(credits) || credits < 0) {
+    throw new Error('Positive reputation credits must be a non-negative safe integer');
+  }
+  if (subject.status === 'scam') return permanent('scam');
+  if (subject.status === 'banned') return permanent('banned');
+  const points = clampReputationPoints(subject.points + credits);
+  if (points <= 0) return active(points, false);
+  return {
+    points,
+    tier: tierForPoints(points),
+    status: 'ordinary',
+    remove: false,
+    ban: false,
+  };
+};
+
 const deductOne = (subject: ReputationSubject, remove: boolean): ReputationTransition => {
   const next = subject.points - 1;
   if (next <= BAN_TRIGGER_POINTS) return permanent('banned');
@@ -79,20 +99,7 @@ const low = (subject: ReputationSubject): ReputationTransition => {
   };
 };
 
-const clean = (subject: ReputationSubject): ReputationTransition => {
-  if (subject.status === 'scam') return permanent('scam');
-  if (subject.status === 'banned') return permanent('banned');
-
-  const points = clampReputationPoints(subject.points + 1);
-  if (points <= 0) return active(points, false);
-  return {
-    points,
-    tier: tierForPoints(points),
-    status: 'ordinary',
-    remove: false,
-    ban: false,
-  };
-};
+const clean = (subject: ReputationSubject): ReputationTransition => applyPositiveCredits(subject, 1);
 
 export const applyModerationClassification = (
   subject: ReputationSubject,
