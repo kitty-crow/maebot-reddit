@@ -1,3 +1,6 @@
+import type { RedditFlairTemplate } from '../reddit/types.ts';
+import type { ReputationFlairReferences } from './store.ts';
+
 export const CATGIRLCOIN_REPUTATION_FLAIRS = {
   user: {
     mae: { id: 'c287b8ea-94bc-11ec-ac69-aab48f042082', text: ':mae:', cssClass: 'h' },
@@ -27,3 +30,58 @@ export const CATGIRLCOIN_REPUTATION_FLAIRS = {
     },
   },
 } as const;
+
+type ExpectedFlair = {
+  readonly id: string;
+  readonly text: string;
+  readonly cssClass?: string;
+};
+
+const exactById = (
+  templates: readonly RedditFlairTemplate[],
+  expected: ExpectedFlair,
+  kind: string,
+): RedditFlairTemplate => {
+  const template = templates.find(value => value.id === expected.id);
+  if (template === undefined) {
+    throw new Error(`Canonical r/catgirlcoin ${kind} flair ${expected.id} is missing from live inventory`);
+  }
+  if (template.text !== expected.text) {
+    throw new Error(`Canonical r/catgirlcoin ${kind} flair ${expected.id} text changed from ${JSON.stringify(expected.text)} to ${JSON.stringify(template.text)}`);
+  }
+  if (expected.cssClass !== undefined && (template.cssClass ?? '') !== expected.cssClass) {
+    throw new Error(`Canonical r/catgirlcoin ${kind} flair ${expected.id} css changed from ${JSON.stringify(expected.cssClass)} to ${JSON.stringify(template.cssClass ?? '')}`);
+  }
+  return template;
+};
+
+export const catgirlcoinFlairReferences = (
+  userFlairs: readonly RedditFlairTemplate[],
+  postFlairs: readonly RedditFlairTemplate[],
+): ReputationFlairReferences => {
+  const user = CATGIRLCOIN_REPUTATION_FLAIRS.user;
+  const post = CATGIRLCOIN_REPUTATION_FLAIRS.post;
+
+  for (const [name, expected] of Object.entries(user)) exactById(userFlairs, expected, `user ${name}`);
+  for (const [name, expected] of Object.entries(post)) exactById(postFlairs, expected, `post ${name}`);
+
+  return {
+    user: {
+      mae: user.mae.id,
+      lisa: user.lisa.id,
+      kita: user.kita.id,
+      aoi: user.aoi.id,
+      hana: user.hana.id,
+      rin: user.rin.id,
+      celeste: user.celeste.id,
+      pawsomeContributor: user.pawsomeContributor.id,
+      warned: user.warned.id,
+      uncivil: user.uncivil.id,
+      scam: user.scam.id,
+    },
+    post: {
+      minorAnnouncement: post.minorAnnouncement.id,
+      announcement: post.announcement.id,
+    },
+  };
+};
