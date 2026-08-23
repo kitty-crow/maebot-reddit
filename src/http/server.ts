@@ -4,6 +4,7 @@ import type { ModmailStore } from '../modmail/store.ts';
 import type { ModmailTerminalServer } from '../modmail/terminalServer.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
 import type { ReputationStore } from '../reputation/store.ts';
+import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
 export type RedditInternalHttpCfg = {
@@ -30,7 +31,7 @@ const nonNegativeInt = (value: string | null, fallback: number): number | null =
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 };
 
-const bodyMap = async (req: Request): Promise<ReturnType<typeof parseJson> | null> => {
+const bodyMap = async (req: Request): Promise<Json | null> => {
   try {
     return parseJson(await req.text());
   } catch {
@@ -38,16 +39,16 @@ const bodyMap = async (req: Request): Promise<ReturnType<typeof parseJson> | nul
   }
 };
 
-const platform = (value: unknown): 'telegram' | 'discord' | null =>
+const platform = (value: Json | undefined): 'telegram' | 'discord' | null =>
   value === 'telegram' || value === 'discord' ? value : null;
 
-const simpleKey = (value: unknown): string | null =>
+const simpleKey = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value) ? value : null;
 
-const conversationId = (value: unknown): string | null =>
+const conversationId = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9]+$/u.test(value) ? value : null;
 
-const nonEmptyText = (value: unknown, max: number): string | null => {
+const nonEmptyText = (value: Json | undefined, max: number): string | null => {
   if (typeof value !== 'string') return null;
   const text = value.trim();
   return text.length > 0 && text.length <= max ? text : null;
@@ -229,21 +230,23 @@ export class RedditInternalHttpServer {
       if (!isMap(body)) return this.record(req, url, json({ error: 'invalid decision body' }, 400));
       const key = body['key'];
       const choice = body['choice'];
-      const source = body['platform'];
-      const userId = body['userId'];
-      const userName = body['userName'];
-      const at = body['at'];
+      const source = platform(body['platform']);
+      const userName = nonEmptyText(body['userName'], 128);
       if (
-        typeof key !== 'string' || key.length === 0
+        typeof key !== 'string'
         || (choice !== 'approve' && choice !== 'reject')
-        || (source !== 'telegram' && source !== 'discord')
-        || typeof userId !== 'string' || userId.length === 0
-        || typeof userName !== 'string'
-        || typeof at !== 'number' || !Number.isSafeInteger(at) || at < 0
-      ) return this.record(req, url, json({ error: 'invalid decision body' }, 400));
-      const claim = await this.moderation.decide(key, { choice, platform: source, userId, userName, at });
-      if (claim === null) return this.record(req, url, json({ error: 'review not found' }, 404), `review=${key}`);
-      return this.record(req, url, json(claim), `review=${key} choice=${claim.review.decision?.choice ?? 'none'} won=${claim.won}`);
+        || source === null
+        || userName === null
+      ) {
+        return this.record(req, url, json({ error: 'invalid decision body' }, 400));
+      }
+      const result = await this.moderation.decide(key, {
+        choice,
+        platform: source,
+        userName,
+        at: Math.floor(Date.now() / 1_000),
+      });
+      return this.record(req, url, json(result), `review=${key} won=${result.won ? 'yes' : 'no'}`);
     }
 
     return this.record(req, url, json({ error: 'not found' }, 404));
