@@ -53,9 +53,12 @@ if (dmCfg !== null && moderationCfg === null) {
 }
 
 const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
-if (moderationCfg !== null && singleTarget) {
+if (moderationCfg !== null && (
+  redditCfg.sourceSubreddit.toLowerCase() !== 'catgirlcoin'
+  || redditCfg.primarySubreddit.toLowerCase() !== 'nyaonearth'
+)) {
   throw new Error(
-    'Dual-community moderation requires distinct REDDIT_SOURCE_SUBREDDIT and REDDIT_PRIMARY_SUBREDDIT values',
+    'Dual-community moderation requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin and REDDIT_PRIMARY_SUBREDDIT=nyaonearth',
   );
 }
 const moderationCommunities = singleTarget
