@@ -99,13 +99,6 @@ export type InternalApiCfg = {
   readonly token: string;
 };
 
-export type ModmailTerminalCfg = {
-  readonly host: string;
-  readonly port: number;
-  readonly publicBase: string | null;
-  readonly ttlSeconds: number;
-};
-
 export const redditConfig = (): RedditCfg => ({
   auth: {
     // Preserve the production Python deployment's credential names so the
@@ -171,24 +164,5 @@ export const internalApiConfig = (): InternalApiCfg | null => {
     host: loopbackHost('REDDIT_INTERNAL_API_HOST'),
     port: port('REDDIT_INTERNAL_API_PORT', rawPort),
     token,
-  };
-};
-
-export const modmailTerminalConfig = (): ModmailTerminalCfg => {
-  const publicBase = maybe('REDDIT_MODMAIL_WEBAPP_BASE');
-  let canonicalBase: string | null = null;
-  if (publicBase !== null) {
-    const url = new URL(publicBase);
-    if (url.protocol !== 'https:') throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must use HTTPS');
-    if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) {
-      throw new Error('REDDIT_MODMAIL_WEBAPP_BASE must be a clean HTTPS base URL');
-    }
-    canonicalBase = url.toString().replace(/\/$/u, '');
-  }
-  return {
-    host: loopbackHost('REDDIT_MODMAIL_WEBAPP_HOST'),
-    port: port('REDDIT_MODMAIL_WEBAPP_PORT', maybe('REDDIT_MODMAIL_WEBAPP_PORT') ?? '8892'),
-    publicBase: canonicalBase,
-    ttlSeconds: Math.min(86_400, Math.max(300, positive('REDDIT_MODMAIL_WEBAPP_TTL_SECONDS', '3600'))),
   };
 };
