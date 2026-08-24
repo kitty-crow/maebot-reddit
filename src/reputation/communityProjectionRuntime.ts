@@ -229,7 +229,7 @@ export class CommunityProjectionRuntime {
     }
 
     if (!(await this.bootstrapActive())) {
-      return { applied: mutes.applied, failed: mutes.failed, skipped: !moderationDue };
+      return { applied: mutes.applied, failed: mutes.failed, skipped: true };
     }
 
     const bans = moderationDue
