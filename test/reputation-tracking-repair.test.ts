@@ -13,7 +13,7 @@ import type { JsonMap } from '../src/types/json.ts';
 
 const user = (
   username: string,
-  overrides: Partial<JsonMap> = {},
+  overrides: JsonMap = {},
 ): JsonMap => ({
   username,
   points: 0,
@@ -32,7 +32,7 @@ const user = (
   ...overrides,
 });
 
-const store = (...users: readonly JsonMap[]): JsonMap => ({
+const store = (...users: JsonMap[]): JsonMap => ({
   schema: 1,
   subreddit: 'catgirlcoin',
   bootstrappedAt: 123,
