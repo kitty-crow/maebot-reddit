@@ -156,6 +156,7 @@ const communityProjection = moderationCfg === null
   || singleTarget
   ? null
   : new CommunityProjectionRuntime(
+      redditCfg.sourceSubreddit,
       redditCfg.primarySubreddit,
       resolve(process.cwd(), process.env['REDDIT_FLAIR_CATALOGUE_FILE']?.trim() || 'data/flairs.json'),
       moderationCfg.flairReconcileMs,
