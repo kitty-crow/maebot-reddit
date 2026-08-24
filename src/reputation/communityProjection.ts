@@ -92,6 +92,10 @@ export const communityProjectionReadyFromFile = async (
 ): Promise<boolean> => {
   const catalogue = await readCatalogue(catalogueFile);
   if (catalogue === null) return false;
+  // Schema 2 is the explicit activation marker written only after a complete
+  // community bootstrap. Older catalogues are historical evidence and must not
+  // prevent Mae from starting the pre-bootstrap dual-community moderation path.
+  if (!isMap(catalogue) || catalogue['schema'] !== 2) return false;
   const projection = catalogueMapping(catalogue);
   requireCommunities(projection, sourceSubreddit, targetSubreddit);
   return true;
