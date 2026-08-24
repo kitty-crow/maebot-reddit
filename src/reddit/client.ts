@@ -9,6 +9,7 @@ import { numVal, strVal } from '../types/value.ts';
 import * as decode from './decode.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
+import { rateLimitedRedditFetch } from './rateBudget.ts';
 import { thingScores } from './scoreDecode.ts';
 import type {
   RedditAccount,
@@ -29,6 +30,7 @@ export type RedditClientOptions = {
   readonly sleep?: RedditSleep;
   readonly random?: () => number;
   readonly maxAttempts?: number;
+  readonly rateReserve?: number;
 };
 
 type Token = {
@@ -63,8 +65,14 @@ export class RedditReadClient {
     private readonly cfg: RedditAuthCfg,
     options: RedditClientOptions = {},
   ) {
-    this.fetcher = options.fetcher ?? fetch;
     this.sleep = options.sleep ?? defaultSleep;
+    const rawFetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher === undefined
+      ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, {
+          reserve: options.rateReserve,
+          sleep: this.sleep,
+        })
+      : rawFetcher;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
   }
@@ -117,7 +125,7 @@ export class RedditReadClient {
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
-    return decode.rules(await this.get(pathFor(name, '/about/rules')));
+    return decode.rules(await this.get(pathFor(name, '/about/rules'));
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
