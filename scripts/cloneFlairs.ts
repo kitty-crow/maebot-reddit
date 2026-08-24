@@ -9,6 +9,7 @@ import { communityFlairRestores } from '../src/reputation/communityProjection.ts
 import { CommunityProjectionStore } from '../src/reputation/communityProjectionStore.ts';
 import { redditMuteAction } from '../src/reputation/mutePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
+import { reputationUsersRequiringReview } from '../src/reputation/trackingRepair.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate, RedditModerator } from '../src/reddit/types.ts';
@@ -88,18 +89,17 @@ assertPermissions(sourceSubreddit, sourceModerators);
 assertPermissions(targetSubreddit, targetModerators);
 
 const canonicalBans = new Map<string, string>();
-const unresolvedUsers: string[] = [];
 for (const [key, raw] of Object.entries(reputationRaw['users'])) {
   if (!isMap(raw)) continue;
   const username = typeof raw['username'] === 'string' && raw['username'].trim().length > 0
     ? raw['username']
     : key;
-  if (raw['status'] === 'unmapped' || raw['needsReview'] === true) unresolvedUsers.push(username);
   if (raw['status'] === 'banned' || raw['status'] === 'scam') canonicalBans.set(username.toLowerCase(), username);
 }
+const unresolvedUsers = reputationUsersRequiringReview(reputationRaw);
 if (unresolvedUsers.length > 0) {
   throw new Error(
-    `Community bootstrap refused: canonical reputation still has users requiring semantic review: ${unresolvedUsers.sort().join(', ')}`,
+    `Community bootstrap refused: canonical reputation still has users requiring semantic review: ${unresolvedUsers.join(', ')}`,
   );
 }
 
