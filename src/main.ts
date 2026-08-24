@@ -17,7 +17,6 @@ import {
 import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
-import { CommunityModerationWriter } from './mod/communityWriter.ts';
 import { PrivateModmailRuntime } from './mod/privateRuntime.ts';
 import { ModerationPrivileges, type ModerationPrivilegeSource } from './mod/privileges.ts';
 import { ModerationReviewStore } from './mod/review.ts';
@@ -31,6 +30,8 @@ import { ModmailStore } from './modmail/store.ts';
 import { ModmailTerminalServer } from './modmail/terminalServer.ts';
 import { QuestionEventStore } from './questions/events.ts';
 import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
+import { CommunityProjectionStore } from './reputation/communityProjectionStore.ts';
+import { ReputationPostMirrorGate } from './reputation/mirrorGate.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
 import { safeError } from './reddit/error.ts';
@@ -76,15 +77,6 @@ const weekly = new WeeklyRedditRelay(
   new LiveWeeklyRedditPublisher(redditCfg),
   singleTarget,
 );
-const postMirror = singleTarget
-  ? null
-  : new BidirectionalPostMirror(
-      new RedditReadClient(redditCfg.auth),
-      new RedditMutationClient(redditCfg.auth),
-      new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb')),
-      redditCfg.primarySubreddit,
-      redditCfg.sourceSubreddit,
-    );
 const moderationReviews = new ModerationReviewStore();
 const modmailStore = new ModmailStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_STATE_FILE']?.trim() || 'data/modmail.pb'));
 const modmailAudit = new ModmailAuditStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_AUDIT_FILE']?.trim() || 'data/modmailAudit.pb'));
@@ -94,12 +86,28 @@ const modmailMedia = new ModmailMediaService(modmailStore, new RedditMediaClient
 const terminal = new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox, modmailMedia);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
-const moderationEffectWriter = moderationWriter === null
-  ? null
-  : new CommunityModerationWriter(moderationWriter, moderationCommunities);
 const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
 const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
+const postMirrorStore = singleTarget
+  ? null
+  : new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb'));
+const postMirror = postMirrorStore === null
+  ? null
+  : new BidirectionalPostMirror(
+      new RedditReadClient(redditCfg.auth),
+      new RedditMutationClient(redditCfg.auth),
+      postMirrorStore,
+      redditCfg.primarySubreddit,
+      redditCfg.sourceSubreddit,
+      reputation === null ? null : new ReputationPostMirrorGate(reputation),
+    );
+const communityProjectionStore = moderationCfg === null || singleTarget
+  ? null
+  : new CommunityProjectionStore(resolve(
+      process.cwd(),
+      process.env['REDDIT_COMMUNITY_PROJECTION_STATE_FILE']?.trim() || 'data/communityProjection.pb',
+    ));
 
 const privilegeCache = new Map<string, ModerationPrivileges>();
 const privilegeFor = (subreddit: string): ModerationPrivileges | null => {
@@ -127,14 +135,14 @@ const moderationPrivileges: ModerationPrivilegeSource | null = moderationReader 
 
 const moderation = moderationCfg === null
   || moderationReader === null
-  || moderationEffectWriter === null
+  || moderationWriter === null
   || reputation === null
   ? null
   : new RedditModerationRuntime(
       moderationCommunities,
       moderationCfg,
       moderationReader,
-      moderationEffectWriter,
+      moderationWriter,
       reputation,
       null,
       moderationReviews,
@@ -144,6 +152,7 @@ const communityProjection = moderationCfg === null
   || moderationReader === null
   || moderationWriter === null
   || reputation === null
+  || communityProjectionStore === null
   || singleTarget
   ? null
   : new CommunityProjectionRuntime(
@@ -153,6 +162,7 @@ const communityProjection = moderationCfg === null
       moderationReader,
       moderationWriter,
       reputation,
+      communityProjectionStore,
     );
 const modmail = new ModmailRuntime(
   moderationCommunities,
@@ -214,7 +224,6 @@ const tick = async (): Promise<void> => {
   ticking = true;
   try {
     const delivery = await bridge.deliverPending();
-    const mirror = postMirror === null ? null : await postMirror.tick();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
     let modmailResult = null;
@@ -252,7 +261,15 @@ const tick = async (): Promise<void> => {
       try {
         projectionResult = await communityProjection.tick();
       } catch (error) {
-        console.error(`[Reddit reputation] community flair projection failed: ${safeError(error)}`);
+        console.error(`[Reddit reputation] community projection failed: ${safeError(error)}`);
+      }
+    }
+    let mirror = null;
+    if (postMirror !== null) {
+      try {
+        mirror = await postMirror.tick();
+      } catch (error) {
+        console.error(`[Reddit post mirror] tick failed: ${safeError(error)}`);
       }
     }
     if (mirror !== null && (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0)) {
@@ -314,7 +331,7 @@ const tick = async (): Promise<void> => {
     }
     if (projectionResult !== null && (projectionResult.applied > 0 || projectionResult.failed > 0)) {
       console.log(
-        `[Reddit reputation] r/${redditCfg.primarySubreddit} flair projection applied=${projectionResult.applied} failed=${projectionResult.failed}`,
+        `[Reddit reputation] r/${redditCfg.primarySubreddit} projection applied=${projectionResult.applied} failed=${projectionResult.failed}`,
       );
     }
   } finally {
@@ -384,6 +401,12 @@ if (privateModmail !== null) {
 if (directMessages !== null) {
   const seeded = await directMessages.bootstrap();
   console.log(`Reddit DM activation boundary established; historic incoming direct messages skipped=${seeded}.`);
+}
+if (communityProjection !== null) {
+  const primed = await communityProjection.tick();
+  console.log(
+    `Initial r/${redditCfg.primarySubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
+  );
 }
 if (postMirror !== null) await postMirror.tick();
 await startupSmoke();
