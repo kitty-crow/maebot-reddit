@@ -9,13 +9,18 @@ import { ReputationStore } from '../src/reputation/store.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
-import { isMap, type Json } from '../src/types/json.ts';
+import { isMap, parseMap } from '../src/types/json.ts';
 
 const cfg = redditConfig();
 const moderationCfg = redditModerationConfig();
 if (moderationCfg === null) throw new Error('REDDIT_MODERATION_ENABLED must be true for community bootstrap');
-if (cfg.sourceSubreddit.toLowerCase() === cfg.primarySubreddit.toLowerCase()) {
-  throw new Error('Source and primary subreddit must be different for community bootstrap');
+if (
+  cfg.sourceSubreddit.toLowerCase() !== 'catgirlcoin'
+  || cfg.primarySubreddit.toLowerCase() !== 'nyaonearth'
+) {
+  throw new Error(
+    'Community bootstrap requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin and REDDIT_PRIMARY_SUBREDDIT=nyaonearth',
+  );
 }
 
 const read = new RedditReadClient(cfg.auth);
@@ -121,22 +126,22 @@ const mappings = (kind: 'user' | 'post', sourceTemplates: readonly RedditFlairTe
 
 const userFlairMappings = mappings('user', sourceUserTemplates, targetUserTemplates);
 const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTemplates);
-const projectionCatalogue: Json = {
+const projectionCatalogue = parseMap(JSON.stringify({
   schema: 1,
   generatedAt: new Date().toISOString(),
   sourceSubreddit: cfg.sourceSubreddit,
   targetSubreddit: cfg.primarySubreddit,
   userTemplates: {
-    source: sourceUserTemplates as unknown as Json,
-    target: targetUserTemplates as unknown as Json,
-    mapping: userFlairMappings as unknown as Json,
+    source: sourceUserTemplates,
+    target: targetUserTemplates,
+    mapping: userFlairMappings,
   },
   postTemplates: {
-    source: sourcePostTemplates as unknown as Json,
-    target: targetPostTemplates as unknown as Json,
-    mapping: postFlairMappings as unknown as Json,
+    source: sourcePostTemplates,
+    target: targetPostTemplates,
+    mapping: postFlairMappings,
   },
-};
+}));
 
 const flairRestores = communityFlairRestores(
   projectionCatalogue,
@@ -172,11 +177,12 @@ const migratedBans: {
   targetBanApplied: boolean;
 }[] = [];
 for (const username of [...canonicalBans.values()].sort((left, right) => left.localeCompare(right))) {
+  // Communication enforcement is established before the target ban is exposed.
+  // Re-applying the finite Reddit mute is safe and guarantees an already-banned
+  // target user cannot sit outside Mae's canonical permanent restriction.
+  await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
   const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
   if (!alreadyPresent) {
-    // The canonical banned/scam state carries a permanent communication
-    // restriction. Apply the first Reddit mute chunk before exposing the new ban.
-    await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
     await write.banUser(
       cfg.primarySubreddit,
       username,
