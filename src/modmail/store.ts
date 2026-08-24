@@ -40,16 +40,31 @@ const initial = (): JsonMap => ({
   schema: 1,
   bootstrappedAt: 0,
   sequence: 0,
+  subreddits: {},
   conversations: {},
   events: {},
   terminalSessions: {},
 });
+
+const normaliseSubreddit = (value: string): string => value.trim().toLowerCase();
 
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail store');
   if (!isMap(value['conversations'])) value['conversations'] = {};
   if (!isMap(value['events'])) value['events'] = {};
   if (!isMap(value['terminalSessions'])) value['terminalSessions'] = {};
+  if (!isMap(value['subreddits'])) {
+    const subreddits: JsonMap = {};
+    const conversations = value['conversations'];
+    if (isMap(conversations)) {
+      for (const raw of Object.values(conversations)) {
+        if (!isMap(raw) || typeof raw['subreddit'] !== 'string') continue;
+        const key = normaliseSubreddit(raw['subreddit']);
+        if (key.length > 0) subreddits[key] = true;
+      }
+    }
+    value['subreddits'] = subreddits;
+  }
   return value;
 };
 
@@ -293,18 +308,30 @@ export class ModmailStore {
     }
   }
 
-  public async sync(conversations: readonly ModmailConversation[], at = Math.floor(Date.now() / 1_000)): Promise<readonly ModmailRelayEvent[]> {
+  public async sync(
+    conversations: readonly ModmailConversation[],
+    at = Math.floor(Date.now() / 1_000),
+    activeSubreddits: readonly string[] = [],
+  ): Promise<readonly ModmailRelayEvent[]> {
     let created: ModmailRelayEvent[] = [];
     const changed = new Set<string>();
     await this.store.edit(current => {
       const value = root(current);
       const conversationMap = value['conversations'];
       const events = value['events'];
-      if (!isMap(conversationMap) || !isMap(events)) throw new Error('Modmail store maps are missing');
+      const subredditMap = value['subreddits'];
+      if (!isMap(conversationMap) || !isMap(events) || !isMap(subredditMap)) {
+        throw new Error('Modmail store maps are missing');
+      }
       const bootstrappedAt = integer(value['bootstrappedAt']);
       const firstSync = bootstrappedAt === 0;
       if (firstSync) value['bootstrappedAt'] = at;
       let sequence = integer(value['sequence']);
+      const newlyActivated = new Set(
+        activeSubreddits
+          .map(normaliseSubreddit)
+          .filter(key => key.length > 0 && subredditMap[key] !== true),
+      );
 
       for (const incoming of conversations) {
         const participantName = incoming.participant?.name ?? null;
@@ -322,13 +349,18 @@ export class ModmailStore {
           || prior.lastUpdatedAt !== incoming.lastUpdatedAt
         ) changed.add(incoming.id);
         if (incoming.state === 'archived') retireConversationSessions(value, incoming.id);
-        if (firstSync) continue;
+        if (firstSync || newlyActivated.has(normaliseSubreddit(incoming.subreddit))) continue;
         for (const message of newMessages) {
           sequence += 1;
           const event = eventFor(sequence, merged, message);
           events[String(sequence)] = eventJson(event);
           created.push(event);
         }
+      }
+
+      for (const subreddit of activeSubreddits) {
+        const key = normaliseSubreddit(subreddit);
+        if (key.length > 0) subredditMap[key] = true;
       }
       value['sequence'] = sequence;
       return value;
