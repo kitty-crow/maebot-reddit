@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CommunityModerationWriter } from '../src/mod/communityWriter.ts';
 import type { ModerationClassification, ModerationClassifier, ModerationItem } from '../src/mod/classifier.ts';
 import { RedditModerationRuntime, type ModerationReader, type ModerationWriter } from '../src/mod/runtime.ts';
 import type { RedditModerationCfg } from '../src/env.ts';
@@ -149,15 +148,14 @@ const config = (stateFile: string): RedditModerationCfg => ({
 });
 
 describe('one moderation runtime across both communities', () => {
-  test('audits both communities, respects local moderators, and enforces canonical bans/mutes on both', async () => {
+  test('audits both communities, respects local moderators, and keeps canonical effects on the source surface', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mae-multicommunity-'));
     roots.push(root);
     const file = join(root, 'reputation.pb');
     const reputation = new ReputationStore(file);
     await reputation.bootstrap(bootstrap());
     const reader = new Reader();
-    const baseWriter = new Writer();
-    const writer = new CommunityModerationWriter(baseWriter, ['catgirlcoin', 'nyaonearth']);
+    const writer = new Writer();
     const classifier = new Classifier();
     const runtime = new RedditModerationRuntime(
       ['catgirlcoin', 'nyaonearth'],
@@ -173,8 +171,8 @@ describe('one moderation runtime across both communities', () => {
     expect(result.audited).toBe(2);
     expect(result.exempt).toBe(1);
     expect(classifier.authors.sort()).toEqual(['ScamUser', 'SourceUser']);
-    expect(baseWriter.bans.sort()).toEqual(['catgirlcoin:ScamUser', 'nyaonearth:ScamUser']);
-    expect(baseWriter.mutes.sort()).toEqual(['catgirlcoin:ScamUser', 'nyaonearth:ScamUser']);
+    expect(writer.bans).toEqual(['catgirlcoin:ScamUser']);
+    expect(writer.mutes).toEqual(['catgirlcoin:ScamUser']);
     expect(await reputation.user('ScamUser')).toMatchObject({ status: 'scam', points: -999_999_999 });
   });
 });
