@@ -11,6 +11,7 @@
     "view:reputation": "bun run scripts/viewReputation.ts",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
     "clone:flairs": "bun run scripts/cloneFlairs.ts",
+    "clone:emojis": "bun run scripts/cloneEmojis.ts",
     "check": "bunx tsc -p tsconfig.json --noEmit && bun run check:types && bun run check:imports && bun run check:boundaries",
     "check:types": "bun run scripts/noLooseTypes.ts",
     "check:boundaries": "bun run scripts/architectureBoundaries.ts",
