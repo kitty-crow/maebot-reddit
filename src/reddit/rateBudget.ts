@@ -13,12 +13,14 @@ export type RedditRateBudgetSleep = (milliseconds: number) => Promise<void>;
 
 export type RedditRateBudgetOptions = {
   readonly reserve?: number;
+  readonly minimumIntervalMs?: number;
   readonly sleep?: RedditRateBudgetSleep;
   readonly now?: () => number;
   readonly stateFile?: string;
 };
 
 const DEFAULT_RESERVE = 10;
+const DEFAULT_MINIMUM_INTERVAL_MS = 1_000;
 const UNKNOWN_RESET_MS = 60_000;
 const UNKNOWN_429_RESET_MS = 10 * 60_000;
 const PROBE_LEASE_MS = 30_000;
@@ -34,6 +36,7 @@ const initial = (): JsonMap => ({
   resetAtMs: null,
   blockedUntilMs: null,
   probeUntilMs: null,
+  nextAllowedAtMs: null,
   updatedAtMs: 0,
 });
 
@@ -63,6 +66,7 @@ const requestUrl = (input: string | URL | Request): URL => {
 export class RedditRateBudget {
   private readonly store: Store;
   private readonly reserve: number;
+  private readonly minimumIntervalMs: number;
   private readonly sleep: RedditRateBudgetSleep;
   private readonly now: () => number;
 
@@ -71,7 +75,12 @@ export class RedditRateBudget {
     if (!Number.isSafeInteger(reserve) || reserve < 1 || reserve > 99) {
       throw new Error('Reddit rate-budget reserve must be an integer from 1 to 99');
     }
+    const minimumIntervalMs = Math.floor(options.minimumIntervalMs ?? DEFAULT_MINIMUM_INTERVAL_MS);
+    if (!Number.isSafeInteger(minimumIntervalMs) || minimumIntervalMs < 0 || minimumIntervalMs > 60_000) {
+      throw new Error('Reddit rate-budget minimum interval must be an integer from 0 to 60000 milliseconds');
+    }
     this.reserve = reserve;
+    this.minimumIntervalMs = minimumIntervalMs;
     this.sleep = options.sleep ?? defaultSleep;
     this.now = options.now ?? Date.now;
     this.store = new Store(options.stateFile ?? stateFileFor(clientId), initial());
@@ -87,6 +96,7 @@ export class RedditRateBudget {
         let resetAtMs = integerOrNull(value['resetAtMs']);
         let blockedUntilMs = integerOrNull(value['blockedUntilMs']);
         const probeUntilMs = integerOrNull(value['probeUntilMs']);
+        const nextAllowedAtMs = integerOrNull(value['nextAllowedAtMs']);
 
         if (resetAtMs !== null && resetAtMs <= now) {
           remaining = null;
@@ -103,12 +113,18 @@ export class RedditRateBudget {
           return value;
         }
 
+        if (nextAllowedAtMs !== null && nextAllowedAtMs > now) {
+          waitMs = nextAllowedAtMs - now;
+          return value;
+        }
+
         if (remaining === null) {
           if (probeUntilMs !== null && probeUntilMs > now) {
             waitMs = Math.min(1_000, probeUntilMs - now);
             return value;
           }
           value['probeUntilMs'] = now + PROBE_LEASE_MS;
+          value['nextAllowedAtMs'] = now + this.minimumIntervalMs;
           value['updatedAtMs'] = now;
           return value;
         }
@@ -124,6 +140,7 @@ export class RedditRateBudget {
         }
 
         value['remaining'] = Math.max(0, remaining - 1);
+        value['nextAllowedAtMs'] = now + this.minimumIntervalMs;
         value['updatedAtMs'] = now;
         return value;
       });
