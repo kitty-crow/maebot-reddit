@@ -27,24 +27,42 @@ The required activation order is:
 1. deploy this runtime while keeping the existing publishing route if desired (`REDDIT_SOURCE_SUBREDDIT=catgirlcoin`, `REDDIT_PRIMARY_SUBREDDIT=catgirlcoin` is valid before bootstrap);
 2. start Mae with canonical moderation enabled; she immediately ingests/moderates posts, comments and Modmail from both CatgirlCoin and NyaOnEarth using the one `reputation.pb`;
 3. let the NyaOnEarth projection establish the existing canonical communication restrictions there and verify them against Reddit's live muted-user relationship;
-4. run `bun run clone:flairs`; the command targets `r/nyaonearth` explicitly and does not depend on `REDDIT_PRIMARY_SUBREDDIT` already pointing there;
+4. stop the normal Mae runtime when using exclusive migration pacing, then run `bun run clone:flairs`; the command targets `r/nyaonearth` explicitly, clones custom emojis before flair templates and resumes already-correct target state rather than starting over;
 5. verify the bootstrap result;
 6. only after bootstrap, set `REDDIT_PRIMARY_SUBREDDIT=nyaonearth` and restart when the cross-community publishing/post-mirror cutover is desired.
 
-The bootstrap command enforces the safety-critical part of this order. Before any target mutation it checks that every canonical `banned`/`scam` user has both Mae's current NyaOnEarth projection checkpoint and a live Reddit mute. If either is missing, the command aborts.
+The bootstrap command enforces the safety-critical part of this order. Before exposing any target permanent ban it checks that every canonical `banned`/`scam` user has both Mae's current NyaOnEarth projection checkpoint and a live Reddit mute. If either is missing, the command aborts.
 
 ## Moderator permissions
 
-Mae must be a moderator of both communities with these permissions:
+Mae must be a moderator of both communities with the permissions required by each side of the migration:
 
 - `access` — user bans and communication restrictions;
 - `flair` — user/post flair templates and assignments;
 - `posts` — sticky/post operations;
-- `mail` — Modmail operation.
+- `mail` — Modmail operation;
+- target `config` / Manage Settings — required for NyaOnEarth custom emoji creation and permission changes.
 
-`config` is not required for this bootstrap. `wiki` may be useful for other Mae features but is not an apply prerequisite here.
+The source CatgirlCoin side does not require `config` merely to inventory its existing custom emojis. `wiki` may be useful for other Mae features but is not an apply prerequisite here.
 
-The bootstrap rechecks the required permissions itself rather than relying on a prior manual audit.
+Custom emoji migration is a subreddit appearance/settings operation on Reddit, not merely a flair operation. The reusable emoji migration path therefore rechecks NyaOnEarth `config` before it inventories, downloads or writes emoji assets. This same preflight protects both the integrated bootstrap and the standalone emoji migration command.
+
+## Custom emojis
+
+The integrated community bootstrap migrates custom emojis before cloning flair templates so flair strings such as `:catgirl-moon:`, `:lisa:` and `:mae:` never depend on missing target assets.
+
+Emoji migration:
+
+1. inventories source and target custom emojis;
+2. preserves NyaOnEarth-only emoji names;
+3. compares same-name image assets by SHA-256;
+4. skips exact matches;
+5. repairs permission-only differences;
+6. uploads missing or different assets through Reddit's upload lease and S3 flow;
+7. preserves `mod_flair_only`, `post_flair_allowed` and `user_flair_allowed`;
+8. verifies the final target inventory with bounded retries because Reddit may register new emoji asynchronously.
+
+Raw S3 asset transfer is not counted as a Reddit Data API request. The OAuth lease/registration operations remain under Mae's shared Reddit rate-budget coordinator.
 
 ## Flair templates and local IDs
 
@@ -52,13 +70,14 @@ Reddit flair template UUIDs are subreddit-local implementation identifiers. A Ca
 
 `bun run clone:flairs`:
 
-1. reads CatgirlCoin user and post flair templates;
-2. creates any missing presentation-equivalent templates in NyaOnEarth;
-3. requires each source template to resolve to exactly one destination template;
-4. records the source-template → target-template mapping in `data/flairs.json`;
-5. projects each canonical user's desired CatgirlCoin flair through that local mapping.
+1. migrates CatgirlCoin custom emojis to NyaOnEarth first;
+2. reads CatgirlCoin user and post flair templates;
+3. creates any missing presentation-equivalent templates in NyaOnEarth;
+4. requires each source template to resolve to exactly one destination template;
+5. records the source-template → target-template mapping in `data/flairs.json`;
+6. projects each canonical user's desired CatgirlCoin flair through that local mapping.
 
-Moderator flairs are not overwritten by member-reputation projection. Users marked `unmapped` or `needsReview` cause the bootstrap to fail rather than guess.
+Moderator flairs are not overwritten by member-reputation projection. Users marked `unmapped` or `needsReview` cause the bootstrap to fail rather than guess, except for the explicitly centralised retired-moderator legacy exceptions documented by the reputation tracking layer.
 
 The final `data/flairs.json` is schema 2. Its successful atomic rename is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. A missing or older schema-1 catalogue is treated as pre-bootstrap historical state: it does not block Mae from starting dual-community moderation and it does not activate target ban/flair projection.
 
@@ -94,14 +113,15 @@ Before any target write, the bootstrap fails closed if:
 - the publishing primary is neither the valid pre-bootstrap CatgirlCoin value nor the post-cutover NyaOnEarth value;
 - canonical reputation is not bootstrapped;
 - Mae lacks a required moderator permission in either community;
-- any canonical user is still `unmapped` or `needsReview`;
+- NyaOnEarth lacks `config` / Manage Settings required by the emoji-first phase;
+- any effective canonical user still requires semantic review;
 - live CatgirlCoin bans differ from canonical `banned`/`scam` users;
 - NyaOnEarth contains a live ban absent from canonical permanent state;
 - any canonical permanent user lacks either Mae's current NyaOnEarth mute checkpoint or the corresponding live Reddit mute.
 
 This makes CatgirlCoin's established moderation state, Mae's canonical reputation and the actual live target communication protection agree before NyaOnEarth is mutated.
 
-During apply, the target communication restriction is refreshed immediately before any newly exposed target permanent ban. The NyaOnEarth projection checkpoint is advanced with the successful mute write so normal runtime reconciliation does not duplicate it.
+The communication-protection projection must already be converged before bootstrap. The bootstrap verifies that precondition but does **not** refresh the permanent 28-day mutes again during the ban loop. Already-present target bans are also skipped, so an interrupted migration resumes from live Reddit state rather than replaying completed work.
 
 After apply, both the target mute set and target ban set are reread. Every canonical permanent user must still be live-muted and banned before the command can report success.
 
@@ -139,8 +159,21 @@ A failed attempt to establish a missing permanent communication restriction prev
 
 ## Verification and reruns
 
-The bootstrap is designed to converge rather than create duplicate semantic templates or duplicate sticky pairs. It verifies, before reporting success:
+The bootstrap is designed to converge rather than create duplicate semantic templates, emoji assets or sticky pairs. An interrupted run must preserve useful Reddit-side progress.
 
+On rerun it re-inventories live NyaOnEarth state and:
+
+- skips identical custom emojis and preserves target-only ones;
+- reuses presentation-equivalent flair templates;
+- skips already-correct visible user flairs;
+- reuses existing sticky clones where possible;
+- skips already-present canonical bans.
+
+For Reddit's legacy `/api/flairlist`, an omitted `flair_template_id` means unknown rather than wrong. Correct text with an omitted UUID must not trigger a mass rewrite. An explicitly wrong UUID or wrong text still requires restoration.
+
+Before reporting success the bootstrap verifies:
+
+- custom emoji state converged;
 - every source flair template has exactly one destination presentation match;
 - canonical target member flairs no longer require restoration;
 - every canonical permanent user is live-muted and banned in NyaOnEarth;
@@ -160,6 +193,6 @@ This operation does not copy:
 - vote totals;
 - Modmail history as new moderation events;
 - moderator membership/permission assignments;
-- arbitrary subreddit preferences requiring `config` permission.
+- arbitrary subreddit settings unrelated to the explicitly migrated custom emoji assets.
 
 When NyaOnEarth Modmail is first activated, existing conversations are seeded as context without replaying their old participant messages as new behavioural offences. Only messages arriving after that activation boundary enter the normal relay/private-moderation stream.
