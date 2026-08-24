@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promptSecret, promptText } from '../src/cli/securePrompt.ts';
 import { cloneCommunityEmojis } from '../src/emoji/migrate.ts';
+import { emojiClonePreflight } from '../src/emoji/preflight.ts';
 import { redditConfig } from '../src/env.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { redditEmojiAdminAuth } from '../src/reddit/emojiAdminAuth.ts';
@@ -46,18 +47,29 @@ try {
       ? 'Reddit migration pacing: EXCLUSIVE 650ms, reserve=5; Mae runtime must be offline.'
       : 'Reddit migration pacing: shared 1000ms, reserve=30.',
   );
-  console.log('Custom emoji migration uses a separate NyaOnEarth moderator with Manage Settings.');
-  console.log('Credentials are read interactively for this process only and are not persisted.');
+  console.log('Custom emoji migration uses one interactive Reddit moderator account for both communities.');
+  console.log('Credentials are held only in memory for this process and are never persisted.');
 
   const username = await promptText('Reddit admin username: ');
   const password = await promptSecret('Reddit admin password (hidden): ');
   const adminAuth = redditEmojiAdminAuth(cfg.auth, { username, password });
 
-  const sourceRead = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
-  const targetRead = new RedditReadClient(adminAuth, { rateReserve: maintenanceRateReserve });
-  const targetWrite = new RedditMutationClient(adminAuth, { rateReserve: maintenanceRateReserve });
+  const adminRead = new RedditReadClient(adminAuth, { rateReserve: maintenanceRateReserve });
+  const adminWrite = new RedditMutationClient(adminAuth, { rateReserve: maintenanceRateReserve });
+  const preflight = await emojiClonePreflight(adminRead, [
+    { subreddit: sourceSubreddit, requireManageSettings: false },
+    { subreddit: targetSubreddit, requireManageSettings: true },
+  ]);
+  if (!preflight.passed) {
+    const failures = preflight.communities
+      .filter(community => !community.passed)
+      .flatMap(community => community.failures.map(failure => `r/${community.subreddit}: ${failure}`));
+    throw new Error(`Emoji clone permission pre-flight failed: ${failures.join('; ')}`);
+  }
+  console.log(`Emoji clone operator verified: u/${preflight.accountName}`);
+
   const result = await cloneCommunityEmojis(
-    { sourceRead, targetRead, targetWrite },
+    { sourceRead: adminRead, targetRead: adminRead, targetWrite: adminWrite },
     sourceSubreddit,
     targetSubreddit,
     { log: message => console.log(message) },
