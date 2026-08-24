@@ -14,16 +14,18 @@ import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate, RedditModerator } from '../src/reddit/types.ts';
 import { isMap, parseMap } from '../src/types/json.ts';
 
+const sourceSubreddit = 'catgirlcoin';
+const targetSubreddit = 'nyaonearth';
+
 const cfg = redditConfig();
 const moderationCfg = redditModerationConfig();
 if (moderationCfg === null) throw new Error('REDDIT_MODERATION_ENABLED must be true for community bootstrap');
-if (
-  cfg.sourceSubreddit.toLowerCase() !== 'catgirlcoin'
-  || cfg.primarySubreddit.toLowerCase() !== 'nyaonearth'
-) {
-  throw new Error(
-    'Community bootstrap requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin and REDDIT_PRIMARY_SUBREDDIT=nyaonearth',
-  );
+if (cfg.sourceSubreddit.toLowerCase() !== sourceSubreddit) {
+  throw new Error('Community bootstrap requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin');
+}
+const primary = cfg.primarySubreddit.toLowerCase();
+if (primary !== sourceSubreddit && primary !== targetSubreddit) {
+  throw new Error('REDDIT_PRIMARY_SUBREDDIT must be catgirlcoin before bootstrap or nyaonearth after cutover');
 }
 
 const read = new RedditReadClient(cfg.auth);
@@ -53,17 +55,17 @@ const [
   reputationRaw,
 ] = await Promise.all([
   read.me(),
-  read.subreddit(cfg.sourceSubreddit),
-  read.subreddit(cfg.primarySubreddit),
-  read.moderators(cfg.sourceSubreddit),
-  read.moderators(cfg.primarySubreddit),
-  read.bannedUsers(cfg.sourceSubreddit),
-  read.bannedUsers(cfg.primarySubreddit),
-  read.mutedUsers(cfg.primarySubreddit),
+  read.subreddit(sourceSubreddit),
+  read.subreddit(targetSubreddit),
+  read.moderators(sourceSubreddit),
+  read.moderators(targetSubreddit),
+  read.bannedUsers(sourceSubreddit),
+  read.bannedUsers(targetSubreddit),
+  read.mutedUsers(targetSubreddit),
   reputation.raw(),
 ]);
-if (!source.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${cfg.sourceSubreddit}`);
-if (!target.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${cfg.primarySubreddit}`);
+if (!source.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${sourceSubreddit}`);
+if (!target.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${targetSubreddit}`);
 if (!isMap(reputationRaw) || !isMap(reputationRaw['users'])) {
   throw new Error('Canonical reputation users map is missing');
 }
@@ -82,8 +84,8 @@ const assertPermissions = (
     throw new Error(`r/${subreddit} is missing Mae moderator permissions required for bootstrap: ${missing.join(', ')}`);
   }
 };
-assertPermissions(cfg.sourceSubreddit, sourceModerators);
-assertPermissions(cfg.primarySubreddit, targetModerators);
+assertPermissions(sourceSubreddit, sourceModerators);
+assertPermissions(targetSubreddit, targetModerators);
 
 const canonicalBans = new Map<string, string>();
 const unresolvedUsers: string[] = [];
@@ -107,7 +109,7 @@ const sourceMissingFromCanonical = [...sourceBanKeys].filter(key => !canonicalBa
 const canonicalMissingFromSource = [...canonicalBanKeys].filter(key => !sourceBanKeys.has(key));
 if (sourceMissingFromCanonical.length > 0 || canonicalMissingFromSource.length > 0) {
   throw new Error(
-    `Community bootstrap refused: r/${cfg.sourceSubreddit} bans and canonical reputation differ. `
+    `Community bootstrap refused: r/${sourceSubreddit} bans and canonical reputation differ. `
     + `source-only=${sourceMissingFromCanonical.join(', ') || '(none)'}; `
     + `canonical-only=${canonicalMissingFromSource.join(', ') || '(none)'}`,
   );
@@ -117,7 +119,7 @@ const targetBanKeysBefore = new Set(targetBansBefore.map(item => item.username.t
 const targetExtraBans = [...targetBanKeysBefore].filter(key => !canonicalBanKeys.has(key));
 if (targetExtraBans.length > 0) {
   throw new Error(
-    `Community bootstrap refused: r/${cfg.primarySubreddit} has bans absent from canonical reputation: ${targetExtraBans.join(', ')}`,
+    `Community bootstrap refused: r/${targetSubreddit} has bans absent from canonical reputation: ${targetExtraBans.join(', ')}`,
   );
 }
 
@@ -130,31 +132,31 @@ const targetMuteKeysBefore = new Set(targetMutedBefore.map(item => item.username
 const unprotectedPermanentUsers: string[] = [];
 for (const username of canonicalBans.values()) {
   const key = username.toLowerCase();
-  const current = await projection.muteState(cfg.primarySubreddit, username);
+  const current = await projection.muteState(targetSubreddit, username);
   const checkpointReady = redditMuteAction({ muteUntil: null, permanent: true }, current, now) === null;
   if (!checkpointReady || !targetMuteKeysBefore.has(key)) unprotectedPermanentUsers.push(username);
 }
 if (unprotectedPermanentUsers.length > 0) {
   throw new Error(
-    `Community bootstrap refused: r/${cfg.primarySubreddit} live communication protection has not converged for `
+    `Community bootstrap refused: r/${targetSubreddit} live communication protection has not converged for `
     + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its projection complete first.`,
   );
 }
 
-console.log(`Cloning flair templates: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
+console.log(`Cloning flair templates: r/${sourceSubreddit} -> r/${targetSubreddit}`);
 const result = await new FlairCloner(read, write).clone(
-  cfg.sourceSubreddit,
-  cfg.primarySubreddit,
+  sourceSubreddit,
+  targetSubreddit,
   { copyAssignments: false },
 );
 
 const [sourceUserTemplates, sourcePostTemplates, sourceAssignments, targetUserTemplates, targetPostTemplates, targetAssignmentsBefore] = await Promise.all([
-  read.userFlairTemplates(cfg.sourceSubreddit),
-  read.postFlairTemplates(cfg.sourceSubreddit),
-  read.userFlairAssignments(cfg.sourceSubreddit),
-  read.userFlairTemplates(cfg.primarySubreddit),
-  read.postFlairTemplates(cfg.primarySubreddit),
-  read.userFlairAssignments(cfg.primarySubreddit),
+  read.userFlairTemplates(sourceSubreddit),
+  read.postFlairTemplates(sourceSubreddit),
+  read.userFlairAssignments(sourceSubreddit),
+  read.userFlairTemplates(targetSubreddit),
+  read.postFlairTemplates(targetSubreddit),
+  read.userFlairAssignments(targetSubreddit),
 ]);
 
 const norm = (value: string | null): string => value ?? '';
@@ -190,8 +192,8 @@ const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTempla
 const projectionCatalogue = parseMap(JSON.stringify({
   schema: 2,
   generatedAt: new Date().toISOString(),
-  sourceSubreddit: cfg.sourceSubreddit,
-  targetSubreddit: cfg.primarySubreddit,
+  sourceSubreddit,
+  targetSubreddit,
   userTemplates: {
     source: sourceUserTemplates,
     target: targetUserTemplates,
@@ -207,13 +209,13 @@ const projectionCatalogue = parseMap(JSON.stringify({
 const flairRestores = communityFlairRestores(
   projectionCatalogue,
   reputationRaw,
-  cfg.primarySubreddit,
+  targetSubreddit,
   targetAssignmentsBefore,
 );
 let canonicalFlairsApplied = 0;
 for (const flair of flairRestores) {
   await write.setUserFlairTemplate(
-    cfg.primarySubreddit,
+    targetSubreddit,
     flair.username,
     flair.templateId,
     flair.customText,
@@ -221,21 +223,21 @@ for (const flair of flairRestores) {
   canonicalFlairsApplied += 1;
 }
 
-console.log(`Cloning sticky posts with mapped post flairs: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
+console.log(`Cloning sticky posts with mapped post flairs: r/${sourceSubreddit} -> r/${targetSubreddit}`);
 const stickyPosts = await cloneStickyPosts(
   read,
   write,
-  cfg.sourceSubreddit,
-  cfg.primarySubreddit,
+  sourceSubreddit,
+  targetSubreddit,
   sourcePostTemplates,
   targetPostTemplates,
   postFlairMappings,
 );
 for (const sticky of stickyPosts) {
   await mirror.completePair(
-    mirrorKey(cfg.sourceSubreddit, sticky.sourcePostId),
+    mirrorKey(sourceSubreddit, sticky.sourcePostId),
     sticky.sourceFullname,
-    mirrorKey(cfg.primarySubreddit, sticky.targetPostId),
+    mirrorKey(targetSubreddit, sticky.targetPostId),
     `t3_${sticky.targetPostId}`,
   );
 }
@@ -248,15 +250,15 @@ const migratedBans: {
 for (const username of [...canonicalBans.values()].sort((left, right) => left.localeCompare(right))) {
   // Refresh immediately before exposing the target ban and advance the target
   // projection checkpoint so the normal runtime does not duplicate this write.
-  await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
-  await projection.markMute(cfg.primarySubreddit, username, 'mute', Date.now());
+  await write.muteUser(targetSubreddit, username, 'Mae permanent reputation enforcement');
+  await projection.markMute(targetSubreddit, username, 'mute', Date.now());
   const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
   if (!alreadyPresent) {
     await write.banUser(
-      cfg.primarySubreddit,
+      targetSubreddit,
       username,
       'Mae canonical moderation state',
-      `Canonical Mae reputation state migrated from r/${cfg.sourceSubreddit}.`,
+      `Canonical Mae reputation state migrated from r/${sourceSubreddit}.`,
     );
   }
   migratedBans.push({
@@ -267,9 +269,9 @@ for (const username of [...canonicalBans.values()].sort((left, right) => left.lo
 }
 
 const [targetBansAfter, targetMutedAfter, targetAssignmentsAfter] = await Promise.all([
-  read.bannedUsers(cfg.primarySubreddit),
-  read.mutedUsers(cfg.primarySubreddit),
-  read.userFlairAssignments(cfg.primarySubreddit),
+  read.bannedUsers(targetSubreddit),
+  read.mutedUsers(targetSubreddit),
+  read.userFlairAssignments(targetSubreddit),
 ]);
 const targetBanAfterKeys = new Set(targetBansAfter.map(item => item.username.toLowerCase()));
 const targetMuteAfterKeys = new Set(targetMutedAfter.map(item => item.username.toLowerCase()));
@@ -290,7 +292,7 @@ if (targetUnexpectedAfter.length > 0) {
 const remainingFlairRestores = communityFlairRestores(
   projectionCatalogue,
   reputationRaw,
-  cfg.primarySubreddit,
+  targetSubreddit,
   targetAssignmentsAfter,
 );
 if (remainingFlairRestores.length > 0) {
@@ -306,8 +308,9 @@ const catalogueFile = resolve(
 const catalogue = {
   schema: 2,
   generatedAt: new Date().toISOString(),
-  sourceSubreddit: cfg.sourceSubreddit,
-  targetSubreddit: cfg.primarySubreddit,
+  sourceSubreddit,
+  targetSubreddit,
+  publishingPrimaryAtBootstrap: cfg.primarySubreddit,
   userTemplates: {
     source: sourceUserTemplates,
     target: targetUserTemplates,
