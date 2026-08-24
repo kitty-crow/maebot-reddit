@@ -1,5 +1,5 @@
 import { isMap, type Json } from '../types/json.ts';
-import { redditMuteAction } from './mutePolicy.ts';
+import { redditMuteAction, UNCIVIL_MUTE_MS } from './mutePolicy.ts';
 import type { ReputationPendingMute } from './store.ts';
 
 const text = (value: Json | undefined): string | null =>
@@ -7,6 +7,26 @@ const text = (value: Json | undefined): string | null =>
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
+
+const desiredFor = (
+  status: Json | undefined,
+  muteUntil: number | null,
+  permanent: boolean,
+  appliedAt: number | null,
+  nowMs: number,
+): { readonly muteUntil: number | null; readonly permanent: boolean } => {
+  // Bootstrap-seeded users predate the discipline journal. Their canonical
+  // moderation status must still imply the same communication restriction.
+  if (status === 'banned' || status === 'scam') return { muteUntil: null, permanent: true };
+  if (muteUntil !== null || permanent) return { muteUntil, permanent };
+  if (status === 'uncivil') {
+    return {
+      muteUntil: (appliedAt ?? nowMs) + UNCIVIL_MUTE_MS,
+      permanent: false,
+    };
+  }
+  return { muteUntil: null, permanent: false };
+};
 
 export const reputationMuteEffects = (
   raw: Json,
@@ -22,13 +42,13 @@ export const reputationMuteEffects = (
     if (!isMap(userRaw)) continue;
     const username = text(userRaw['username']) ?? key;
     const record = discipline[key];
-    if (!isMap(record)) continue;
-    const muteUntil = integerOrNull(record['muteUntil']);
-    const permanent = bool(record['mutePermanent']);
-    const redditMuted = bool(record['redditMuted']);
-    const appliedAt = integerOrNull(record['muteAppliedAt']);
+    const muteUntil = isMap(record) ? integerOrNull(record['muteUntil']) : null;
+    const permanent = isMap(record) && bool(record['mutePermanent']);
+    const redditMuted = isMap(record) && bool(record['redditMuted']);
+    const appliedAt = isMap(record) ? integerOrNull(record['muteAppliedAt']) : null;
+    const desired = desiredFor(userRaw['status'], muteUntil, permanent, appliedAt, nowMs);
     const action = redditMuteAction(
-      { muteUntil, permanent },
+      desired,
       { redditMuted, appliedAt },
       nowMs,
     );
@@ -38,7 +58,7 @@ export const reputationMuteEffects = (
       action,
       note: action === 'unmute'
         ? 'Mae reputation mute ended'
-        : permanent
+        : desired.permanent
           ? 'Mae permanent reputation enforcement'
           : 'Mae uncivil reputation state',
     });
