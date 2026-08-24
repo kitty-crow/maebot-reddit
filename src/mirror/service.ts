@@ -7,6 +7,10 @@ export type MirrorWriter = {
   crosspost(subreddit: string, sourcePostId: string, title: string): Promise<RedditCreatedPost>;
   submitSelf(subreddit: string, title: string, body: string): Promise<RedditCreatedPost>;
 };
+export type PostMirrorSourceDecision = 'pending' | 'allow' | 'deny';
+export type PostMirrorSourceGate = {
+  decisions(fullnames: readonly string[]): Promise<ReadonlyMap<string, PostMirrorSourceDecision>>;
+};
 export type PostMirrorTick = { seeded: boolean; discovered: number; completed: number; failed: number };
 
 type ObservedPost = {
@@ -56,10 +60,16 @@ export class BidirectionalPostMirror {
     private readonly store: PostMirrorStore,
     private readonly firstSubreddit: string,
     private readonly secondSubreddit: string,
+    private readonly gate: PostMirrorSourceGate | null = null,
   ) {
     if (sameSubreddit(firstSubreddit, secondSubreddit)) {
       throw new Error('Bidirectional Reddit mirror requires two different subreddits');
     }
+  }
+
+  private async decisions(fullnames: readonly string[]): Promise<ReadonlyMap<string, PostMirrorSourceDecision>> {
+    if (this.gate === null) return new Map(fullnames.map(fullname => [fullname, 'allow'] as const));
+    return await this.gate.decisions(fullnames);
   }
 
   public async tick(now = Date.now()): Promise<PostMirrorTick> {
@@ -130,7 +140,13 @@ export class BidirectionalPostMirror {
       }
     }
 
-    const discovered = await this.store.discover(observed.map(item => ({
+    const pendingForGate = await this.store.pending();
+    const decisions = await this.decisions([
+      ...observed.map(item => item.post.fullname),
+      ...pendingForGate.map(item => item.sourceFullname),
+    ]);
+    const discoverable = observed.filter(item => decisions.get(item.post.fullname) === 'allow');
+    const discovered = await this.store.discover(discoverable.map(item => ({
       sourceSubreddit: item.subreddit,
       targetSubreddit: item.targetSubreddit,
       sourcePostId: item.post.id,
@@ -149,6 +165,13 @@ export class BidirectionalPostMirror {
     let failed = 0;
 
     for (const item of pending) {
+      const decision = decisions.get(item.sourceFullname) ?? 'pending';
+      if (decision === 'pending') continue;
+      if (decision === 'deny') {
+        await this.store.cancel(item.key);
+        continue;
+      }
+
       const claimed = await this.store.begin(item.key);
       if (claimed === null) continue;
       const targetRecent = recentBySubreddit.get(lower(claimed.targetSubreddit)) ?? [];
