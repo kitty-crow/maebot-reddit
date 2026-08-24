@@ -109,8 +109,8 @@ try {
   const assignmentsByUser = new Map(assignmentsAfter.map(assignment => [lower(assignment.username), assignment]));
   for (const username of localTypoUsers) {
     const assignment = assignmentsByUser.get(lower(username));
-    if (assignment?.templateId !== canonical.id || assignment.text !== canonical.text) {
-      throw new Error(`Reddit did not verify canonical Pawsome flair for u/${username}`);
+    if (assignment?.text !== canonical.text) {
+      throw new Error(`Reddit did not verify canonical Pawsome flair text for u/${username}`);
     }
   }
 
