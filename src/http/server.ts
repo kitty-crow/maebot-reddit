@@ -1,4 +1,5 @@
 import type { ModerationReviewStore } from '../mod/review.ts';
+import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
 import type { ModmailReplyOutbox } from '../modmail/outbox.ts';
 import type { ModmailStore } from '../modmail/store.ts';
 import type { ModmailTerminalServer } from '../modmail/terminalServer.ts';
@@ -155,7 +156,7 @@ export class RedditInternalHttpServer {
     const conversation = await this.modmail.conversation(id);
     if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
     if (conversation.state === 'archived') return this.record(req, url, json({ error: 'conversation archived' }, 409));
-    let attachments = [];
+    let attachments: ModmailMediaAttachment[] = [];
     if (ids.length > 0) {
       if (this.modmailTerminal === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
       try {
