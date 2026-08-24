@@ -217,12 +217,20 @@ const directMessages = dmCfg === null
       moderationPrivileges,
     );
 
-const pollMs = (() => {
-  const raw = process.env['REDDIT_TWITTER_POLL_MS']?.trim() || '5000';
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 1000) throw new Error('REDDIT_TWITTER_POLL_MS must be an integer of at least 1000');
+const intervalMs = (name: string, fallback: number, minimum: number): number => {
+  const raw = process.env[name]?.trim();
+  const value = raw === undefined || raw.length === 0 ? fallback : Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${name} must be an integer of at least ${minimum}`);
+  }
   return value;
-})();
+};
+
+const pollMs = intervalMs('REDDIT_TWITTER_POLL_MS', 5_000, 1_000);
+const modmailPollMs = intervalMs('REDDIT_MODMAIL_POLL_MS', 15_000, 5_000);
+const moderationPollMs = intervalMs('REDDIT_MODERATION_POLL_MS', 10_000, 5_000);
+const dmPollMs = intervalMs('REDDIT_DM_POLL_MS', 15_000, 5_000);
+const mirrorPollMs = intervalMs('REDDIT_MIRROR_POLL_MS', 10_000, 5_000);
 
 terminal.start();
 console.log(`Focused Reddit modmail terminal listening on ${terminal.address()}; preview=${terminal.previewAddress()}; public base=${terminalCfg.publicBase ?? 'unavailable'}.`);
@@ -235,18 +243,26 @@ internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
 let ticking = false;
+let nextModmailAt = 0;
+let nextModerationAt = 0;
+let nextDmAt = 0;
+let nextMirrorAt = 0;
 const tick = async (): Promise<void> => {
   if (ticking) return;
   ticking = true;
   try {
+    const now = Date.now();
     const delivery = await bridge.deliverPending();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
     let modmailResult = null;
-    try {
-      modmailResult = await modmail.tick();
-    } catch (error) {
-      console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
+    if (now >= nextModmailAt) {
+      nextModmailAt = now + modmailPollMs;
+      try {
+        modmailResult = await modmail.tick();
+      } catch (error) {
+        console.error(`[Reddit modmail] tick failed: ${safeError(error)}`);
+      }
     }
     let privateModmailResult = null;
     if (privateModmail !== null) {
@@ -257,7 +273,8 @@ const tick = async (): Promise<void> => {
       }
     }
     let dmResult = null;
-    if (directMessages !== null && dmCfg !== null) {
+    if (directMessages !== null && dmCfg !== null && now >= nextDmAt) {
+      nextDmAt = now + dmPollMs;
       try {
         dmResult = await directMessages.tick(dmCfg.batchSize);
       } catch (error) {
@@ -265,7 +282,8 @@ const tick = async (): Promise<void> => {
       }
     }
     let moderationResult = null;
-    if (moderation !== null) {
+    if (moderation !== null && now >= nextModerationAt) {
+      nextModerationAt = now + moderationPollMs;
       try {
         moderationResult = await moderation.tick();
       } catch (error) {
@@ -281,7 +299,8 @@ const tick = async (): Promise<void> => {
       }
     }
     let mirror = null;
-    if (postMirror !== null) {
+    if (postMirror !== null && now >= nextMirrorAt) {
+      nextMirrorAt = now + mirrorPollMs;
       try {
         mirror = await postMirror.tick();
       } catch (error) {
@@ -409,6 +428,9 @@ if (moderation === null) {
 if (directMessages === null) {
   console.log('Mae Reddit direct-message conversation handling is disabled by REDDIT_DM_ENABLED.');
 }
+console.log(
+  `Reddit API polling cadence: moderation=${moderationPollMs}ms modmail=${modmailPollMs}ms dm=${dmPollMs}ms mirror=${mirrorPollMs}ms; shared quota gate caps Data API traffic at 1 request/second.`,
+);
 
 if (privateModmail !== null) {
   const seeded = await privateModmail.bootstrap();
@@ -424,7 +446,10 @@ if (communityProjection !== null) {
     `Initial r/${canonicalTargetSubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
   );
 }
-if (postMirror !== null) await postMirror.tick();
+if (postMirror !== null) {
+  await postMirror.tick();
+  nextMirrorAt = Date.now() + mirrorPollMs;
+}
 await startupSmoke();
 await tick();
 const timer = setInterval(() => {
