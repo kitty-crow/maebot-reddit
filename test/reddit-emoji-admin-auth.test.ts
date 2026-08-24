@@ -11,10 +11,10 @@ const mae: RedditAuthCfg = {
 };
 
 describe('Reddit emoji admin auth', () => {
-  test('uses the dedicated Reddit user while reusing Mae OAuth app credentials by default', () => {
+  test('uses interactive admin credentials while retaining Mae OAuth app credentials', () => {
     expect(redditEmojiAdminAuth(mae, {
-      REDDIT_EMOJI_ADMIN_USERNAME: 'kitty-main',
-      REDDIT_EMOJI_ADMIN_PASSWORD: 'admin-password',
+      username: 'kitty-main',
+      password: 'admin-password',
     })).toEqual({
       clientId: 'mae-client',
       clientSecret: 'mae-secret',
@@ -24,32 +24,23 @@ describe('Reddit emoji admin auth', () => {
     });
   });
 
-  test('supports a separate OAuth app only when client id and secret are supplied together', () => {
-    expect(redditEmojiAdminAuth(mae, {
-      REDDIT_EMOJI_ADMIN_USERNAME: 'kitty-main',
-      REDDIT_EMOJI_ADMIN_PASSWORD: 'admin-password',
-      REDDIT_EMOJI_ADMIN_CLIENT_ID: 'admin-client',
-      REDDIT_EMOJI_ADMIN_CLIENT_SECRET: 'admin-secret',
-      REDDIT_EMOJI_ADMIN_USER_AGENT: 'admin-agent',
-    })).toEqual({
-      clientId: 'admin-client',
-      clientSecret: 'admin-secret',
-      username: 'kitty-main',
-      password: 'admin-password',
-      userAgent: 'admin-agent',
+  test('normalises username whitespace but preserves the password exactly', () => {
+    const auth = redditEmojiAdminAuth(mae, {
+      username: '  kitty-main  ',
+      password: '  secret with spaces  ',
     });
-
-    expect(() => redditEmojiAdminAuth(mae, {
-      REDDIT_EMOJI_ADMIN_USERNAME: 'kitty-main',
-      REDDIT_EMOJI_ADMIN_PASSWORD: 'admin-password',
-      REDDIT_EMOJI_ADMIN_CLIENT_ID: 'admin-client',
-    })).toThrow('must be configured together');
+    expect(auth.username).toBe('kitty-main');
+    expect(auth.password).toBe('  secret with spaces  ');
   });
 
-  test('requires explicit admin username and password', () => {
-    expect(() => redditEmojiAdminAuth(mae, {})).toThrow('REDDIT_EMOJI_ADMIN_USERNAME');
+  test('rejects missing interactive credentials', () => {
     expect(() => redditEmojiAdminAuth(mae, {
-      REDDIT_EMOJI_ADMIN_USERNAME: 'kitty-main',
-    })).toThrow('REDDIT_EMOJI_ADMIN_PASSWORD');
+      username: '   ',
+      password: 'admin-password',
+    })).toThrow('username is required');
+    expect(() => redditEmojiAdminAuth(mae, {
+      username: 'kitty-main',
+      password: '',
+    })).toThrow('password is required');
   });
 });
