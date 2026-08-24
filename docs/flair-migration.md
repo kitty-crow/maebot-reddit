@@ -29,8 +29,9 @@ The required activation order is:
 3. let the NyaOnEarth projection establish the existing canonical communication restrictions there and verify them against Reddit's live muted-user relationship;
 4. stop the normal Mae runtime when using exclusive migration pacing, then run `bun run clone:flairs`; the command targets `r/nyaonearth` explicitly and resumes already-correct target state rather than starting over;
 5. verify the schema-2 bootstrap result;
-6. custom emojis may then be migrated separately with `bun run clone:emojis` using a privileged interactive Reddit account;
-7. only after bootstrap, set `REDDIT_PRIMARY_SUBREDDIT=nyaonearth` and restart when the cross-community publishing/post-mirror cutover is desired.
+6. restart Mae on the green bootstrap code;
+7. run the one-off custom emoji pre-flight and migration separately;
+8. only after the remaining migration work is verified, set `REDDIT_PRIMARY_SUBREDDIT=nyaonearth` when the cross-community publishing/post-mirror cutover is desired.
 
 The bootstrap command enforces the safety-critical part of this order. Before exposing any target permanent ban it checks that every canonical `banned`/`scam` user has both Mae's current NyaOnEarth projection checkpoint and a live Reddit mute. If either is missing, the command aborts.
 
@@ -45,26 +46,39 @@ Mae must be a moderator of both communities with:
 
 `config` / Manage Settings is **not** required for the main community bootstrap.
 
-Custom emoji mutation is a separate subreddit appearance/settings operation. `bun run clone:emojis` therefore authenticates a separate interactive Reddit account and verifies that exact account has `config` / Manage Settings in NyaOnEarth before it inventories or writes target emoji state. Mae's normal credentials and moderator permissions remain unchanged.
+Custom emoji mutation is a separate one-off subreddit appearance/settings operation performed with an interactively authenticated moderator account. Mae's normal credentials and moderator permissions remain unchanged.
 
 ## Custom emojis
 
 Custom emoji migration is deliberately separate from the schema-2 community bootstrap.
 
-After the main bootstrap completes, run:
+First run the read-only pre-flight:
+
+```bash
+bun run preflight:emojis
+```
+
+The command asks for the Reddit username normally and reads the password with terminal echo disabled. The credentials exist only in process memory for that invocation; they are not written to `.env`, command-line arguments, shell history or migration state.
+
+The pre-flight performs no Reddit mutations. It authenticates the entered account and checks the exact requirements of this one-off clone:
+
+- CatgirlCoin: the account is a moderator and can read the custom-emoji inventory;
+- NyaOnEarth: the account is a moderator, has `config` / Manage Settings, and can read the custom-emoji inventory.
+
+It also reports the granted moderator permissions and visible emoji count for each community. A PASS means the entered account satisfies the authority/read prerequisites used by the real clone.
+
+Then run:
 
 ```bash
 bun run clone:emojis
 ```
 
-The command requires an interactive TTY. It asks for the privileged Reddit username normally and reads the password with terminal echo disabled. Those credentials exist only in process memory for that run; they are not read from or written to `.env`, command-line arguments, shell history or migration state.
-
-The privileged identity reuses Mae's configured Reddit OAuth script-app client ID and secret, but substitutes the interactively supplied Reddit username/password for the emoji operation. The command verifies that the authenticated account has NyaOnEarth Manage Settings before custom emoji work begins.
+The clone prompts for the credentials again rather than persisting them. Before its first mutation it repeats the same read-only pre-flight internally. The same authenticated account is used to read both source and target emoji inventories and to write the target state.
 
 Emoji migration:
 
-1. inventories CatgirlCoin source emojis using Mae's normal read client;
-2. inventories NyaOnEarth target emojis using the privileged account;
+1. inventories CatgirlCoin source emojis;
+2. inventories NyaOnEarth target emojis;
 3. preserves NyaOnEarth-only emoji names;
 4. compares same-name image assets by SHA-256;
 5. skips exact matches;
@@ -194,7 +208,7 @@ A failed or interrupted apply must be investigated before rerun. Do not delete c
 
 The main bootstrap does not copy:
 
-- custom emoji assets (use the separate interactive `bun run clone:emojis` command after schema 2 exists);
+- custom emoji assets (use the separate interactive one-off command after schema 2 exists);
 - subscribers;
 - historical comments;
 - the historical non-sticky post archive;
