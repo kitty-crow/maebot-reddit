@@ -94,7 +94,7 @@ const fixture = async () => {
   const outbox = new ModmailReplyOutbox(join(root, 'replies.pb'));
   const reader = new Reader();
   const writer = new Writer(reader);
-  await relay.sync([reader.current], 100);
+  await relay.sync([reader.current], 100, ['catgirlcoin']);
   const runtime = new ModmailRuntime(
     'catgirlcoin',
     reader,
