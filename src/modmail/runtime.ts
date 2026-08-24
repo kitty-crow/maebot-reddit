@@ -13,14 +13,34 @@ export type ModmailRuntimeTick = {
   readonly failed: number;
 };
 
+const communities = (value: string | readonly string[]): readonly string[] => {
+  const input = typeof value === 'string' ? [value] : [...value];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const subreddit = raw.trim();
+    if (subreddit.length === 0) throw new Error('Modmail subreddit name cannot be empty');
+    const key = subreddit.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(subreddit);
+  }
+  if (out.length === 0) throw new Error('Modmail runtime requires at least one subreddit');
+  return out;
+};
+
 export class ModmailRuntime {
+  private readonly subreddits: readonly string[];
+
   public constructor(
-    private readonly subreddit: string,
+    subreddits: string | readonly string[],
     private readonly reader: ModmailReader,
     private readonly writer: ModmailWriter,
     private readonly store: ModmailStore,
     private readonly outbox: ModmailReplyOutbox | null = null,
-  ) {}
+  ) {
+    this.subreddits = communities(subreddits);
+  }
 
   private async applyReplies(): Promise<{ readonly applied: number; readonly failed: number }> {
     if (this.outbox === null) return { applied: 0, failed: 0 };
@@ -36,7 +56,7 @@ export class ModmailRuntime {
         if (!alreadyPresent) await this.writer.replyModmail(reply.conversationId, reply.bodyMarkdown);
         await this.outbox.markApplied(reply.key);
         const after = alreadyPresent ? before : await this.reader.modmailConversation(reply.conversationId, false);
-        await this.store.sync([after]);
+        await this.store.sync([after], Math.floor(Date.now() / 1_000), this.subreddits);
         await this.store.markReplyOrigin(
           reply.conversationId,
           reply.bodyMarkdown,
@@ -55,8 +75,17 @@ export class ModmailRuntime {
   }
 
   public async tick(): Promise<ModmailRuntimeTick> {
-    const page = await this.reader.modmailConversations(this.subreddit, 100);
-    const events = await this.store.sync(page.conversations);
+    const pages = await Promise.all(
+      this.subreddits.map(async subreddit => await this.reader.modmailConversations(subreddit, 100)),
+    );
+    const conversations = pages
+      .flatMap(page => page.conversations)
+      .sort((left, right) => left.lastUpdatedAt - right.lastUpdatedAt || left.id.localeCompare(right.id));
+    const events = await this.store.sync(
+      conversations,
+      Math.floor(Date.now() / 1_000),
+      this.subreddits,
+    );
     const replies = await this.applyReplies();
     return {
       relayed: events.length,
