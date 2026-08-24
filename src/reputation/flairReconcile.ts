@@ -98,8 +98,13 @@ export const authoritativeFlairRestores = (
     if (username === null || templateId === null || flairText === null) continue;
 
     const assignment = live.get(normalise(username));
-    const wrongTemplate = assignment === undefined || assignment.templateId !== templateId;
     const wrongText = assignment === undefined || assignment.text !== flairText;
+    // Reddit's /api/flairlist can omit flair_template_id for legacy assignments.
+    // Missing UUID is unknown, not evidence of a wrong template. Explicitly
+    // returned mismatched UUIDs remain authoritative evidence and are restored.
+    const wrongTemplate = assignment !== undefined
+      && assignment.templateId !== null
+      && assignment.templateId !== templateId;
     if (!wrongTemplate && !wrongText) continue;
 
     restores.push({ username, templateId, text: flairText });
