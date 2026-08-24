@@ -97,6 +97,10 @@ const commentItem = (comment: RedditComment): RuntimeItem => ({
 
 const voteReviewKey = (value: ReputationVoteSuspicion): string =>
   `vote-manipulation:${value.fullname}:${Math.max(0, Math.floor(value.score / 25))}`;
+const subredditFromPermalink = (permalink: string): string | null => {
+  const match = /(?:^|\/)r\/([^/]+)(?:\/|$)/iu.exec(permalink);
+  return match?.[1] ?? null;
+};
 
 const communities = (value: string | readonly string[]): readonly string[] => {
   const input = typeof value === 'string' ? [value] : [...value];
@@ -206,7 +210,7 @@ export class RedditModerationRuntime {
       key,
       targetKind: suspicion.kind === 'post' ? 'submission' : 'comment',
       targetId: suspicion.fullname,
-      subreddit: this.flairSubreddit,
+      subreddit: subredditFromPermalink(suspicion.permalink) ?? this.flairSubreddit,
       permalink: suspicion.permalink,
       author: suspicion.author,
       summary: `Suspicious Reddit vote growth detected for ${suspicion.fullname}. Confirm only if the pattern is consistent with vote manipulation; score trajectory alone is not proof.`,
@@ -310,27 +314,9 @@ export class RedditModerationRuntime {
       }
     }
 
-    for (const ban of effects.bans) {
-      try {
-        for (const subreddit of this.subreddits) {
-          await this.writer.banUser(
-            subreddit,
-            ban.username,
-            'Mae reputation enforcement',
-            `Permanent Mae reputation floor reached from ${ban.fullname}.`,
-          );
-        }
-        await this.reputation.markBanApplied(ban.fullname);
-        applied += 1;
-      } catch (error) {
-        failed += 1;
-        console.error(`[Reddit moderation] ban failed for u/${ban.username}: ${safeError(error)}`);
-      }
-    }
-
-    // Existing communication-mute policy remains owned by the canonical
-    // CatgirlCoin moderation surface until the community bootstrap is applied.
-    // A Reddit ban itself is not supplemented with any new mute behaviour here.
+    // reputation.pb owns the canonical CatgirlCoin application checkpoint.
+    // NyaOnEarth bans/mutes are reconciled independently by the community
+    // projection so a target failure can never mark the source effect complete.
     for (const mute of mutes) {
       try {
         if (mute.action === 'mute') await this.writer.muteUser(this.flairSubreddit, mute.username, mute.note);
@@ -340,6 +326,22 @@ export class RedditModerationRuntime {
       } catch (error) {
         failed += 1;
         console.error(`[Reddit moderation] ${mute.action} failed for u/${mute.username}: ${safeError(error)}`);
+      }
+    }
+
+    for (const ban of effects.bans) {
+      try {
+        await this.writer.banUser(
+          this.flairSubreddit,
+          ban.username,
+          'Mae reputation enforcement',
+          `Permanent Mae reputation floor reached from ${ban.fullname}.`,
+        );
+        await this.reputation.markBanApplied(ban.fullname);
+        applied += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(`[Reddit moderation] ban failed for u/${ban.username}: ${safeError(error)}`);
       }
     }
 
