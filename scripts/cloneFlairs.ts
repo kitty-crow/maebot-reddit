@@ -17,6 +17,7 @@ import { isMap, parseMap } from '../src/types/json.ts';
 
 const sourceSubreddit = 'catgirlcoin';
 const targetSubreddit = 'nyaonearth';
+const maintenanceRateReserve = 30;
 
 const cfg = redditConfig();
 const moderationCfg = redditModerationConfig();
@@ -29,8 +30,11 @@ if (primary !== sourceSubreddit && primary !== targetSubreddit) {
   throw new Error('REDDIT_PRIMARY_SUBREDDIT must be catgirlcoin before bootstrap or nyaonearth after cutover');
 }
 
-const read = new RedditReadClient(cfg.auth);
-const write = new RedditMutationClient(cfg.auth);
+// Bootstrap is intentionally lower priority than the live moderation runtime.
+// Both share one persisted OAuth budget, but this maintenance client stops
+// spending while thirty requests remain so live moderation can keep operating.
+const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
+const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const reputation = new ReputationStore(moderationCfg.stateFile);
 const projection = new CommunityProjectionStore(resolve(
   process.cwd(),
