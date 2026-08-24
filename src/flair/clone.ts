@@ -9,6 +9,10 @@ export type FlairCloneResult = {
   readonly userAssignmentsAlreadyCorrect: number;
 };
 
+export type FlairCloneOptions = {
+  readonly copyAssignments?: boolean;
+};
+
 const norm = (value: string | null): string => value ?? '';
 
 const samePresentation = (left: RedditFlairTemplate, right: RedditFlairTemplate): boolean =>
@@ -65,7 +69,11 @@ export class FlairCloner {
     private readonly write: RedditMutationClient,
   ) {}
 
-  public async clone(sourceSubreddit: string, targetSubreddit: string): Promise<FlairCloneResult> {
+  public async clone(
+    sourceSubreddit: string,
+    targetSubreddit: string,
+    options: FlairCloneOptions = {},
+  ): Promise<FlairCloneResult> {
     const [sourceUsers, sourcePosts, sourceAssignments, initialTargetUsers, initialTargetPosts] = await Promise.all([
       this.read.userFlairTemplates(sourceSubreddit),
       this.read.postFlairTemplates(sourceSubreddit),
@@ -101,9 +109,17 @@ export class FlairCloner {
       this.read.userFlairAssignments(targetSubreddit),
     ]);
 
-    // Validate every source template has exactly one semantic destination after creation.
     for (const source of sourceUsers) targetFor(source, targetUsers, 'user');
     for (const source of sourcePosts) targetFor(source, targetPosts, 'post');
+
+    if (options.copyAssignments === false) {
+      return {
+        userTemplatesCreated,
+        postTemplatesCreated,
+        userAssignmentsApplied: 0,
+        userAssignmentsAlreadyCorrect: 0,
+      };
+    }
 
     const targetByUsername = new Map(targetAssignments.map(item => [item.username.toLowerCase(), item]));
     let userAssignmentsApplied = 0;
