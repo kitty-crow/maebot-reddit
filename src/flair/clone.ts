@@ -74,10 +74,11 @@ export class FlairCloner {
     targetSubreddit: string,
     options: FlairCloneOptions = {},
   ): Promise<FlairCloneResult> {
+    const copyAssignments = options.copyAssignments !== false;
     const [sourceUsers, sourcePosts, sourceAssignments, initialTargetUsers, initialTargetPosts] = await Promise.all([
       this.read.userFlairTemplates(sourceSubreddit),
       this.read.postFlairTemplates(sourceSubreddit),
-      this.read.userFlairAssignments(sourceSubreddit),
+      copyAssignments ? this.read.userFlairAssignments(sourceSubreddit) : Promise.resolve([]),
       this.read.userFlairTemplates(targetSubreddit),
       this.read.postFlairTemplates(targetSubreddit),
     ]);
@@ -106,13 +107,13 @@ export class FlairCloner {
     const [targetUsers, targetPosts, targetAssignments] = await Promise.all([
       this.read.userFlairTemplates(targetSubreddit),
       this.read.postFlairTemplates(targetSubreddit),
-      this.read.userFlairAssignments(targetSubreddit),
+      copyAssignments ? this.read.userFlairAssignments(targetSubreddit) : Promise.resolve([]),
     ]);
 
     for (const source of sourceUsers) targetFor(source, targetUsers, 'user');
     for (const source of sourcePosts) targetFor(source, targetPosts, 'post');
 
-    if (options.copyAssignments === false) {
+    if (!copyAssignments) {
       return {
         userTemplatesCreated,
         postTemplatesCreated,
