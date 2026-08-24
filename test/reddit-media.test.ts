@@ -39,7 +39,7 @@ test('Reddit media client obtains a lease and uploads bytes to the returned HTTP
       expect((body as URLSearchParams).get('mimetype')).toBe('image/png');
       return lease();
     }
-    expect(url).toBe('https://reddit-uploaded-media.s3-accelerate.amazonaws.com/');
+    expect(url).toBe('https://reddit-uploaded-media.s3-accelerate.amazonaws.com');
     expect(init?.method).toBe('POST');
     expect(init?.body).toBeInstanceOf(FormData);
     const form = init?.body as FormData;
