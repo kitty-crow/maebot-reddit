@@ -7,7 +7,7 @@ import { RedditReadClient } from '../src/reddit/client.ts';
 import type { RedditEmoji } from '../src/reddit/emoji.ts';
 import { safeError } from '../src/reddit/error.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
-import { isMap, parseMap } from '../src/types/json.ts';
+import { parseMap } from '../src/types/json.ts';
 
 const sourceSubreddit = 'catgirlcoin';
 const targetSubreddit = 'nyaonearth';
@@ -123,9 +123,7 @@ try {
     );
   }
 
-  if (!isMap(parseMap(await readFile(catalogueFile, 'utf8')))) {
-    throw new Error('Community bootstrap catalogue disappeared during emoji clone');
-  }
+  await requireCompletedBootstrap();
 
   console.log(`Target custom emojis after clone: ${targetAfter.length}`);
   console.log(`Emoji assets uploaded/replaced: ${uploaded}`);
