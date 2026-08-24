@@ -1,171 +1,161 @@
-# Flair migration audit
+# CatgirlCoin → NyaOnEarth community bootstrap
 
-## Direction
+## Authority and direction
 
-Flair migration is one-way configuration/state migration from the established legacy community to the new primary community:
+This migration is deliberately one-way:
 
-- source: `r/catgirlcoin`
-- destination: `r/nyaonearth`
+- canonical/source community: `r/catgirlcoin`
+- target community: `r/nyaonearth`
 
-`r/nyaonearth` is not to be reverse-engineered as if it already had a mature flair system. The authoritative inventory must be exported from `r/catgirlcoin`.
+Mae has one Reddit runtime and one canonical reputation store. `r/nyaonearth` is a second moderation surface, not a second reputation system.
 
-## Required migration surface
+Canonical member state lives in `data/reputation.pb`:
 
-The live source audit must export:
+- points and tier;
+- ordinary/warned/uncivil/banned/scam status;
+- moderation history;
+- discipline and communication-restriction intent.
 
-### User flair templates
+Legacy Python databases, `warned_users`/`banned_users` arrays and old CSS-only interpretations are migration evidence only. They are not authority for this community bootstrap.
 
-- source Reddit template ID;
-- displayed text;
-- CSS class where present;
-- text colour;
-- background colour;
-- user-editable flag;
-- mod-only/restricted semantics where exposed;
-- any rich-text/emote representation supported by the current API;
-- assignment count;
-- semantic notes.
+## Required order
 
-### User flair assignments
+Do not run `bun run clone:flairs` immediately after deploying code.
 
-For each relevant account:
+The required activation order is:
 
-- username;
-- source template ID;
-- displayed text;
-- source CSS class;
-- derived logical flair identity after mapping;
-- current warned/banned status from legacy local state where applicable.
+1. configure `REDDIT_SOURCE_SUBREDDIT=catgirlcoin` and `REDDIT_PRIMARY_SUBREDDIT=nyaonearth`;
+2. start the dual-community Mae runtime;
+3. let Mae ingest/moderate posts, comments and Modmail from both communities using the one canonical `reputation.pb`;
+4. let the NyaOnEarth projection establish the existing canonical communication restrictions there;
+5. only then run `bun run clone:flairs` to bootstrap target templates, canonical flairs, stickies and permanent bans.
 
-### Post flair templates
+The bootstrap command enforces this order. Before any subreddit mutation it checks that every canonical `banned`/`scam` user already has a current NyaOnEarth communication-projection checkpoint. If that projection has not converged, the command aborts.
 
-- source Reddit template ID;
-- displayed text;
-- CSS class where present;
-- text/background colour;
-- mod-only flag;
-- user-editable flag;
-- semantic notes;
-- representative usage counts where practical.
+## Moderator permissions
 
-## Semantics already visible in legacy source
+Mae must be a moderator of both communities with these permissions:
 
-The imported Python code provides evidence for several semantic categories, but live Reddit configuration remains authoritative for the full inventory.
+- `access` — user bans and communication restrictions;
+- `flair` — user/post flair templates and assignments;
+- `posts` — sticky/post operations;
+- `mail` — Modmail operation.
 
-### User status semantics
+`config` is not required for this bootstrap. `wiki` may be useful for other Mae features but is not an apply prerequisite here.
 
-- warned/restricted users are represented by legacy CSS class `w` and persisted `warned_users` state;
-- banned/uncivil users are represented by legacy CSS classes including `u` and `s` and persisted `banned_users` state;
-- ordinary community/user identity flairs are also used as a participation gate by the old bot.
+The bootstrap rechecks the required permissions itself rather than relying on a prior manual audit.
 
-The new architecture must migrate the meaning of these states, not preserve CSS classes or template UUIDs as domain identifiers.
+## Flair templates and local IDs
 
-### Post semantics
+Reddit flair template UUIDs are subreddit-local implementation identifiers. A CatgirlCoin UUID must never be written directly into NyaOnEarth.
 
-- `Question` is a meaningful post category that activates the question/help workflow;
-- the legacy question-cleaning path can move invalidly formatted question posts to a different hard-coded template;
-- an NSFW helper exists that can change post flair, but its production wiring is not yet proven.
+`bun run clone:flairs`:
 
-The full post-flair taxonomy must come from the live `r/catgirlcoin` export before final logical IDs are defined.
+1. reads CatgirlCoin user and post flair templates;
+2. creates any missing presentation-equivalent templates in NyaOnEarth;
+3. requires each source template to resolve to exactly one destination template;
+4. records the source-template → target-template mapping in `data/flairs.json`;
+5. projects each canonical user's desired CatgirlCoin flair through that local mapping.
 
-## Template IDs are not portable
+Moderator flairs are not overwritten by member-reputation projection. Users marked `unmapped` or `needsReview` cause the bootstrap to fail rather than guess.
 
-Reddit flair template IDs are subreddit-specific implementation identifiers. They must never be copied from `r/catgirlcoin` into `r/nyaonearth` as though they identify the same object.
+The final `data/flairs.json` is schema 2. Its successful atomic rename is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. Before a completed schema-2 catalogue exists, the running target projection applies communication restrictions only and deliberately does not mass-clone bans or member flairs.
 
-The migration journal must record:
+## Tier and moderation projection
 
-`catgirlcoinTemplateId -> logicalId -> nyaonearthTemplateId`
+The target assignment comes from canonical reputation state, not from blindly copying the currently visible CatgirlCoin assignment.
 
-Logical IDs must be stable domain identifiers derived only after the source inventory is known. Examples in planning documents such as `user:status:warned` or `post:question` illustrate the shape only and are not final inventory decisions.
+Current positive tiers are:
 
-## User assignment migration
+- 1–9: tier 1;
+- 10–99: tier 2;
+- 100–999: tier 3;
+- 1000–9998: tier 4;
+- 9999: tier 5 / Pawsome contributor;
+- moderators: tier 9 and exempt from ordinary member mutation.
 
-For each source user assignment that maps to a retained logical flair:
+Current negative states are:
 
-1. resolve the source template to a logical ID;
-2. resolve the logical ID to the newly created `r/nyaonearth` template;
-3. inspect the current destination assignment before writing;
-4. apply the target flair only when needed;
-5. persist the migration action/result using a deterministic key;
-6. classify deleted/suspended/unavailable users separately from failures;
-7. verify the final destination assignment.
+- warned: 0 through -3;
+- uncivil: -4 through -9;
+- permanent-ban trigger: -10, clamped to -999,999,999;
+- scam/prohibited malicious promotion: immediate permanent floor.
 
-Suggested logical action identity:
+**Uncivil is recoverable and is not a permanent-ban alias.** An old `u` flair must never by itself become a target permanent ban.
 
-`flair:user:<lowercaseUsername>:<logicalFlairId>:nyaonearth`
+Only canonical users whose status is `banned` or `scam` belong in the permanent target-ban set.
 
-The exact format may change, but rerunning the migration must converge without duplicate or conflicting writes.
+## Ban and communication-state preflight
 
-## Moderation status reconciliation
+Before any target write, the bootstrap fails closed if:
 
-The legacy local `warned_users`/`banned_users` state and the live source flair assignment are two evidence sources that may disagree.
+- source/target are not exactly CatgirlCoin → NyaOnEarth;
+- canonical reputation is not bootstrapped;
+- Mae lacks a required moderator permission in either community;
+- any canonical user is still `unmapped` or `needsReview`;
+- live CatgirlCoin bans differ from canonical `banned`/`scam` users;
+- NyaOnEarth contains a live ban absent from canonical permanent state;
+- any canonical permanent user lacks a current NyaOnEarth communication restriction.
 
-The migration must report mismatches rather than silently choosing one. Explicit legacy banned/uncivil state must not be lost merely because a visible flair was later changed or removed.
+This makes CatgirlCoin's established moderation state and Mae's canonical reputation agree before NyaOnEarth is mutated.
 
-The final moderation/reputation schema should retain status independently of cosmetic/user-facing flair so future flair redesign cannot erase moderation history.
+During apply, the target communication restriction is refreshed immediately before any newly exposed target permanent ban. The NyaOnEarth projection checkpoint is advanced with the successful mute write so normal runtime reconciliation does not duplicate it.
 
-## Post flair migration
+After apply, the target ban set is reread and verified against canonical permanent state.
 
-Historical `r/catgirlcoin` posts do not need to be copied merely to migrate definitions.
+## Sticky posts and mirror provenance
 
-Migration should:
+Current CatgirlCoin sticky slots are cloned or reused in NyaOnEarth. Their post flairs are translated through the target post-flair mapping.
 
-1. export all source post templates and semantics;
-2. assign stable logical IDs;
-3. create equivalent target templates in `r/nyaonearth`;
-4. record the source/logical/target mapping;
-5. make new Reddit posting and crossposting code select target templates through the logical mapping rather than source UUIDs;
-6. preserve question/help semantics in the new primary community.
+The bootstrap records every source/target sticky pair into `data/postMirror.pb`. This is required even when the old source sticky is outside Reddit's recent listing window: without persisted provenance, the normal bidirectional mirror could mistake the newly created NyaOnEarth sticky for fresh target content and mirror it back into CatgirlCoin.
 
-## Dry-run output
+Historical CatgirlCoin posts are not bulk backfilled.
 
-Before any target write, produce a machine-readable or deterministic report containing at least:
+Normal post mirroring after cutover is bidirectional and moderation-gated:
 
-- source user template count;
-- source post template count;
-- source user assignment count;
-- proposed logical mappings;
-- unmapped templates;
-- duplicate/ambiguous semantic candidates;
-- warned/banned state mismatches;
-- proposed destination creates;
-- proposed assignment writes;
-- users that cannot currently be resolved.
+- an unseen post waits while its canonical moderation result is pending;
+- an accepted or privileged post may be mirrored;
+- a post requiring removal is not mirrored;
+- Mae-created mirror copies are privileged/system activity and do not earn a second reputation contribution;
+- persisted source/counterpart provenance prevents loops and restart replay.
 
-No target mutation is permitted during this phase.
+## Continuous reconciliation after bootstrap
 
-## Apply phase
+There is still only one canonical user state after migration.
 
-The apply tool must be explicitly invoked. It must not run automatically on normal bot startup.
+CatgirlCoin remains the canonical flair/reputation surface in `reputation.pb`. NyaOnEarth owns only Reddit-local projection state such as its local flair UUIDs and communication-effect checkpoints.
 
-Required properties:
+After the schema-2 bootstrap catalogue exists, each runtime poll reconciles NyaOnEarth moderation state from canonical reputation:
 
-- copy-first source audit artefact;
-- stable source hash/revision for the plan being applied;
-- deterministic action keys;
-- safe retry after rate limits/network errors;
-- no duplicate template creation on rerun;
-- no duplicate assignment work on rerun;
-- classified permanent versus retryable failures;
-- sanitised logging;
-- complete action journal.
+1. communication restrictions first;
+2. missing canonical permanent bans second;
+3. local flair assignment on the configured flair-reconciliation cadence.
 
-## Verification
+A failed permanent communication-restriction write prevents that user's target ban from being applied on the same poll. The target remains retryable independently of CatgirlCoin's successful effect checkpoint.
 
-After apply, report:
+## Verification and reruns
 
-- source user template count;
-- destination mapped user template count;
-- source post template count;
-- destination mapped post template count;
-- source assignment count in migration scope;
-- successfully migrated assignment count;
-- already-correct count;
-- skipped/deleted/suspended account count;
-- failed count;
-- unmapped count;
-- semantic mismatch list;
-- warned/banned reconciliation mismatches;
-- spot-check sample of logical ID to source/destination template presentation.
+The bootstrap is designed to converge rather than create duplicate semantic templates or duplicate sticky pairs. It verifies, before reporting success:
 
-The migration is not complete while unexplained semantic mismatches remain.
+- every source flair template has exactly one destination presentation match;
+- canonical target member flairs no longer require restoration;
+- every canonical permanent user is banned in NyaOnEarth;
+- no unexplained target bans remain;
+- sticky source/target pairs are persisted in mirror state;
+- the final schema-2 catalogue is written atomically.
+
+A failed or interrupted apply must be investigated before rerun. Do not delete canonical `reputation.pb` to make migration errors disappear; reconcile the live/canonical mismatch that caused the fail-closed check.
+
+## Not part of this bootstrap
+
+This operation does not copy:
+
+- subscribers;
+- historical comments;
+- the historical non-sticky post archive;
+- vote totals;
+- Modmail history as new moderation events;
+- moderator membership/permission assignments;
+- arbitrary subreddit preferences requiring `config` permission.
+
+When NyaOnEarth Modmail is first activated, existing conversations are seeded as context without replaying their old participant messages as new behavioural offences. Only messages arriving after that activation boundary enter the normal relay/private-moderation stream.
