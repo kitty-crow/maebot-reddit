@@ -2,6 +2,7 @@ import { downloadEmojiAsset, emojiCloneAction, unresolvedEmojiClone } from './cl
 import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditEmoji } from '../reddit/emoji.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
+import { assertModeratorPermissions } from '../reddit/permissions.ts';
 
 export type CommunityEmojiCloneResult = {
   readonly sourceCount: number;
@@ -38,6 +39,15 @@ export const cloneCommunityEmojis = async (
   const verificationDelayMs = Math.max(0, Math.min(30_000, Math.floor(options.verificationDelayMs ?? 3_000)));
   const sleep = options.sleep ?? defaultSleep;
   const log = options.log ?? (() => undefined);
+
+  // Custom emoji mutation is a subreddit appearance/settings operation on Reddit,
+  // not merely a flair operation. Fail before inventory/download/write work when
+  // the target moderator lacks Manage Settings (`config`).
+  const [account, targetModerators] = await Promise.all([
+    read.me(),
+    read.moderators(targetSubreddit),
+  ]);
+  assertModeratorPermissions(account.name, targetSubreddit, targetModerators, ['config']);
 
   const [source, targetBefore] = await Promise.all([
     read.emojis(sourceSubreddit),
