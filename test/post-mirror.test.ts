@@ -2,7 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BidirectionalPostMirror, type MirrorReader, type MirrorWriter } from '../src/mirror/service.ts';
+import {
+  BidirectionalPostMirror,
+  type MirrorReader,
+  type MirrorWriter,
+  type PostMirrorSourceDecision,
+  type PostMirrorSourceGate,
+} from '../src/mirror/service.ts';
 import { PostMirrorStore } from '../src/mirror/store.ts';
 import type { RedditCreatedPost } from '../src/reddit/mutate.ts';
 import type { RedditPost } from '../src/reddit/types.ts';
@@ -70,7 +76,19 @@ class Writer implements MirrorWriter {
   }
 }
 
-const mirror = async (): Promise<{ reader: Reader; writer: Writer; service: BidirectionalPostMirror }> => {
+class Gate implements PostMirrorSourceGate {
+  public readonly states = new Map<string, PostMirrorSourceDecision>();
+
+  public async decisions(
+    fullnames: readonly string[],
+  ): Promise<ReadonlyMap<string, PostMirrorSourceDecision>> {
+    return new Map(fullnames.map(fullname => [fullname, this.states.get(fullname) ?? 'pending'] as const));
+  }
+}
+
+const mirror = async (
+  gate: PostMirrorSourceGate | null = null,
+): Promise<{ reader: Reader; writer: Writer; service: BidirectionalPostMirror }> => {
   const root = await mkdtemp(join(tmpdir(), 'mae-reddit-mirror-'));
   roots.push(root);
   const reader = new Reader();
@@ -79,7 +97,7 @@ const mirror = async (): Promise<{ reader: Reader; writer: Writer; service: Bidi
   return {
     reader,
     writer,
-    service: new BidirectionalPostMirror(reader, writer, store, 'nyaonearth', 'catgirlcoin'),
+    service: new BidirectionalPostMirror(reader, writer, store, 'nyaonearth', 'catgirlcoin', gate),
   };
 };
 
@@ -160,5 +178,28 @@ describe('bidirectional subreddit post mirror', () => {
     expect(fixture.writer.crossposts.map(call => [call.target, call.source])).toEqual([
       ['nyaonearth', 't3_external-crosspost'],
     ]);
+  });
+
+  test('new posts wait for moderation and rejected posts never become mirror work', async () => {
+    const gate = new Gate();
+    const fixture = await mirror(gate);
+    fixture.reader.nya = [post('nyaonearth', 'old-nya', 100)];
+    fixture.reader.catgirl = [post('catgirlcoin', 'old-cat', 100)];
+    await fixture.service.tick(1_000);
+
+    const accepted = post('catgirlcoin', 'accepted', 200);
+    fixture.reader.catgirl = [accepted, ...fixture.reader.catgirl];
+    expect((await fixture.service.tick(2_000)).discovered).toBe(0);
+    expect(fixture.writer.crossposts).toEqual([]);
+
+    gate.states.set(accepted.fullname, 'allow');
+    expect((await fixture.service.tick(3_000)).completed).toBe(1);
+    expect(fixture.writer.crossposts.map(call => call.source)).toEqual(['t3_accepted']);
+
+    const rejected = post('nyaonearth', 'rejected', 300);
+    fixture.reader.nya = [rejected, ...fixture.reader.nya];
+    gate.states.set(rejected.fullname, 'deny');
+    expect((await fixture.service.tick(4_000)).discovered).toBe(0);
+    expect(fixture.writer.crossposts.map(call => call.source)).toEqual(['t3_accepted']);
   });
 });
