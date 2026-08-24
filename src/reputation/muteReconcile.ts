@@ -13,6 +13,12 @@ const text = (value: Json | undefined): string | null =>
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
+const secondsToMilliseconds = (value: Json | undefined): number | null => {
+  const seconds = integerOrNull(value);
+  if (seconds === null || seconds < 0) return null;
+  const milliseconds = seconds * 1_000;
+  return Number.isSafeInteger(milliseconds) ? milliseconds : null;
+};
 
 const disciplineMap = (raw: JsonMap): JsonMap => {
   const discipline = raw['discipline'];
@@ -29,6 +35,7 @@ const desiredFor = (
   muteUntil: number | null,
   permanent: boolean,
   appliedAt: number | null,
+  legacyAnchorMs: number | null,
   nowMs: number,
 ): { readonly muteUntil: number | null; readonly permanent: boolean } => {
   // Bootstrap-seeded users predate the discipline journal. Their canonical
@@ -37,7 +44,11 @@ const desiredFor = (
   if (muteUntil !== null || permanent) return { muteUntil, permanent };
   if (status === 'uncivil') {
     return {
-      muteUntil: (appliedAt ?? nowMs) + UNCIVIL_MUTE_MS,
+      // Prefer the persisted application timestamp when a discipline record
+      // exists. Legacy bootstrap users have no such record, so anchor their
+      // one-time thirty-day restriction to the canonical seededAt timestamp
+      // rather than sliding the deadline forward on every poll.
+      muteUntil: (appliedAt ?? legacyAnchorMs ?? nowMs) + UNCIVIL_MUTE_MS,
       permanent: false,
     };
   }
@@ -63,7 +74,14 @@ export const reputationDesiredMutes = (
     const appliedAt = isMap(record) ? integerOrNull(record['muteAppliedAt']) : null;
     desired.push({
       username,
-      ...desiredFor(userRaw['status'], muteUntil, permanent, appliedAt, nowMs),
+      ...desiredFor(
+        userRaw['status'],
+        muteUntil,
+        permanent,
+        appliedAt,
+        secondsToMilliseconds(userRaw['seededAt']),
+        nowMs,
+      ),
     });
   }
   return desired.sort((left, right) => left.username.localeCompare(right.username));
