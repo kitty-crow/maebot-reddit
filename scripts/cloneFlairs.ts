@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { cloneCommunityEmojis } from '../src/emoji/migrate.ts';
 import { redditConfig, redditModerationConfig } from '../src/env.ts';
 import { FlairCloner } from '../src/flair/clone.ts';
 import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
@@ -12,7 +11,6 @@ import { redditMuteAction } from '../src/reputation/mutePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { reputationUsersRequiringReview } from '../src/reputation/trackingRepair.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
-import { redditEmojiAdminAuth } from '../src/reddit/emojiAdminAuth.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import { assertModeratorPermissions } from '../src/reddit/permissions.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
@@ -43,9 +41,6 @@ console.log(
 
 const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
-const emojiAdminAuth = redditEmojiAdminAuth(cfg.auth);
-const emojiRead = new RedditReadClient(emojiAdminAuth, { rateReserve: maintenanceRateReserve });
-const emojiWrite = new RedditMutationClient(emojiAdminAuth, { rateReserve: maintenanceRateReserve });
 const reputation = new ReputationStore(moderationCfg.stateFile);
 const projection = new CommunityProjectionStore(resolve(
   process.cwd(),
@@ -143,21 +138,6 @@ if (unprotectedPermanentUsers.length > 0) {
     + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its projection complete first.`,
   );
 }
-
-console.log(`Cloning custom emojis first: r/${sourceSubreddit} -> r/${targetSubreddit}`);
-const emojiClone = await cloneCommunityEmojis(
-  {
-    sourceRead: read,
-    targetRead: emojiRead,
-    targetWrite: emojiWrite,
-  },
-  sourceSubreddit,
-  targetSubreddit,
-  { log: message => console.log(message) },
-);
-console.log(
-  `Emoji clone complete: uploaded=${emojiClone.uploaded} permissions=${emojiClone.permissionsUpdated} unchanged=${emojiClone.unchanged}`,
-);
 
 console.log(`Cloning flair templates: r/${sourceSubreddit} -> r/${targetSubreddit}`);
 const result = await new FlairCloner(read, write).clone(
@@ -337,7 +317,6 @@ const catalogue = {
   sourceSubreddit,
   targetSubreddit,
   publishingPrimaryAtBootstrap: cfg.primarySubreddit,
-  emojiClone,
   userTemplates: {
     source: sourceUserTemplates,
     target: targetUserTemplates,
@@ -372,8 +351,6 @@ const temp = `${catalogueFile}.tmp.${process.pid}`;
 await writeFile(temp, `${JSON.stringify(catalogue, null, 2)}\n`, { mode: 0o600 });
 await rename(temp, catalogueFile);
 
-console.log(`emoji assets uploaded/replaced=${emojiClone.uploaded}`);
-console.log(`emoji permission-only updates=${emojiClone.permissionsUpdated}`);
 console.log(`user templates created=${result.userTemplatesCreated}`);
 console.log(`post templates created=${result.postTemplatesCreated}`);
 console.log(`canonical user flairs applied this run=${canonicalFlairsApplied}`);
@@ -385,4 +362,4 @@ console.log(`canonical banned/scam users reconciled=${canonicalBans.size}`);
 console.log(`target bans before=${targetBansBefore.length} after=${targetBansAfter.length}`);
 console.log(`target mutes before=${targetMutedBefore.length} after=${targetMutedAfter.length}`);
 console.log(`canonical flair catalogue=${catalogueFile}`);
-console.log('Canonical emoji, flair, sticky and moderation-state bootstrap complete.');
+console.log('Canonical flair, sticky and moderation-state bootstrap complete.');
