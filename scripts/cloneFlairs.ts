@@ -12,8 +12,10 @@ import { redditMuteAction } from '../src/reputation/mutePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { reputationUsersRequiringReview } from '../src/reputation/trackingRepair.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
+import { redditEmojiAdminAuth } from '../src/reddit/emojiAdminAuth.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
-import type { RedditFlairTemplate, RedditModerator } from '../src/reddit/types.ts';
+import { assertModeratorPermissions } from '../src/reddit/permissions.ts';
+import type { RedditFlairTemplate } from '../src/reddit/types.ts';
 import { isMap, parseMap } from '../src/types/json.ts';
 
 const sourceSubreddit = 'catgirlcoin';
@@ -41,6 +43,9 @@ console.log(
 
 const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
+const emojiAdminAuth = redditEmojiAdminAuth(cfg.auth);
+const emojiRead = new RedditReadClient(emojiAdminAuth, { rateReserve: maintenanceRateReserve });
+const emojiWrite = new RedditMutationClient(emojiAdminAuth, { rateReserve: maintenanceRateReserve });
 const reputation = new ReputationStore(moderationCfg.stateFile);
 const projection = new CommunityProjectionStore(resolve(
   process.cwd(),
@@ -82,21 +87,8 @@ if (!isMap(reputationRaw) || !isMap(reputationRaw['users'])) {
 }
 
 const requiredPermissions = ['access', 'flair', 'posts', 'mail'] as const;
-const assertPermissions = (
-  subreddit: string,
-  moderators: readonly RedditModerator[],
-): void => {
-  const mae = moderators.find(row => row.name.toLowerCase() === me.name.toLowerCase());
-  if (mae === undefined) throw new Error(`${me.name} is absent from r/${subreddit} moderator inventory`);
-  const granted = new Set(mae.permissions.map(value => value.toLowerCase()));
-  if (granted.has('all')) return;
-  const missing = requiredPermissions.filter(permission => !granted.has(permission));
-  if (missing.length > 0) {
-    throw new Error(`r/${subreddit} is missing Mae moderator permissions required for bootstrap: ${missing.join(', ')}`);
-  }
-};
-assertPermissions(sourceSubreddit, sourceModerators);
-assertPermissions(targetSubreddit, targetModerators);
+assertModeratorPermissions(me.name, sourceSubreddit, sourceModerators, requiredPermissions);
+assertModeratorPermissions(me.name, targetSubreddit, targetModerators, requiredPermissions);
 
 const canonicalBans = new Map<string, string>();
 for (const [key, raw] of Object.entries(reputationRaw['users'])) {
@@ -154,8 +146,11 @@ if (unprotectedPermanentUsers.length > 0) {
 
 console.log(`Cloning custom emojis first: r/${sourceSubreddit} -> r/${targetSubreddit}`);
 const emojiClone = await cloneCommunityEmojis(
-  read,
-  write,
+  {
+    sourceRead: read,
+    targetRead: emojiRead,
+    targetWrite: emojiWrite,
+  },
   sourceSubreddit,
   targetSubreddit,
   { log: message => console.log(message) },
