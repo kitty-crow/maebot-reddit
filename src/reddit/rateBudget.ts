@@ -12,7 +12,7 @@ export type RedditRateLimitedFetch = (
 export type RedditRateBudgetSleep = (milliseconds: number) => Promise<void>;
 
 export type RedditRateBudgetOptions = {
-  readonly reserve?: number;
+  readonly reserve?: number | undefined;
   readonly minimumIntervalMs?: number;
   readonly sleep?: RedditRateBudgetSleep;
   readonly now?: () => number;
