@@ -80,6 +80,49 @@ describe('Reddit modmail mute reconciliation', () => {
     }]);
   });
 
+  test('bootstrap-seeded banned and scam users are permanently muted without a discipline record', () => {
+    const raw = {
+      users: {
+        banned: { username: 'BannedUser', status: 'banned' },
+        scam: { username: 'ScamUser', status: 'scam' },
+      },
+      discipline: {},
+    };
+
+    expect(reputationMuteEffects(raw, start)).toEqual([
+      { username: 'BannedUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
+      { username: 'ScamUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
+    ]);
+  });
+
+  test('bootstrap-seeded uncivil user receives one normal thirty-day restriction', () => {
+    const initial = {
+      users: {
+        alice: { username: 'Alice', status: 'uncivil' },
+      },
+      discipline: {},
+    };
+    expect(reputationMuteEffects(initial, start)).toEqual([{
+      username: 'Alice', action: 'mute', note: 'Mae uncivil reputation state',
+    }]);
+
+    const applied = {
+      users: initial.users,
+      discipline: {
+        alice: {
+          muteUntil: null,
+          mutePermanent: false,
+          redditMuted: true,
+          muteAppliedAt: start,
+        },
+      },
+    };
+    expect(reputationMuteEffects(applied, start + 2 * day)).toEqual([]);
+    expect(reputationMuteEffects(applied, start + UNCIVIL_MUTE_MS)).toEqual([{
+      username: 'Alice', action: 'unmute', note: 'Mae reputation mute ended',
+    }]);
+  });
+
   test('persisted runtime state does not produce the old two-day refresh spam', () => {
     const raw = {
       users: {
