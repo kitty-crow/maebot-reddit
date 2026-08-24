@@ -1,8 +1,9 @@
 import type { ModerationReviewStore } from '../mod/review.ts';
+import type { ModmailMediaService } from '../modmail/media/service.ts';
 import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
 import type { ModmailReplyOutbox } from '../modmail/outbox.ts';
 import type { ModmailStore } from '../modmail/store.ts';
-import type { ModmailTerminalServer } from '../modmail/terminalServer.ts';
+import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
 import type { ReputationStore } from '../reputation/store.ts';
 import type { Json } from '../types/json.ts';
@@ -80,7 +81,7 @@ export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
   private modmailReplies: ModmailReplyOutbox | null = null;
-  private modmailTerminal: ModmailTerminalServer | null = null;
+  private modmailMedia: ModmailMediaService | null = null;
   private modmailReputation: ModmailReputationReader | null = null;
 
   public constructor(
@@ -93,13 +94,13 @@ export class RedditInternalHttpServer {
   public useModmail(
     store: ModmailStore,
     replies: ModmailReplyOutbox,
-    terminal: ModmailTerminalServer | null,
+    media: ModmailMediaService,
     reputation: ModmailReputationReader | null = null,
   ): void {
     if (this.server !== null) throw new Error('Modmail services must be attached before the Reddit internal API starts');
     this.modmail = store;
     this.modmailReplies = replies;
-    this.modmailTerminal = terminal;
+    this.modmailMedia = media;
     this.modmailReputation = reputation;
   }
 
@@ -158,9 +159,9 @@ export class RedditInternalHttpServer {
     if (conversation.state === 'archived') return this.record(req, url, json({ error: 'conversation archived' }, 409));
     let attachments: ModmailMediaAttachment[] = [];
     if (ids.length > 0) {
-      if (this.modmailTerminal === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
+      if (this.modmailMedia === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
       try {
-        attachments = [...await this.modmailTerminal.resolveMedia(id, ids)];
+        attachments = [...await this.modmailMedia.resolve(id, ids)];
       } catch {
         return this.record(req, url, json({ error: 'invalid or unavailable attachment' }, 400));
       }
@@ -176,13 +177,13 @@ export class RedditInternalHttpServer {
   }
 
   private async media(req: Request, url: URL, id: string): Promise<Response> {
-    if (this.modmailTerminal === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
+    if (this.modmailMedia === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
     const name = uploadName(req.headers.get('x-mae-file-name'));
     const mimeType = (req.headers.get('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase() ?? '';
     if (name === null || mimeType.length === 0) return this.record(req, url, json({ error: 'invalid media upload metadata' }, 400));
     try {
       const bytes = new Uint8Array(await req.arrayBuffer());
-      const attachment = await this.modmailTerminal.uploadMedia(id, name, mimeType, bytes);
+      const attachment = await this.modmailMedia.upload({ conversationId: id, name, mimeType, bytes });
       return this.record(req, url, json({ attachment }, 201), `conversation=${id} attachment=${attachment.id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'media upload failed';
@@ -190,35 +191,6 @@ export class RedditInternalHttpServer {
         : message.includes('archived') ? 409
           : message.includes('20 MB') || message.includes('Unsupported') || message.includes('filename') ? 400
             : 503;
-      return this.record(req, url, json({ error: message }, status), `conversation=${id}`);
-    }
-  }
-
-  private async terminal(req: Request, url: URL): Promise<Response> {
-    if (this.modmailTerminal === null) {
-      return this.record(req, url, json({ error: 'focused modmail terminal unavailable' }, 503));
-    }
-    const raw = await bodyMap(req);
-    if (!isMap(raw)) return this.record(req, url, json({ error: 'invalid terminal request' }, 400));
-    const id = conversationId(raw['conversationId']);
-    const source = platform(raw['platform']);
-    const userId = nonEmptyText(raw['userId'], 128);
-    const handle = nonEmptyText(raw['handle'], 128);
-    if (id === null || source === null || userId === null || handle === null) {
-      return this.record(req, url, json({ error: 'invalid terminal request' }, 400));
-    }
-    try {
-      const link = await this.modmailTerminal.issue(id, { platform: source, userId, handle });
-      return this.record(req, url, json(link, 201), `conversation=${id} platform=${source}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'terminal unavailable';
-      const status = message.includes('Unknown modmail conversation')
-        ? 404
-        : message.includes('archived')
-          ? 409
-          : message.includes('public base is not configured')
-            ? 503
-            : 400;
       return this.record(req, url, json({ error: message }, status), `conversation=${id}`);
     }
   }
@@ -252,7 +224,9 @@ export class RedditInternalHttpServer {
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/modmail/conversations/')) {
-      if (this.modmail === null) return this.record(req, url, json({ error: 'modmail unavailable' }, 503));
+      if (this.modmail === null || this.modmailReplies === null) {
+        return this.record(req, url, json({ error: 'modmail unavailable' }, 503));
+      }
       const id = decodeURIComponent(url.pathname.slice('/v1/modmail/conversations/'.length)).trim();
       if (!/^[A-Za-z0-9]+$/u.test(id)) return this.record(req, url, json({ error: 'invalid conversation id' }, 400));
       const conversation = await this.modmail.conversation(id);
@@ -264,10 +238,12 @@ export class RedditInternalHttpServer {
       const reputation = user === null
         ? null
         : { username: user.username, points: user.points, tier: user.tier, status: user.status };
+      const appliedReplies = await this.modmailReplies.appliedForConversation(id);
+      const ticketView = presentRedditModmailTicket(conversation, appliedReplies);
       return this.record(
         req,
         url,
-        json({ conversation, reputation }),
+        json({ conversation, reputation, ticketView }),
         `conversation=${id} messages=${conversation.messages.length} reputation=${reputation?.points ?? 'none'}`,
       );
     }
@@ -278,7 +254,6 @@ export class RedditInternalHttpServer {
       return await this.media(req, url, id);
     }
     if (req.method === 'POST' && url.pathname === '/v1/modmail/replies') return await this.reply(req, url);
-    if (req.method === 'POST' && url.pathname === '/v1/modmail/terminal-sessions') return await this.terminal(req, url);
 
     if (req.method === 'GET' && url.pathname === '/v1/moderation/reviews/pending') {
       const reviews = await this.moderation.pending();
