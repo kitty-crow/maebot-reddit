@@ -46,7 +46,7 @@ export const downloadEmojiAsset = async (
   const url = trustedEmojiUrl(emoji.url);
   let response: Response;
   try {
-    response = await fetcher(url);
+    response = await fetcher(url, { headers: { accept: 'image/png,image/jpeg' } });
   } catch {
     throw new Error(`Failed to download Reddit emoji :${emoji.name}:`);
   }
