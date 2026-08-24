@@ -19,7 +19,7 @@ The TypeScript runtime includes:
 - private Modmail semantic moderation with persistent OpenAI-schema conversation context;
 - transport-only Reddit Modmail synchronisation and crash-safe attributed moderator reply outbox;
 - Discord and Telegram ordinary Modmail presentation through the authenticated Reddit-owned internal API;
-- focused Modmail web terminal with a synthetic read-only preview on loopback port `8892`;
+- a Reddit-specific ticket adapter consumed by the independent Mae Tickets moderator workspace;
 - direct Reddit-message ingestion with a durable first-activation boundary, private semantic moderation, separate persistent Mae conversation context and duplicate-safe delivery recovery;
 - cross-platform moderation-review state with first-authorised-moderator-wins semantics;
 - Twitter fanout and subreddit presentation integration;
@@ -36,24 +36,15 @@ Reddit Modmail and direct messages deliberately have different ownership rules.
 - Reddit owns the canonical Modmail conversation and all Reddit mutations.
 - Participant messages are semantically audited with durable private context.
 - Mae does **not** generate ordinary conversational Modmail replies.
-- Human moderators reply through Reddit, Discord, Telegram or a focused terminal.
-- Discord/Telegram replies are attributed to the human moderator and queued through one durable Reddit outbox.
+- Human moderators may reply from Reddit, Discord, Telegram or Mae Tickets.
+- Cross-platform replies are attributed to the human moderator and queued through one durable Reddit outbox.
 - Initial adapter activation skips existing relay history instead of flooding moderator channels.
 - Platform-origin metadata suppresses only proven self-echoes.
+- The moderator browser application and ticket/security sessions are owned by the independent `mae-tickets` service, not this process.
 
-The focused terminal is loopback-bound by default at:
+The Reddit internal API exposes the authenticated Reddit-specific conversation, normalised ticket presentation, media and reply primitives needed by Mae Tickets. It remains loopback-only and never exposes Reddit credentials to the browser.
 
-```text
-http://127.0.0.1:8892/
-```
-
-Its synthetic, read-only preview is available at:
-
-```text
-http://127.0.0.1:8892/preview/
-```
-
-No Reddit Modmail conversation is required for the preview. It cannot queue replies. A real short-lived moderator terminal link additionally requires `REDDIT_MODMAIL_WEBAPP_BASE` to point at the HTTPS URL supplied by the deployment reverse proxy.
+Current moderation and canonical reputation span both CatgirlCoin and NyaOnEarth while publishing-primary cutover remains a separate explicit decision. The ticket presentation uses each conversation's actual subreddit and does not hard-code either community.
 
 ### Direct messages
 
@@ -70,10 +61,11 @@ No Reddit Modmail conversation is required for the preview. It cannot queue repl
 ## Ownership
 
 - Reddit owns canonical Reddit state and Reddit mutations.
+- Mae Tickets owns the cross-platform moderator web application and browser/security sessions.
 - Mae's reputation store owns ordinary reputation and desired flair state.
 - Twitter ingestion/classification remains owned by `maebot-twitter`.
-- Discord and Telegram are presentation and moderator-control adapters, not canonical Reddit stores.
-- Reddit must not open Twitter or Telegram canonical stores.
+- Discord and Telegram are presentation, moderator-control and moderator-authentication adapters, not canonical Reddit stores.
+- Reddit must not open Twitter, Telegram or Mae Tickets state.
 - Human moderators may reply to Reddit Modmail through approved adapters, but Mae does not generate ordinary conversational Modmail replies.
 - Direct Reddit DMs are the private surface where Mae may converse as Mae after the private moderation boundary.
 
