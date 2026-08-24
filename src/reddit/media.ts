@@ -1,6 +1,7 @@
 import type { RedditAuthCfg } from '../env.ts';
 import { isMap, parseJson, type Json } from '../types/json.ts';
 import { RedditError, statusKind } from './error.ts';
+import { rateLimitedRedditFetch } from './rateBudget.ts';
 
 export type RedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -48,11 +49,18 @@ const leaseFrom = (value: Json): Lease => {
 
 export class RedditMediaClient {
   private tokenCache: Token | null = null;
+  private readonly fetcher: RedditMediaFetch;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
-    private readonly fetcher: RedditMediaFetch = fetch,
-  ) {}
+    fetcher?: RedditMediaFetch,
+    rateReserve = 10,
+  ) {
+    const rawFetcher = fetcher ?? fetch;
+    this.fetcher = fetcher === undefined
+      ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, { reserve: rateReserve })
+      : rawFetcher;
+  }
 
   private async token(force = false): Promise<string> {
     const now = Date.now();
