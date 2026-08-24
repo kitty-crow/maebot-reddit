@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { promptSecret, promptText } from '../src/cli/securePrompt.ts';
 import { cloneCommunityEmojis } from '../src/emoji/migrate.ts';
 import { redditConfig } from '../src/env.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
@@ -45,9 +46,14 @@ try {
       ? 'Reddit migration pacing: EXCLUSIVE 650ms, reserve=5; Mae runtime must be offline.'
       : 'Reddit migration pacing: shared 1000ms, reserve=30.',
   );
+  console.log('Custom emoji migration uses a separate NyaOnEarth moderator with Manage Settings.');
+  console.log('Credentials are read interactively for this process only and are not persisted.');
+
+  const username = await promptText('Reddit admin username: ');
+  const password = await promptSecret('Reddit admin password (hidden): ');
+  const adminAuth = redditEmojiAdminAuth(cfg.auth, { username, password });
 
   const sourceRead = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
-  const adminAuth = redditEmojiAdminAuth(cfg.auth);
   const targetRead = new RedditReadClient(adminAuth, { rateReserve: maintenanceRateReserve });
   const targetWrite = new RedditMutationClient(adminAuth, { rateReserve: maintenanceRateReserve });
   const result = await cloneCommunityEmojis(
