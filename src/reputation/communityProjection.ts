@@ -110,8 +110,6 @@ export const communityFlairRestoresFromFile = async (
   try {
     raw = await readFile(catalogueFile, 'utf8');
   } catch (error) {
-    const code = isMap(error as Json) ? text((error as unknown as Record<string, Json>)['code']) : null;
-    if (code === 'ENOENT') return [];
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
     throw error;
   }
