@@ -24,7 +24,8 @@ export class RedditError extends Error {
 export const safeError = (error: Parameters<Console['error']>[number]): string => {
   if (error instanceof RedditError) {
     const status = error.status === null ? '' : ` HTTP ${error.status}`;
-    return `${error.kind}${status}: ${error.message}`;
+    const retry = error.retryAfterMs === null ? '' : ` retry-after≈${Math.ceil(error.retryAfterMs / 1_000)}s`;
+    return `${error.kind}${status}${retry}: ${error.message}`;
   }
   if (error instanceof Error) return `${error.name}: ${error.message}`;
   return String(error);
