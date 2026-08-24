@@ -54,11 +54,3 @@ export type ModmailModeratorIdentity = {
   readonly userId: string;
   readonly handle: string;
 };
-
-export type ModmailTerminalSession = {
-  readonly token: string;
-  readonly conversationId: string;
-  readonly moderator: ModmailModeratorIdentity;
-  readonly createdAt: number;
-  readonly expiresAt: number;
-};
