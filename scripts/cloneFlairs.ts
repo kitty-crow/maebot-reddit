@@ -1,41 +1,94 @@
 import 'dotenv/config';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { redditConfig } from '../src/env.ts';
+import { redditConfig, redditModerationConfig } from '../src/env.ts';
 import { FlairCloner } from '../src/flair/clone.ts';
 import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
+import { communityFlairRestores } from '../src/reputation/communityProjection.ts';
+import { ReputationStore } from '../src/reputation/store.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
-import type { RedditFlairAssignment, RedditFlairTemplate } from '../src/reddit/types.ts';
-import { parseMap } from '../src/types/json.ts';
+import type { RedditFlairTemplate } from '../src/reddit/types.ts';
+import { isMap, type Json } from '../src/types/json.ts';
 
 const cfg = redditConfig();
+const moderationCfg = redditModerationConfig();
+if (moderationCfg === null) throw new Error('REDDIT_MODERATION_ENABLED must be true for community bootstrap');
 if (cfg.sourceSubreddit.toLowerCase() === cfg.primarySubreddit.toLowerCase()) {
-  throw new Error('Source and primary subreddit must be different for flair migration');
+  throw new Error('Source and primary subreddit must be different for community bootstrap');
 }
 
 const read = new RedditReadClient(cfg.auth);
 const write = new RedditMutationClient(cfg.auth);
-const [me, source, target] = await Promise.all([
+const reputation = new ReputationStore(moderationCfg.stateFile);
+if (!(await reputation.hasBootstrap())) {
+  throw new Error(`Canonical reputation store is not bootstrapped at ${moderationCfg.stateFile}`);
+}
+
+const [me, source, target, sourceBans, targetBansBefore, reputationRaw] = await Promise.all([
   read.me(),
   read.subreddit(cfg.sourceSubreddit),
   read.subreddit(cfg.primarySubreddit),
+  read.bannedUsers(cfg.sourceSubreddit),
+  read.bannedUsers(cfg.primarySubreddit),
+  reputation.raw(),
 ]);
 if (!source.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${cfg.sourceSubreddit}`);
 if (!target.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${cfg.primarySubreddit}`);
+if (!isMap(reputationRaw) || !isMap(reputationRaw['users'])) {
+  throw new Error('Canonical reputation users map is missing');
+}
 
-console.log(`Cloning user and post flairs: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
-const result = await new FlairCloner(read, write).clone(cfg.sourceSubreddit, cfg.primarySubreddit);
+const canonicalBans = new Map<string, string>();
+const unresolvedUsers: string[] = [];
+for (const [key, raw] of Object.entries(reputationRaw['users'])) {
+  if (!isMap(raw)) continue;
+  const username = typeof raw['username'] === 'string' && raw['username'].trim().length > 0
+    ? raw['username']
+    : key;
+  if (raw['status'] === 'unmapped' || raw['needsReview'] === true) unresolvedUsers.push(username);
+  if (raw['status'] === 'banned' || raw['status'] === 'scam') canonicalBans.set(username.toLowerCase(), username);
+}
+if (unresolvedUsers.length > 0) {
+  throw new Error(
+    `Community bootstrap refused: canonical reputation still has users requiring semantic review: ${unresolvedUsers.sort().join(', ')}`,
+  );
+}
 
-const [sourceUserTemplates, sourcePostTemplates, sourceAssignments, targetUserTemplates, targetPostTemplates, targetAssignments, sourceBans, targetBansBefore] = await Promise.all([
+const sourceBanKeys = new Set(sourceBans.map(item => item.username.toLowerCase()));
+const canonicalBanKeys = new Set(canonicalBans.keys());
+const sourceMissingFromCanonical = [...sourceBanKeys].filter(key => !canonicalBanKeys.has(key));
+const canonicalMissingFromSource = [...canonicalBanKeys].filter(key => !sourceBanKeys.has(key));
+if (sourceMissingFromCanonical.length > 0 || canonicalMissingFromSource.length > 0) {
+  throw new Error(
+    `Community bootstrap refused: r/${cfg.sourceSubreddit} bans and canonical reputation differ. `
+    + `source-only=${sourceMissingFromCanonical.join(', ') || '(none)'}; `
+    + `canonical-only=${canonicalMissingFromSource.join(', ') || '(none)'}`,
+  );
+}
+
+const targetBanKeysBefore = new Set(targetBansBefore.map(item => item.username.toLowerCase()));
+const targetExtraBans = [...targetBanKeysBefore].filter(key => !canonicalBanKeys.has(key));
+if (targetExtraBans.length > 0) {
+  throw new Error(
+    `Community bootstrap refused: r/${cfg.primarySubreddit} has bans absent from canonical reputation: ${targetExtraBans.join(', ')}`,
+  );
+}
+
+console.log(`Cloning flair templates: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
+const result = await new FlairCloner(read, write).clone(
+  cfg.sourceSubreddit,
+  cfg.primarySubreddit,
+  { copyAssignments: false },
+);
+
+const [sourceUserTemplates, sourcePostTemplates, sourceAssignments, targetUserTemplates, targetPostTemplates, targetAssignmentsBefore] = await Promise.all([
   read.userFlairTemplates(cfg.sourceSubreddit),
   read.postFlairTemplates(cfg.sourceSubreddit),
   read.userFlairAssignments(cfg.sourceSubreddit),
   read.userFlairTemplates(cfg.primarySubreddit),
   read.postFlairTemplates(cfg.primarySubreddit),
   read.userFlairAssignments(cfg.primarySubreddit),
-  read.bannedUsers(cfg.sourceSubreddit),
-  read.bannedUsers(cfg.primarySubreddit),
 ]);
 
 const norm = (value: string | null): string => value ?? '';
@@ -68,6 +121,39 @@ const mappings = (kind: 'user' | 'post', sourceTemplates: readonly RedditFlairTe
 
 const userFlairMappings = mappings('user', sourceUserTemplates, targetUserTemplates);
 const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTemplates);
+const projectionCatalogue: Json = {
+  schema: 1,
+  generatedAt: new Date().toISOString(),
+  sourceSubreddit: cfg.sourceSubreddit,
+  targetSubreddit: cfg.primarySubreddit,
+  userTemplates: {
+    source: sourceUserTemplates as unknown as Json,
+    target: targetUserTemplates as unknown as Json,
+    mapping: userFlairMappings as unknown as Json,
+  },
+  postTemplates: {
+    source: sourcePostTemplates as unknown as Json,
+    target: targetPostTemplates as unknown as Json,
+    mapping: postFlairMappings as unknown as Json,
+  },
+};
+
+const flairRestores = communityFlairRestores(
+  projectionCatalogue,
+  reputationRaw,
+  cfg.primarySubreddit,
+  targetAssignmentsBefore,
+);
+let canonicalFlairsApplied = 0;
+for (const flair of flairRestores) {
+  await write.setUserFlairTemplate(
+    cfg.primarySubreddit,
+    flair.username,
+    flair.templateId,
+    flair.customText,
+  );
+  canonicalFlairsApplied += 1;
+}
 
 console.log(`Cloning sticky posts with mapped post flairs: r/${cfg.sourceSubreddit} -> r/${cfg.primarySubreddit}`);
 const stickyPosts = await cloneStickyPosts(
@@ -80,74 +166,56 @@ const stickyPosts = await cloneStickyPosts(
   postFlairMappings,
 );
 
-const legacyDbFile = resolve(
-  process.cwd(),
-  process.env['REDDIT_LEGACY_COMMENT_DB']?.trim() || 'database.db',
-);
-const legacyDb = parseMap(await readFile(legacyDbFile, 'utf8'));
-const rawDbBanned = legacyDb['banned_users'];
-if (rawDbBanned !== undefined && (!Array.isArray(rawDbBanned) || rawDbBanned.some(value => typeof value !== 'string'))) {
-  throw new Error('legacy database banned_users must be an array of usernames');
-}
-const legacyDbBanned = (Array.isArray(rawDbBanned) ? rawDbBanned : []).map(value => String(value));
-
-const uncivil = (assignment: RedditFlairAssignment): boolean =>
-  assignment.cssClass === 'u' || assignment.cssClass === 's';
-const uncivilAssignments = sourceAssignments.filter(uncivil);
-
-const statusByUser = new Map<string, {
+const migratedBans: {
   username: string;
-  sourceSubredditBan: boolean;
-  legacyDbBanned: boolean;
-  legacyUncivilFlair: boolean;
   targetBanAlreadyPresent: boolean;
   targetBanApplied: boolean;
-}>();
-const ensure = (username: string) => {
-  const key = username.toLowerCase();
-  const existing = statusByUser.get(key);
-  if (existing !== undefined) return existing;
-  const created = {
-    username,
-    sourceSubredditBan: false,
-    legacyDbBanned: false,
-    legacyUncivilFlair: false,
-    targetBanAlreadyPresent: false,
-    targetBanApplied: false,
-  };
-  statusByUser.set(key, created);
-  return created;
-};
-
-for (const item of sourceBans) ensure(item.username).sourceSubredditBan = true;
-for (const username of legacyDbBanned) ensure(username).legacyDbBanned = true;
-for (const assignment of uncivilAssignments) ensure(assignment.username).legacyUncivilFlair = true;
-const targetBanKeys = new Set(targetBansBefore.map(item => item.username.toLowerCase()));
-
-for (const record of statusByUser.values()) {
-  if (targetBanKeys.has(record.username.toLowerCase())) {
-    record.targetBanAlreadyPresent = true;
-    continue;
+}[] = [];
+for (const username of [...canonicalBans.values()].sort((left, right) => left.localeCompare(right))) {
+  const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
+  if (!alreadyPresent) {
+    // The canonical banned/scam state carries a permanent communication
+    // restriction. Apply the first Reddit mute chunk before exposing the new ban.
+    await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
+    await write.banUser(
+      cfg.primarySubreddit,
+      username,
+      'Mae canonical moderation state',
+      `Canonical Mae reputation state migrated from r/${cfg.sourceSubreddit}.`,
+    );
   }
-  const reasons: string[] = [];
-  if (record.sourceSubredditBan) reasons.push(`banned in r/${cfg.sourceSubreddit}`);
-  if (record.legacyDbBanned) reasons.push('legacy Mae banned_users');
-  if (record.legacyUncivilFlair) reasons.push('legacy uncivil flair (u/s)');
-  await write.banUser(
-    cfg.primarySubreddit,
-    record.username,
-    'Migrated legacy moderation state',
-    `Mae Reddit migration: ${reasons.join('; ')}`,
-  );
-  record.targetBanApplied = true;
+  migratedBans.push({
+    username,
+    targetBanAlreadyPresent: alreadyPresent,
+    targetBanApplied: !alreadyPresent,
+  });
 }
 
-const targetBansAfter = await read.bannedUsers(cfg.primarySubreddit);
+const [targetBansAfter, targetAssignmentsAfter] = await Promise.all([
+  read.bannedUsers(cfg.primarySubreddit),
+  read.userFlairAssignments(cfg.primarySubreddit),
+]);
 const targetBanAfterKeys = new Set(targetBansAfter.map(item => item.username.toLowerCase()));
-for (const record of statusByUser.values()) {
-  if (!targetBanAfterKeys.has(record.username.toLowerCase())) {
-    throw new Error(`Ban migration verification failed for u/${record.username}`);
+for (const username of canonicalBans.values()) {
+  if (!targetBanAfterKeys.has(username.toLowerCase())) {
+    throw new Error(`Ban migration verification failed for u/${username}`);
   }
+}
+const targetUnexpectedAfter = [...targetBanAfterKeys].filter(key => !canonicalBanKeys.has(key));
+if (targetUnexpectedAfter.length > 0) {
+  throw new Error(`Unexpected target bans remain after migration: ${targetUnexpectedAfter.join(', ')}`);
+}
+
+const remainingFlairRestores = communityFlairRestores(
+  projectionCatalogue,
+  reputationRaw,
+  cfg.primarySubreddit,
+  targetAssignmentsAfter,
+);
+if (remainingFlairRestores.length > 0) {
+  throw new Error(
+    `Canonical target flair verification failed for: ${remainingFlairRestores.map(item => item.username).join(', ')}`,
+  );
 }
 
 const catalogueFile = resolve(
@@ -155,7 +223,7 @@ const catalogueFile = resolve(
   process.env['REDDIT_FLAIR_CATALOGUE_FILE']?.trim() || 'data/flairs.json',
 );
 const catalogue = {
-  schema: 1,
+  schema: 2,
   generatedAt: new Date().toISOString(),
   sourceSubreddit: cfg.sourceSubreddit,
   targetSubreddit: cfg.primarySubreddit,
@@ -172,14 +240,15 @@ const catalogue = {
   stickyPosts,
   userAssignments: {
     source: sourceAssignments,
-    target: targetAssignments,
+    targetBefore: targetAssignmentsBefore,
+    targetAfter: targetAssignmentsAfter,
+    canonicalApplied: canonicalFlairsApplied,
   },
   moderationStatus: {
+    canonicalBannedOrScamUsers: [...canonicalBans.values()].sort((a, b) => a.localeCompare(b)),
     sourceSubredditBans: sourceBans,
-    legacyDbBannedUsers: legacyDbBanned,
-    legacyUncivilAssignments: uncivilAssignments,
     targetBansBefore,
-    migratedUsers: [...statusByUser.values()].sort((a, b) => a.username.localeCompare(b.username)),
+    migratedBans,
     targetBansAfter,
   },
   cloneResult: result,
@@ -192,13 +261,12 @@ await rename(temp, catalogueFile);
 
 console.log(`user templates created=${result.userTemplatesCreated}`);
 console.log(`post templates created=${result.postTemplatesCreated}`);
-console.log(`user assignments applied=${result.userAssignmentsApplied}`);
-console.log(`user assignments already correct=${result.userAssignmentsAlreadyCorrect}`);
+console.log(`canonical user flairs applied=${canonicalFlairsApplied}`);
 console.log(`sticky posts cloned/reused=${stickyPosts.length}`);
 for (const sticky of stickyPosts) {
   console.log(`sticky slot ${sticky.slot}: ${sticky.sourceFullname} -> t3_${sticky.targetPostId} mode=${sticky.mode}`);
 }
-console.log(`legacy/source moderation users migrated=${statusByUser.size}`);
+console.log(`canonical banned/scam users reconciled=${canonicalBans.size}`);
 console.log(`target bans before=${targetBansBefore.length} after=${targetBansAfter.length}`);
 console.log(`canonical flair catalogue=${catalogueFile}`);
-console.log('Flair, sticky and moderation-state clone complete.');
+console.log('Canonical flair, sticky and moderation-state bootstrap complete.');
