@@ -20,17 +20,18 @@ Legacy Python databases, `warned_users`/`banned_users` arrays and old CSS-only i
 
 ## Required order
 
-Do not run `bun run clone:flairs` immediately after deploying code.
+Do not switch Reddit publishing/mirroring to NyaOnEarth merely to begin moderation there. Dual-community moderation is independent of the publishing `PRIMARY` setting.
 
 The required activation order is:
 
-1. configure `REDDIT_SOURCE_SUBREDDIT=catgirlcoin` and `REDDIT_PRIMARY_SUBREDDIT=nyaonearth`;
-2. start the dual-community Mae runtime;
-3. let Mae ingest/moderate posts, comments and Modmail from both communities using the one canonical `reputation.pb`;
-4. let the NyaOnEarth projection establish the existing canonical communication restrictions there;
-5. only then run `bun run clone:flairs` to bootstrap target templates, canonical flairs, stickies and permanent bans.
+1. deploy this runtime while keeping the existing publishing route if desired (`REDDIT_SOURCE_SUBREDDIT=catgirlcoin`, `REDDIT_PRIMARY_SUBREDDIT=catgirlcoin` is valid before bootstrap);
+2. start Mae with canonical moderation enabled; she immediately ingests/moderates posts, comments and Modmail from both CatgirlCoin and NyaOnEarth using the one `reputation.pb`;
+3. let the NyaOnEarth projection establish the existing canonical communication restrictions there and verify them against Reddit's live muted-user relationship;
+4. run `bun run clone:flairs`; the command targets `r/nyaonearth` explicitly and does not depend on `REDDIT_PRIMARY_SUBREDDIT` already pointing there;
+5. verify the bootstrap result;
+6. only after bootstrap, set `REDDIT_PRIMARY_SUBREDDIT=nyaonearth` and restart when the cross-community publishing/post-mirror cutover is desired.
 
-The bootstrap command enforces this order. Before any subreddit mutation it checks that every canonical `banned`/`scam` user already has a current NyaOnEarth communication-projection checkpoint. If that projection has not converged, the command aborts.
+The bootstrap command enforces the safety-critical part of this order. Before any target mutation it checks that every canonical `banned`/`scam` user has both Mae's current NyaOnEarth projection checkpoint and a live Reddit mute. If either is missing, the command aborts.
 
 ## Moderator permissions
 
@@ -59,7 +60,7 @@ Reddit flair template UUIDs are subreddit-local implementation identifiers. A Ca
 
 Moderator flairs are not overwritten by member-reputation projection. Users marked `unmapped` or `needsReview` cause the bootstrap to fail rather than guess.
 
-The final `data/flairs.json` is schema 2. Its successful atomic rename is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. Before a completed schema-2 catalogue exists, the running target projection applies communication restrictions only and deliberately does not mass-clone bans or member flairs.
+The final `data/flairs.json` is schema 2. Its successful atomic rename is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. A missing or older schema-1 catalogue is treated as pre-bootstrap historical state: it does not block Mae from starting dual-community moderation and it does not activate target ban/flair projection.
 
 ## Tier and moderation projection
 
@@ -89,19 +90,20 @@ Only canonical users whose status is `banned` or `scam` belong in the permanent 
 
 Before any target write, the bootstrap fails closed if:
 
-- source/target are not exactly CatgirlCoin → NyaOnEarth;
+- the configured canonical source is not CatgirlCoin;
+- the publishing primary is neither the valid pre-bootstrap CatgirlCoin value nor the post-cutover NyaOnEarth value;
 - canonical reputation is not bootstrapped;
 - Mae lacks a required moderator permission in either community;
 - any canonical user is still `unmapped` or `needsReview`;
 - live CatgirlCoin bans differ from canonical `banned`/`scam` users;
 - NyaOnEarth contains a live ban absent from canonical permanent state;
-- any canonical permanent user lacks a current NyaOnEarth communication restriction.
+- any canonical permanent user lacks either Mae's current NyaOnEarth mute checkpoint or the corresponding live Reddit mute.
 
-This makes CatgirlCoin's established moderation state and Mae's canonical reputation agree before NyaOnEarth is mutated.
+This makes CatgirlCoin's established moderation state, Mae's canonical reputation and the actual live target communication protection agree before NyaOnEarth is mutated.
 
 During apply, the target communication restriction is refreshed immediately before any newly exposed target permanent ban. The NyaOnEarth projection checkpoint is advanced with the successful mute write so normal runtime reconciliation does not duplicate it.
 
-After apply, the target ban set is reread and verified against canonical permanent state.
+After apply, both the target mute set and target ban set are reread. Every canonical permanent user must still be live-muted and banned before the command can report success.
 
 ## Sticky posts and mirror provenance
 
@@ -111,7 +113,7 @@ The bootstrap records every source/target sticky pair into `data/postMirror.pb`.
 
 Historical CatgirlCoin posts are not bulk backfilled.
 
-Normal post mirroring after cutover is bidirectional and moderation-gated:
+Normal post mirroring after publishing cutover is bidirectional and moderation-gated:
 
 - an unseen post waits while its canonical moderation result is pending;
 - an accepted or privileged post may be mirrored;
@@ -125,13 +127,15 @@ There is still only one canonical user state after migration.
 
 CatgirlCoin remains the canonical flair/reputation surface in `reputation.pb`. NyaOnEarth owns only Reddit-local projection state such as its local flair UUIDs and communication-effect checkpoints.
 
-After the schema-2 bootstrap catalogue exists, each runtime poll reconciles NyaOnEarth moderation state from canonical reputation:
+After the schema-2 bootstrap catalogue exists, the NyaOnEarth projection periodically reconciles live Reddit moderation state from canonical reputation:
 
 1. communication restrictions first;
 2. missing canonical permanent bans second;
 3. local flair assignment on the configured flair-reconciliation cadence.
 
-A failed permanent communication-restriction write prevents that user's target ban from being applied on the same poll. The target remains retryable independently of CatgirlCoin's successful effect checkpoint.
+Live muted-user state is checked against Mae's own projection checkpoint, so a manually removed permanent Mae mute is restored. Conversely, a live mute that Mae does not own is left alone rather than being automatically removed. Relationship inventories are throttled independently of the fast process poll to avoid unnecessary Reddit API pressure.
+
+A failed attempt to establish a missing permanent communication restriction prevents that user's target ban from being applied in the same reconciliation. The target remains retryable independently of CatgirlCoin's successful effect checkpoint.
 
 ## Verification and reruns
 
@@ -139,7 +143,7 @@ The bootstrap is designed to converge rather than create duplicate semantic temp
 
 - every source flair template has exactly one destination presentation match;
 - canonical target member flairs no longer require restoration;
-- every canonical permanent user is banned in NyaOnEarth;
+- every canonical permanent user is live-muted and banned in NyaOnEarth;
 - no unexplained target bans remain;
 - sticky source/target pairs are persisted in mirror state;
 - the final schema-2 catalogue is written atomically.
