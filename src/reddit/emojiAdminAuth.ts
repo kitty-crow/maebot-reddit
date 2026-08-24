@@ -1,39 +1,23 @@
 import type { RedditAuthCfg } from '../env.ts';
 
-type Environment = Readonly<Record<string, string | undefined>>;
-
-const maybe = (environment: Environment, name: string): string | null => {
-  const value = environment[name]?.trim();
-  return value === undefined || value.length === 0 ? null : value;
-};
-
-const required = (environment: Environment, name: string): string => {
-  const value = maybe(environment, name);
-  if (value === null) throw new Error(`${name} is required for custom emoji migration`);
-  return value;
+export type RedditCredentials = {
+  readonly username: string;
+  readonly password: string;
 };
 
 export const redditEmojiAdminAuth = (
   fallback: RedditAuthCfg,
-  environment: Environment = process.env,
+  credentials: RedditCredentials,
 ): RedditAuthCfg => {
-  const username = required(environment, 'REDDIT_EMOJI_ADMIN_USERNAME');
-  const password = required(environment, 'REDDIT_EMOJI_ADMIN_PASSWORD');
-  const clientId = maybe(environment, 'REDDIT_EMOJI_ADMIN_CLIENT_ID');
-  const clientSecret = maybe(environment, 'REDDIT_EMOJI_ADMIN_CLIENT_SECRET');
-
-  if ((clientId === null) !== (clientSecret === null)) {
-    throw new Error(
-      'REDDIT_EMOJI_ADMIN_CLIENT_ID and REDDIT_EMOJI_ADMIN_CLIENT_SECRET must be configured together',
-    );
-  }
+  const username = credentials.username.trim();
+  if (username.length === 0) throw new Error('Reddit emoji admin username is required');
+  if (credentials.password.length === 0) throw new Error('Reddit emoji admin password is required');
 
   return {
-    clientId: clientId ?? fallback.clientId,
-    clientSecret: clientSecret ?? fallback.clientSecret,
+    clientId: fallback.clientId,
+    clientSecret: fallback.clientSecret,
     username,
-    password,
-    userAgent: maybe(environment, 'REDDIT_EMOJI_ADMIN_USER_AGENT')
-      ?? `linux:com.kittycrow.maebot-reddit:emoji-migration:0.1.0 (by /u/${username})`,
+    password: credentials.password,
+    userAgent: `linux:com.kittycrow.maebot-reddit:emoji-migration:0.1.0 (by /u/${username})`,
   };
 };
