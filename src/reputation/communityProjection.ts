@@ -8,20 +8,21 @@ export type CommunityFlairRestore = {
   readonly customText: string | null;
 };
 
+type CommunityProjectionCatalogue = {
+  readonly sourceSubreddit: string;
+  readonly targetSubreddit: string;
+  readonly templateIds: ReadonlyMap<string, string>;
+  readonly editableTargets: ReadonlySet<string>;
+};
+
 const normalise = (value: string): string => value.trim().toLowerCase();
 const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
 
-const catalogueMapping = (
-  catalogue: Json,
-): {
-  readonly sourceSubreddit: string;
-  readonly targetSubreddit: string;
-  readonly templateIds: ReadonlyMap<string, string>;
-  readonly editableTargets: ReadonlySet<string>;
-} => {
+const catalogueMapping = (catalogue: Json): CommunityProjectionCatalogue => {
   if (!isMap(catalogue)) throw new Error('Flair projection catalogue root must be an object');
+  if (catalogue['schema'] !== 2) throw new Error('Flair projection catalogue is not a completed schema-2 bootstrap');
   const sourceSubreddit = text(catalogue['sourceSubreddit']);
   const targetSubreddit = text(catalogue['targetSubreddit']);
   const userTemplates = catalogue['userTemplates'];
@@ -55,6 +56,45 @@ const catalogueMapping = (
   }
 
   return { sourceSubreddit, targetSubreddit, templateIds, editableTargets };
+};
+
+const readCatalogue = async (catalogueFile: string): Promise<Json | null> => {
+  let raw: string;
+  try {
+    raw = await readFile(catalogueFile, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+  return parseMap(raw);
+};
+
+const requireCommunities = (
+  projection: CommunityProjectionCatalogue,
+  sourceSubreddit: string,
+  targetSubreddit: string,
+): void => {
+  if (
+    normalise(sourceSubreddit) !== normalise(projection.sourceSubreddit)
+    || normalise(targetSubreddit) !== normalise(projection.targetSubreddit)
+  ) {
+    throw new Error(
+      `Flair projection catalogue is r/${projection.sourceSubreddit} -> r/${projection.targetSubreddit}, `
+      + `not r/${sourceSubreddit} -> r/${targetSubreddit}`,
+    );
+  }
+};
+
+export const communityProjectionReadyFromFile = async (
+  catalogueFile: string,
+  sourceSubreddit: string,
+  targetSubreddit: string,
+): Promise<boolean> => {
+  const catalogue = await readCatalogue(catalogueFile);
+  if (catalogue === null) return false;
+  const projection = catalogueMapping(catalogue);
+  requireCommunities(projection, sourceSubreddit, targetSubreddit);
+  return true;
 };
 
 export const communityFlairRestores = (
@@ -106,12 +146,7 @@ export const communityFlairRestoresFromFile = async (
   targetSubreddit: string,
   assignments: readonly RedditFlairAssignment[],
 ): Promise<readonly CommunityFlairRestore[]> => {
-  let raw: string;
-  try {
-    raw = await readFile(catalogueFile, 'utf8');
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
-    throw error;
-  }
-  return communityFlairRestores(parseMap(raw), reputation, targetSubreddit, assignments);
+  const catalogue = await readCatalogue(catalogueFile);
+  if (catalogue === null) return [];
+  return communityFlairRestores(catalogue, reputation, targetSubreddit, assignments);
 };
