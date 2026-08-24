@@ -58,6 +58,16 @@ const stateFileFor = (clientId: string): string => {
   return resolve(process.cwd(), 'data', `redditRate-${key}.pb`);
 };
 
+const configuredMinimumInterval = (): number => {
+  const raw = process.env['REDDIT_RATE_MINIMUM_INTERVAL_MS']?.trim();
+  if (raw === undefined || raw.length === 0) return DEFAULT_MINIMUM_INTERVAL_MS;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 60_000) {
+    throw new Error('REDDIT_RATE_MINIMUM_INTERVAL_MS must be an integer from 0 to 60000');
+  }
+  return value;
+};
+
 const requestUrl = (input: string | URL | Request): URL => {
   if (input instanceof Request) return new URL(input.url);
   return new URL(String(input));
@@ -75,7 +85,7 @@ export class RedditRateBudget {
     if (!Number.isSafeInteger(reserve) || reserve < 1 || reserve > 99) {
       throw new Error('Reddit rate-budget reserve must be an integer from 1 to 99');
     }
-    const minimumIntervalMs = Math.floor(options.minimumIntervalMs ?? DEFAULT_MINIMUM_INTERVAL_MS);
+    const minimumIntervalMs = Math.floor(options.minimumIntervalMs ?? configuredMinimumInterval());
     if (!Number.isSafeInteger(minimumIntervalMs) || minimumIntervalMs < 0 || minimumIntervalMs > 60_000) {
       throw new Error('Reddit rate-budget minimum interval must be an integer from 0 to 60000 milliseconds');
     }
