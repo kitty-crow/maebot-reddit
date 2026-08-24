@@ -89,6 +89,10 @@ export class RedditReadClient {
     return await this.pages(pathFor(name, '/about/banned'), 100, value => decode.relationshipUsers(value, 'banned users'));
   }
 
+  public async mutedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
+    return await this.pages(pathFor(name, '/about/muted'), 100, value => decode.relationshipUsers(value, 'muted users'));
+  }
+
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
     return decode.flairTemplates(await this.get(pathFor(name, '/api/user_flair_v2')));
   }
