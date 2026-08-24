@@ -125,7 +125,7 @@ export class RedditReadClient {
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
-    return decode.rules(await this.get(pathFor(name, '/about/rules'));
+    return decode.rules(await this.get(pathFor(name, '/about/rules')));
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
