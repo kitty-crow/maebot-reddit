@@ -13,7 +13,7 @@ import type { ReputationStore } from './store.ts';
 
 export type CommunityProjectionReader = Pick<
   RedditReadClient,
-  'userFlairAssignments' | 'bannedUsers'
+  'userFlairAssignments' | 'bannedUsers' | 'mutedUsers'
 >;
 export type CommunityProjectionWriter = Pick<
   RedditMutationClient,
@@ -49,6 +49,11 @@ const canonicalPermanentUsers = (raw: Json): readonly string[] => {
   return out.sort((left, right) => left.localeCompare(right));
 };
 
+const shouldMute = (
+  desired: { readonly muteUntil: number | null; readonly permanent: boolean },
+  now: number,
+): boolean => desired.permanent || (desired.muteUntil !== null && desired.muteUntil > now);
+
 export class CommunityProjectionRuntime {
   private nextFlairAt = 0;
   private activated = false;
@@ -79,17 +84,43 @@ export class CommunityProjectionRuntime {
   }
 
   private async reconcileMutes(raw: Json, now: number): Promise<MuteReconcileResult> {
+    const liveMuted = new Set(
+      (await this.reader.mutedUsers(this.targetSubreddit)).map(row => lower(row.username)),
+    );
     let applied = 0;
     let failed = 0;
     const blockedPermanentUsers = new Set<string>();
+
     for (const desired of reputationDesiredMutes(raw, now)) {
+      const key = lower(desired.username);
       const current = await this.projection.muteState(this.targetSubreddit, desired.username);
+      const wanted = shouldMute(desired, now);
+      const live = liveMuted.has(key);
+
+      // A live mute absent from Mae's projection store belongs to Reddit/human
+      // moderation. Never remove it merely because Mae currently wants no mute.
+      if (!wanted && !current.redditMuted) continue;
+
+      if (!wanted && current.redditMuted && !live) {
+        // Reddit already reflects the desired unmuted state. Repair only Mae's
+        // stale checkpoint; no remote mutation is necessary.
+        await this.projection.markMute(this.targetSubreddit, desired.username, 'unmute', now);
+        continue;
+      }
+
+      // Live Reddit state is authoritative for whether the protection actually
+      // exists. The local timestamp is useful only while Reddit still reports
+      // the mute; if a human removed it, force an immediate re-apply.
       const action = redditMuteAction(
         { muteUntil: desired.muteUntil, permanent: desired.permanent },
-        current,
+        {
+          redditMuted: live,
+          appliedAt: live ? current.appliedAt : null,
+        },
         now,
       );
       if (action === null) continue;
+
       try {
         if (action === 'mute') {
           await this.writer.muteUser(
@@ -97,14 +128,19 @@ export class CommunityProjectionRuntime {
             desired.username,
             desired.permanent ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
           );
+          liveMuted.add(key);
         } else {
           await this.writer.unmuteUser(this.targetSubreddit, desired.username);
+          liveMuted.delete(key);
         }
         await this.projection.markMute(this.targetSubreddit, desired.username, action, now);
         applied += 1;
       } catch (error) {
         failed += 1;
-        if (desired.permanent) blockedPermanentUsers.add(lower(desired.username));
+        // A failed renewal does not expose a newly banned user while Reddit
+        // still reports an active mute. A failed attempt to establish a missing
+        // permanent mute does, so block the corresponding target ban.
+        if (desired.permanent && !live) blockedPermanentUsers.add(key);
         console.error(
           `[Reddit reputation] r/${this.targetSubreddit} ${action} projection failed for u/${desired.username}: ${safeError(error)}`,
         );
