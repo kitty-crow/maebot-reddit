@@ -266,6 +266,15 @@ export class PostMirrorStore {
     return typeof match === 'string' && match.length > 0 ? match : null;
   }
 
+  public async cancel(key: string): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const pendingMap = map(value, 'pending');
+      delete pendingMap[key];
+      return value;
+    });
+  }
+
   public async failed(key: string, safeMessage: string): Promise<void> {
     await this.store.edit(current => {
       const value = root(current);
