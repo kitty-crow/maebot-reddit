@@ -98,14 +98,33 @@ const commentItem = (comment: RedditComment): RuntimeItem => ({
 const voteReviewKey = (value: ReputationVoteSuspicion): string =>
   `vote-manipulation:${value.fullname}:${Math.max(0, Math.floor(value.score / 25))}`;
 
+const communities = (value: string | readonly string[]): readonly string[] => {
+  const input = typeof value === 'string' ? [value] : [...value];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const name = raw.trim();
+    if (name.length === 0) throw new Error('Reddit moderation subreddit name cannot be empty');
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  if (out.length === 0) throw new Error('Reddit moderation requires at least one subreddit');
+  return out;
+};
+
 export class RedditModerationRuntime {
   private readonly classifier: ModerationClassifier;
-  private readonly privileges: ModerationPrivilegeSource;
+  private readonly subreddits: readonly string[];
+  private readonly flairSubreddit: string;
+  private readonly privileges = new Map<string, ModerationPrivilegeSource>();
+  private readonly suppliedPrivileges: ModerationPrivilegeSource | null;
   private scoreCursor = 0;
   private nextFlairReconcileAt = 0;
 
   public constructor(
-    private readonly subreddit: string,
+    subreddits: string | readonly string[],
     private readonly cfg: RedditModerationCfg,
     private readonly reader: ModerationReader,
     private readonly writer: ModerationWriter,
@@ -114,14 +133,28 @@ export class RedditModerationRuntime {
     private readonly reviews: ModerationReviewStore | null = null,
     privileges: ModerationPrivilegeSource | null = null,
   ) {
+    this.subreddits = communities(subreddits);
+    const first = this.subreddits[0];
+    if (first === undefined) throw new Error('Reddit moderation requires a canonical flair subreddit');
+    this.flairSubreddit = first;
     this.classifier = classifier ?? new RedditModerationClassifier(cfg.ai);
-    this.privileges = privileges ?? new ModerationPrivileges(subreddit, reader);
+    this.suppliedPrivileges = privileges;
+  }
+
+  private privilegeSource(subreddit: string): ModerationPrivilegeSource {
+    if (this.suppliedPrivileges !== null) return this.suppliedPrivileges;
+    const key = subreddit.toLowerCase();
+    const existing = this.privileges.get(key);
+    if (existing !== undefined) return existing;
+    const created = new ModerationPrivileges(subreddit, this.reader);
+    this.privileges.set(key, created);
+    return created;
   }
 
   private async process(item: RuntimeItem): Promise<'audited' | 'exempt' | 'seen'> {
     if (await this.reputation.hasContribution(item.fullname)) return 'seen';
     if (item.author === null) return 'seen';
-    const exemption = await this.privileges.exemption(item.author);
+    const exemption = await this.privilegeSource(item.moderation.subreddit).exemption(item.author);
     if (exemption !== null) {
       await this.reputation.recordExempt(
         item.fullname,
@@ -173,7 +206,7 @@ export class RedditModerationRuntime {
       key,
       targetKind: suspicion.kind === 'post' ? 'submission' : 'comment',
       targetId: suspicion.fullname,
-      subreddit: this.subreddit,
+      subreddit: this.flairSubreddit,
       permalink: suspicion.permalink,
       author: suspicion.author,
       summary: `Suspicious Reddit vote growth detected for ${suspicion.fullname}. Confirm only if the pattern is consistent with vote manipulation; score trajectory alone is not proof.`,
@@ -231,16 +264,16 @@ export class RedditModerationRuntime {
   private async reconcileAuthoritativeFlairs(now: number): Promise<{ readonly restored: number; readonly failed: number }> {
     if (now < this.nextFlairReconcileAt) return { restored: 0, failed: 0 };
     this.nextFlairReconcileAt = now + this.cfg.flairReconcileMs;
-    const assignments = await this.reader.userFlairAssignments(this.subreddit);
+    const assignments = await this.reader.userFlairAssignments(this.flairSubreddit);
     const restores = authoritativeFlairRestores(await this.reputation.raw(), assignments);
     let restored = 0;
     let failed = 0;
     for (const flair of restores) {
       try {
-        await this.writer.setUserFlairTemplate(this.subreddit, flair.username, flair.templateId, null);
+        await this.writer.setUserFlairTemplate(this.flairSubreddit, flair.username, flair.templateId, null);
         await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
         restored += 1;
-        console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username}.`);
+        console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username} in r/${this.flairSubreddit}.`);
       } catch (error) {
         failed += 1;
         console.error(`[Reddit reputation] authoritative flair restore failed for u/${flair.username}: ${safeError(error)}`);
@@ -257,7 +290,7 @@ export class RedditModerationRuntime {
 
     for (const flair of effects.flairs) {
       try {
-        await this.writer.setUserFlairTemplate(this.subreddit, flair.username, flair.templateId, null);
+        await this.writer.setUserFlairTemplate(this.flairSubreddit, flair.username, flair.templateId, null);
         await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
         applied += 1;
       } catch (error) {
@@ -279,12 +312,14 @@ export class RedditModerationRuntime {
 
     for (const ban of effects.bans) {
       try {
-        await this.writer.banUser(
-          this.subreddit,
-          ban.username,
-          'Mae reputation enforcement',
-          `Permanent Mae reputation floor reached from ${ban.fullname}.`,
-        );
+        for (const subreddit of this.subreddits) {
+          await this.writer.banUser(
+            subreddit,
+            ban.username,
+            'Mae reputation enforcement',
+            `Permanent Mae reputation floor reached from ${ban.fullname}.`,
+          );
+        }
         await this.reputation.markBanApplied(ban.fullname);
         applied += 1;
       } catch (error) {
@@ -293,10 +328,13 @@ export class RedditModerationRuntime {
       }
     }
 
+    // Existing communication-mute policy remains owned by the canonical
+    // CatgirlCoin moderation surface until the community bootstrap is applied.
+    // A Reddit ban itself is not supplemented with any new mute behaviour here.
     for (const mute of mutes) {
       try {
-        if (mute.action === 'mute') await this.writer.muteUser(this.subreddit, mute.username, mute.note);
-        else await this.writer.unmuteUser(this.subreddit, mute.username);
+        if (mute.action === 'mute') await this.writer.muteUser(this.flairSubreddit, mute.username, mute.note);
+        else await this.writer.unmuteUser(this.flairSubreddit, mute.username);
         await this.reputation.markMuteApplied(mute.username, mute.action, Date.now());
         applied += 1;
       } catch (error) {
@@ -318,16 +356,24 @@ export class RedditModerationRuntime {
     return { applied, failed };
   }
 
+  private async items(): Promise<readonly RuntimeItem[]> {
+    const batches = await Promise.all(this.subreddits.map(async subreddit => {
+      const [posts, comments] = await Promise.all([
+        this.reader.newPosts(subreddit, this.cfg.batchSize),
+        this.reader.newComments(subreddit, this.cfg.batchSize),
+      ]);
+      return [...posts.map(postItem), ...comments.map(commentItem)];
+    }));
+    return batches
+      .flat()
+      .sort((a, b) => a.createdAt - b.createdAt || a.fullname.localeCompare(b.fullname));
+  }
+
   public async tick(): Promise<RedditModerationTick> {
     if (!(await this.reputation.hasBootstrap())) {
       throw new Error(`Reddit moderation requires a bootstrapped reputation store at ${this.cfg.stateFile}`);
     }
-    const [posts, comments] = await Promise.all([
-      this.reader.newPosts(this.subreddit, this.cfg.batchSize),
-      this.reader.newComments(this.subreddit, this.cfg.batchSize),
-    ]);
-    const items = [...posts.map(postItem), ...comments.map(commentItem)]
-      .sort((a, b) => a.createdAt - b.createdAt || a.fullname.localeCompare(b.fullname));
+    const items = await this.items();
 
     let audited = 0;
     let exempt = 0;
