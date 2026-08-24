@@ -12,6 +12,7 @@ type CommunityProjectionCatalogue = {
   readonly sourceSubreddit: string;
   readonly targetSubreddit: string;
   readonly templateIds: ReadonlyMap<string, string>;
+  readonly targetTexts: ReadonlyMap<string, string>;
   readonly editableTargets: ReadonlySet<string>;
 };
 
@@ -48,14 +49,18 @@ const catalogueMapping = (catalogue: Json): CommunityProjectionCatalogue => {
     templateIds.set(sourceTemplateId, targetTemplateId);
   }
 
+  const targetTexts = new Map<string, string>();
   const editableTargets = new Set<string>();
   for (const raw of targets) {
     if (!isMap(raw)) continue;
     const id = text(raw['id']);
-    if (id !== null && bool(raw['textEditable'])) editableTargets.add(id);
+    const targetText = text(raw['text']);
+    if (id === null || targetText === null) continue;
+    targetTexts.set(id, targetText);
+    if (bool(raw['textEditable'])) editableTargets.add(id);
   }
 
-  return { sourceSubreddit, targetSubreddit, templateIds, editableTargets };
+  return { sourceSubreddit, targetSubreddit, templateIds, targetTexts, editableTargets };
 };
 
 const readCatalogue = async (catalogueFile: string): Promise<Json | null> => {
@@ -132,12 +137,21 @@ export const communityFlairRestores = (
       throw new Error(`No r/${projection.targetSubreddit} flair mapping for canonical template ${sourceTemplateId}`);
     }
 
+    const targetText = projection.targetTexts.get(targetTemplateId);
+    if (targetText === undefined) {
+      throw new Error(`Target flair template ${targetTemplateId} is absent from r/${projection.targetSubreddit} catalogue inventory`);
+    }
     const desiredText = text(raw['desiredFlairText']);
     const customText = projection.editableTargets.has(targetTemplateId) ? desiredText : null;
+    const projectedText = customText ?? targetText;
     const current = live.get(normalise(username));
-    const correctTemplate = current?.templateId === targetTemplateId;
-    const correctText = customText === null || current?.text === customText;
-    if (correctTemplate && correctText) continue;
+    const wrongText = current === undefined || current.text !== projectedText;
+    // /api/flairlist may omit flair_template_id. Treat a missing UUID as
+    // unknown rather than forcing a rewrite of an already-correct visible flair.
+    const wrongTemplate = current !== undefined
+      && current.templateId !== null
+      && current.templateId !== targetTemplateId;
+    if (!wrongTemplate && !wrongText) continue;
     restores.push({ username, templateId: targetTemplateId, customText });
   }
 
