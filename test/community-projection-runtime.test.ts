@@ -149,10 +149,10 @@ describe('NyaOnEarth moderation projection', () => {
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
 
     // Reddit is the authority for whether the protection really exists. A
-    // subsequent tick must observe the live relationship before exposing bans.
+    // subsequent relationship reconciliation must observe it before exposing bans.
     f.reader.mutes = [relationship('BannedUser')];
     await writeFile(f.catalogueFile, catalogue);
-    const second = await f.runtime.tick(1_000_001);
+    const second = await f.runtime.tick(1_030_000);
     expect(second.failed).toBe(0);
     expect(f.writer.order).toEqual([
       'mute:nyaonearth:BannedUser',
@@ -196,6 +196,16 @@ describe('NyaOnEarth moderation projection', () => {
     f.reader.mutes = [relationship('OrdinaryUser')];
 
     const result = await f.runtime.tick(3_000_000);
+    expect(result.failed).toBe(0);
+    expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
+  });
+
+  test('a legacy schema-1 flair catalogue does not activate target bans or block pre-bootstrap moderation', async () => {
+    const f = await fixture();
+    await writeFile(f.catalogueFile, JSON.stringify({ schema: 1 }));
+
+    const result = await f.runtime.tick(4_000_000);
+    expect(result.skipped).toBe(true);
     expect(result.failed).toBe(0);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
   });
