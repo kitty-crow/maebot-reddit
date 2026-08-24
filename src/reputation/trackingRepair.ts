@@ -27,9 +27,19 @@ export type ReputationTrackingRepairResult = {
   readonly pawsomeRepaired: number;
 };
 
+export const RETIRED_MODERATOR_TRACKING_USERS = [
+  'Flair_Helper',
+  'nonfungibleneko',
+  'PsychologicalPrize71',
+] as const;
+
 const lower = (value: string): string => value.trim().toLowerCase();
+const retiredModeratorKeys = new Set(RETIRED_MODERATOR_TRACKING_USERS.map(lower));
 const text = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
 const flag = (value: Json | undefined): boolean => value === true;
+
+export const isRetiredModeratorTrackingUser = (username: string): boolean =>
+  retiredModeratorKeys.has(lower(username));
 
 export const isMisspelledPawsomeFlair = (value: string | null): boolean =>
   /^pawesome contributor(?:\s|$)/iu.test(value?.trim() ?? '');
@@ -160,7 +170,9 @@ export const reputationUsersRequiringReview = (value: Json): readonly string[] =
   for (const [key, raw] of Object.entries(users)) {
     if (!isMap(raw)) continue;
     if (raw['status'] !== 'unmapped' && raw['needsReview'] !== true) continue;
-    unresolved.push(text(raw['username']) ?? key);
+    const username = text(raw['username']) ?? key;
+    if (isRetiredModeratorTrackingUser(username)) continue;
+    unresolved.push(username);
   }
   return unresolved.sort((left, right) => left.localeCompare(right));
 };
