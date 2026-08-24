@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { reputationDesiredMutes, reputationMuteEffects } from '../src/reputation/muteReconcile.ts';
 
 const now = 1_000_000;
+const seededAtSeconds = 900;
+const seededAtMs = seededAtSeconds * 1_000;
+const thirtyDaysMs = 30 * 24 * 60 * 60 * 1_000;
 
 describe('legacy reputation mute reconciliation', () => {
   test('a pre-discipline snapshot derives communication restrictions from canonical statuses', () => {
@@ -10,10 +13,10 @@ describe('legacy reputation mute reconciliation', () => {
       subreddit: 'catgirlcoin',
       bootstrappedAt: 123,
       users: {
-        banned: { username: 'BannedUser', status: 'banned' },
-        scam: { username: 'ScamUser', status: 'scam' },
-        uncivil: { username: 'UncivilUser', status: 'uncivil' },
-        ordinary: { username: 'OrdinaryUser', status: 'ordinary' },
+        banned: { username: 'BannedUser', status: 'banned', seededAt: seededAtSeconds },
+        scam: { username: 'ScamUser', status: 'scam', seededAt: seededAtSeconds },
+        uncivil: { username: 'UncivilUser', status: 'uncivil', seededAt: seededAtSeconds },
+        ordinary: { username: 'OrdinaryUser', status: 'ordinary', seededAt: seededAtSeconds },
       },
     };
 
@@ -21,7 +24,7 @@ describe('legacy reputation mute reconciliation', () => {
       { username: 'BannedUser', muteUntil: null, permanent: true },
       { username: 'OrdinaryUser', muteUntil: null, permanent: false },
       { username: 'ScamUser', muteUntil: null, permanent: true },
-      { username: 'UncivilUser', muteUntil: now + 30 * 24 * 60 * 60 * 1_000, permanent: false },
+      { username: 'UncivilUser', muteUntil: seededAtMs + thirtyDaysMs, permanent: false },
     ]);
 
     expect(reputationMuteEffects(raw, now)).toEqual([
@@ -29,6 +32,12 @@ describe('legacy reputation mute reconciliation', () => {
       { username: 'ScamUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
       { username: 'UncivilUser', action: 'mute', note: 'Mae uncivil reputation state' },
     ]);
+
+    expect(reputationDesiredMutes(raw, now + 10_000)[3]).toEqual({
+      username: 'UncivilUser',
+      muteUntil: seededAtMs + thirtyDaysMs,
+      permanent: false,
+    });
   });
 
   test('a present malformed discipline field still fails closed', () => {
