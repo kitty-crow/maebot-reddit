@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { cloneCommunityEmojis } from '../src/emoji/migrate.ts';
 import { redditConfig, redditModerationConfig } from '../src/env.ts';
 import { FlairCloner } from '../src/flair/clone.ts';
 import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
@@ -17,7 +18,9 @@ import { isMap, parseMap } from '../src/types/json.ts';
 
 const sourceSubreddit = 'catgirlcoin';
 const targetSubreddit = 'nyaonearth';
-const maintenanceRateReserve = 30;
+const exclusiveMigration = /^(?:1|true|yes|on)$/iu.test(process.env['REDDIT_MIGRATION_EXCLUSIVE']?.trim() ?? '');
+const maintenanceRateReserve = exclusiveMigration ? 5 : 30;
+if (exclusiveMigration) process.env['REDDIT_RATE_MINIMUM_INTERVAL_MS'] = '650';
 
 const cfg = redditConfig();
 const moderationCfg = redditModerationConfig();
@@ -30,9 +33,12 @@ if (primary !== sourceSubreddit && primary !== targetSubreddit) {
   throw new Error('REDDIT_PRIMARY_SUBREDDIT must be catgirlcoin before bootstrap or nyaonearth after cutover');
 }
 
-// Bootstrap is intentionally lower priority than the live moderation runtime.
-// Both share one persisted OAuth budget, but this maintenance client stops
-// spending while thirty requests remain so live moderation can keep operating.
+console.log(
+  exclusiveMigration
+    ? 'Reddit migration pacing: EXCLUSIVE 650ms, reserve=5; Mae runtime must be offline.'
+    : 'Reddit migration pacing: shared 1000ms, reserve=30.',
+);
+
 const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const reputation = new ReputationStore(moderationCfg.stateFile);
@@ -127,10 +133,9 @@ if (targetExtraBans.length > 0) {
   );
 }
 
-// The running dual-community Mae must already have established communication
-// protection in NyaOnEarth before this command may expose the mass ban. Require
-// both Mae's durable projection checkpoint and Reddit's live muted relationship;
-// either one alone can be stale or manually altered.
+// Communication protection must already exist before any permanent target ban
+// is exposed. The bootstrap only verifies this precondition; it does not refresh
+// the 28-day mutes again during the ban loop.
 const now = Date.now();
 const targetMuteKeysBefore = new Set(targetMutedBefore.map(item => item.username.toLowerCase()));
 const unprotectedPermanentUsers: string[] = [];
@@ -146,6 +151,18 @@ if (unprotectedPermanentUsers.length > 0) {
     + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its projection complete first.`,
   );
 }
+
+console.log(`Cloning custom emojis first: r/${sourceSubreddit} -> r/${targetSubreddit}`);
+const emojiClone = await cloneCommunityEmojis(
+  read,
+  write,
+  sourceSubreddit,
+  targetSubreddit,
+  { log: message => console.log(message) },
+);
+console.log(
+  `Emoji clone complete: uploaded=${emojiClone.uploaded} permissions=${emojiClone.permissionsUpdated} unchanged=${emojiClone.unchanged}`,
+);
 
 console.log(`Cloning flair templates: r/${sourceSubreddit} -> r/${targetSubreddit}`);
 const result = await new FlairCloner(read, write).clone(
@@ -174,22 +191,25 @@ const samePresentation = (left: RedditFlairTemplate, right: RedditFlairTemplate)
   && norm(left.allowableContent) === norm(right.allowableContent)
   && (left.maxEmojis ?? 0) === (right.maxEmojis ?? 0);
 
-const mappings = (kind: 'user' | 'post', sourceTemplates: readonly RedditFlairTemplate[], targetTemplates: readonly RedditFlairTemplate[]) =>
-  sourceTemplates.map(template => {
-    const matches = targetTemplates.filter(targetTemplate => samePresentation(template, targetTemplate));
-    if (matches.length !== 1) {
-      throw new Error(`Expected exactly one cloned ${kind} flair destination for ${template.id}, found ${matches.length}`);
-    }
-    const destination = matches[0];
-    if (destination === undefined) throw new Error(`Cloned ${kind} flair destination disappeared for ${template.id}`);
-    return {
-      kind,
-      sourceTemplateId: template.id,
-      targetTemplateId: destination.id,
-      text: template.text,
-      cssClass: template.cssClass,
-    } as const;
-  });
+const mappings = (
+  kind: 'user' | 'post',
+  sourceTemplates: readonly RedditFlairTemplate[],
+  targetTemplates: readonly RedditFlairTemplate[],
+) => sourceTemplates.map(template => {
+  const matches = targetTemplates.filter(targetTemplate => samePresentation(template, targetTemplate));
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one cloned ${kind} flair destination for ${template.id}, found ${matches.length}`);
+  }
+  const destination = matches[0];
+  if (destination === undefined) throw new Error(`Cloned ${kind} flair destination disappeared for ${template.id}`);
+  return {
+    kind,
+    sourceTemplateId: template.id,
+    targetTemplateId: destination.id,
+    text: template.text,
+    cssClass: template.cssClass,
+  } as const;
+});
 
 const userFlairMappings = mappings('user', sourceUserTemplates, targetUserTemplates);
 const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTemplates);
@@ -216,6 +236,7 @@ const flairRestores = communityFlairRestores(
   targetSubreddit,
   targetAssignmentsBefore,
 );
+console.log(`Canonical target flair restores remaining after resume scan: ${flairRestores.length}`);
 let canonicalFlairsApplied = 0;
 for (const flair of flairRestores) {
   await write.setUserFlairTemplate(
@@ -225,6 +246,9 @@ for (const flair of flairRestores) {
     flair.customText,
   );
   canonicalFlairsApplied += 1;
+  if (canonicalFlairsApplied % 25 === 0 || canonicalFlairsApplied === flairRestores.length) {
+    console.log(`Canonical target flairs applied this run: ${canonicalFlairsApplied}/${flairRestores.length}`);
+  }
 }
 
 console.log(`Cloning sticky posts with mapped post flairs: r/${sourceSubreddit} -> r/${targetSubreddit}`);
@@ -251,11 +275,9 @@ const migratedBans: {
   targetBanAlreadyPresent: boolean;
   targetBanApplied: boolean;
 }[] = [];
-for (const username of [...canonicalBans.values()].sort((left, right) => left.localeCompare(right))) {
-  // Refresh immediately before exposing the target ban and advance the target
-  // projection checkpoint so the normal runtime does not duplicate this write.
-  await write.muteUser(targetSubreddit, username, 'Mae permanent reputation enforcement');
-  await projection.markMute(targetSubreddit, username, 'mute', Date.now());
+const sortedCanonicalBans = [...canonicalBans.values()].sort((left, right) => left.localeCompare(right));
+let bansAppliedThisRun = 0;
+for (const username of sortedCanonicalBans) {
   const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
   if (!alreadyPresent) {
     await write.banUser(
@@ -264,6 +286,10 @@ for (const username of [...canonicalBans.values()].sort((left, right) => left.lo
       'Mae canonical moderation state',
       `Canonical Mae reputation state migrated from r/${sourceSubreddit}.`,
     );
+    bansAppliedThisRun += 1;
+    if (bansAppliedThisRun % 25 === 0) {
+      console.log(`Canonical target bans applied this run: ${bansAppliedThisRun}`);
+    }
   }
   migratedBans.push({
     username,
@@ -271,6 +297,7 @@ for (const username of [...canonicalBans.values()].sort((left, right) => left.lo
     targetBanApplied: !alreadyPresent,
   });
 }
+console.log(`Canonical target bans newly applied this run: ${bansAppliedThisRun}`);
 
 const [targetBansAfter, targetMutedAfter, targetAssignmentsAfter] = await Promise.all([
   read.bannedUsers(targetSubreddit),
@@ -315,6 +342,7 @@ const catalogue = {
   sourceSubreddit,
   targetSubreddit,
   publishingPrimaryAtBootstrap: cfg.primarySubreddit,
+  emojiClone,
   userTemplates: {
     source: sourceUserTemplates,
     target: targetUserTemplates,
@@ -333,7 +361,7 @@ const catalogue = {
     canonicalApplied: canonicalFlairsApplied,
   },
   moderationStatus: {
-    canonicalBannedOrScamUsers: [...canonicalBans.values()].sort((a, b) => a.localeCompare(b)),
+    canonicalBannedOrScamUsers: sortedCanonicalBans,
     sourceSubredditBans: sourceBans,
     targetBansBefore,
     targetMutedBefore,
@@ -349,9 +377,11 @@ const temp = `${catalogueFile}.tmp.${process.pid}`;
 await writeFile(temp, `${JSON.stringify(catalogue, null, 2)}\n`, { mode: 0o600 });
 await rename(temp, catalogueFile);
 
+console.log(`emoji assets uploaded/replaced=${emojiClone.uploaded}`);
+console.log(`emoji permission-only updates=${emojiClone.permissionsUpdated}`);
 console.log(`user templates created=${result.userTemplatesCreated}`);
 console.log(`post templates created=${result.postTemplatesCreated}`);
-console.log(`canonical user flairs applied=${canonicalFlairsApplied}`);
+console.log(`canonical user flairs applied this run=${canonicalFlairsApplied}`);
 console.log(`sticky posts cloned/reused=${stickyPosts.length}`);
 for (const sticky of stickyPosts) {
   console.log(`sticky slot ${sticky.slot}: ${sticky.sourceFullname} -> t3_${sticky.targetPostId} mode=${sticky.mode}`);
@@ -360,4 +390,4 @@ console.log(`canonical banned/scam users reconciled=${canonicalBans.size}`);
 console.log(`target bans before=${targetBansBefore.length} after=${targetBansAfter.length}`);
 console.log(`target mutes before=${targetMutedBefore.length} after=${targetMutedAfter.length}`);
 console.log(`canonical flair catalogue=${catalogueFile}`);
-console.log('Canonical flair, sticky and moderation-state bootstrap complete.');
+console.log('Canonical emoji, flair, sticky and moderation-state bootstrap complete.');
