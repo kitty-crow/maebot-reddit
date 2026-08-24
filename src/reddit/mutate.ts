@@ -3,6 +3,7 @@ import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
+import { rateLimitedRedditFetch } from './rateBudget.ts';
 import type { RedditFlairTemplate } from './types.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -13,12 +14,18 @@ export type RedditMutationOptions = {
   readonly sleep?: RedditMutationSleep;
   readonly random?: () => number;
   readonly maxAttempts?: number;
+  readonly rateReserve?: number;
 };
 
 export type RedditCreatedPost = {
   readonly id: string;
   readonly fullname: string;
   readonly url: string;
+};
+
+export type RedditSelectedUserFlair = {
+  readonly templateId: string | null;
+  readonly text: string | null;
 };
 
 type Token = {
@@ -34,6 +41,7 @@ const pathFor = (subreddit: string, suffix: string): string =>
   `/r/${encodeURIComponent(subreddit)}${suffix}`;
 
 const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
+const optionalText = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
 
 const jsonPayload = (raw: string, context: string): Json => {
   if (raw.trim().length === 0) return null;
@@ -68,6 +76,17 @@ const createdPost = (value: Json): RedditCreatedPost => {
   return { id, fullname, url: text(data['url']) };
 };
 
+const selectedUserFlair = (value: Json, username: string): RedditSelectedUserFlair => {
+  if (!isMap(value) || !isMap(value['current'])) {
+    throw new RedditError(`Reddit flair selector did not return current flair for u/${username}`, 'invalid_response');
+  }
+  const current = value['current'];
+  return {
+    templateId: optionalText(current['flair_template_id']),
+    text: optionalText(current['flair_text']) ?? optionalText(current['text']),
+  };
+};
+
 const add = (form: URLSearchParams, name: string, value: string | null): void => {
   if (value !== null && value.length > 0) form.set(name, value);
 };
@@ -90,8 +109,14 @@ export class RedditMutationClient {
     private readonly cfg: RedditAuthCfg,
     options: RedditMutationOptions = {},
   ) {
-    this.fetcher = options.fetcher ?? fetch;
     this.sleep = options.sleep ?? defaultSleep;
+    const rawFetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher === undefined
+      ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, {
+          reserve: options.rateReserve,
+          sleep: this.sleep,
+        })
+      : rawFetcher;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
   }
@@ -172,6 +197,13 @@ export class RedditMutationClient {
     const form = new URLSearchParams({ api_type: 'json', flair_template_id: templateId, name: username });
     add(form, 'text', customText);
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
+  }
+
+  public async userFlairSelection(subreddit: string, username: string): Promise<RedditSelectedUserFlair> {
+    return selectedUserFlair(await this.form(
+      pathFor(subreddit, '/api/flairselector'),
+      new URLSearchParams({ api_type: 'json', name: username }),
+    ), username);
   }
 
   public async setUserFlairDirect(
