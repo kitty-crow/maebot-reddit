@@ -19,6 +19,7 @@ type CommunityProjectionCatalogue = {
 const normalise = (value: string): string => value.trim().toLowerCase();
 const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
+const anyText = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
 
 const catalogueMapping = (catalogue: Json): CommunityProjectionCatalogue => {
@@ -54,7 +55,7 @@ const catalogueMapping = (catalogue: Json): CommunityProjectionCatalogue => {
   for (const raw of targets) {
     if (!isMap(raw)) continue;
     const id = text(raw['id']);
-    const targetText = text(raw['text']);
+    const targetText = anyText(raw['text']);
     if (id === null || targetText === null) continue;
     targetTexts.set(id, targetText);
     if (bool(raw['textEditable'])) editableTargets.add(id);
@@ -141,7 +142,7 @@ export const communityFlairRestores = (
     if (targetText === undefined) {
       throw new Error(`Target flair template ${targetTemplateId} is absent from r/${projection.targetSubreddit} catalogue inventory`);
     }
-    const desiredText = text(raw['desiredFlairText']);
+    const desiredText = anyText(raw['desiredFlairText']);
     const customText = projection.editableTargets.has(targetTemplateId) ? desiredText : null;
     const projectedText = customText ?? targetText;
     const current = live.get(normalise(username));
