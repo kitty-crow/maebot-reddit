@@ -11,11 +11,12 @@ import {
 } from '../src/reputation/trackingRepair.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { safeError } from '../src/reddit/error.ts';
-import { RedditMutationClient } from '../src/reddit/mutate.ts';
+import { RedditMutationClient, type RedditSelectedUserFlair } from '../src/reddit/mutate.ts';
 import { Store } from '../src/store/store.ts';
-import { isMap, parseJson, type Json } from '../src/types/json.ts';
+import { isMap, type Json } from '../src/types/json.ts';
 
 const sourceSubreddit = 'catgirlcoin';
+const maintenanceRateReserve = 30;
 const cfg = redditConfig();
 const moderationCfg = redditModerationConfig();
 if (moderationCfg === null) throw new Error('REDDIT_MODERATION_ENABLED must be true for reputation tracking repair');
@@ -23,8 +24,8 @@ if (cfg.sourceSubreddit.toLowerCase() !== sourceSubreddit) {
   throw new Error('Reputation tracking repair requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin');
 }
 
-const read = new RedditReadClient(cfg.auth);
-const write = new RedditMutationClient(cfg.auth);
+const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
+const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
 const stateFile = resolve(process.cwd(), moderationCfg.stateFile);
 const store = new Store(stateFile, null);
 const canonical = CATGIRLCOIN_REPUTATION_FLAIRS.user.pawsomeContributor;
@@ -63,62 +64,6 @@ const liveFlair = (
 const backupPath = (): string => {
   const stamp = new Date().toISOString().replaceAll(':', '').replaceAll('-', '').replace(/\.\d{3}Z$/u, 'Z');
   return resolve(process.cwd(), 'data', 'reputation-backups', `tracking-repair-${stamp}`, 'reputation.pb');
-};
-
-type SelectedFlair = {
-  readonly templateId: string | null;
-  readonly text: string | null;
-};
-
-const oauthToken = async (): Promise<string> => {
-  const body = new URLSearchParams({
-    grant_type: 'password',
-    username: cfg.auth.username,
-    password: cfg.auth.password,
-  });
-  const basic = Buffer.from(`${cfg.auth.clientId}:${cfg.auth.clientSecret}`).toString('base64');
-  const response = await fetch('https://www.reddit.com/api/v1/access_token', {
-    method: 'POST',
-    headers: {
-      authorization: `Basic ${basic}`,
-      'content-type': 'application/x-www-form-urlencoded',
-      'user-agent': cfg.auth.userAgent,
-    },
-    body,
-  });
-  if (!response.ok) throw new Error(`Reddit OAuth token request failed with HTTP ${response.status}`);
-  const payload = parseJson(await response.text());
-  if (!isMap(payload)) throw new Error('Reddit OAuth token response was not an object');
-  const token = text(payload['access_token']);
-  if (token === null || token.length === 0) throw new Error('Reddit OAuth token response did not contain an access token');
-  return token;
-};
-
-const selectedUserFlair = async (
-  token: string,
-  username: string,
-): Promise<SelectedFlair> => {
-  const url = new URL(`https://oauth.reddit.com/r/${encodeURIComponent(sourceSubreddit)}/api/flairselector`);
-  url.searchParams.set('raw_json', '1');
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/x-www-form-urlencoded',
-      'user-agent': cfg.auth.userAgent,
-    },
-    body: new URLSearchParams({ api_type: 'json', name: username }),
-  });
-  if (!response.ok) throw new Error(`Reddit flair selector failed for u/${username} with HTTP ${response.status}`);
-  const payload = parseJson(await response.text());
-  if (!isMap(payload) || !isMap(payload['current'])) {
-    throw new Error(`Reddit flair selector did not return current flair for u/${username}`);
-  }
-  const current = payload['current'];
-  return {
-    templateId: text(current['flair_template_id']),
-    text: text(current['flair_text']) ?? text(current['text']),
-  };
 };
 
 try {
@@ -166,12 +111,11 @@ try {
   }
   console.log('Reddit misspelled Pawsome assignments after repair: 0');
 
-  const token = await oauthToken();
-  let badSelections: { readonly username: string; readonly selected: SelectedFlair }[] = [];
+  let badSelections: { readonly username: string; readonly selected: RedditSelectedUserFlair }[] = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     badSelections = [];
     for (const username of repairTargets.values()) {
-      const selected = await selectedUserFlair(token, username);
+      const selected = await write.userFlairSelection(sourceSubreddit, username);
       if (selected.templateId !== canonical.id || selected.text !== canonical.text) {
         badSelections.push({ username, selected });
       }
