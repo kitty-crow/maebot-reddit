@@ -1,4 +1,4 @@
-import { isMap, type Json } from '../types/json.ts';
+import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { redditMuteAction, UNCIVIL_MUTE_MS } from './mutePolicy.ts';
 import type { ReputationPendingMute } from './store.ts';
 
@@ -13,6 +13,16 @@ const text = (value: Json | undefined): string | null =>
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
+
+const disciplineMap = (raw: JsonMap): JsonMap => {
+  const discipline = raw['discipline'];
+  // Production reputation snapshots created before the discipline journal was
+  // introduced legitimately omit this field. Treat absence as an empty
+  // journal, but keep failing closed if a present value is malformed.
+  if (discipline === undefined) return {};
+  if (!isMap(discipline)) throw new Error('Reputation mute reconciliation discipline map is invalid');
+  return discipline;
+};
 
 const desiredFor = (
   status: Json | undefined,
@@ -40,8 +50,8 @@ export const reputationDesiredMutes = (
 ): readonly ReputationDesiredMute[] => {
   if (!isMap(raw)) throw new Error('Reputation mute reconciliation root must be an object');
   const users = raw['users'];
-  const discipline = raw['discipline'];
-  if (!isMap(users) || !isMap(discipline)) throw new Error('Reputation mute reconciliation maps are missing');
+  if (!isMap(users)) throw new Error('Reputation mute reconciliation users map is missing');
+  const discipline = disciplineMap(raw);
 
   const desired: ReputationDesiredMute[] = [];
   for (const [key, userRaw] of Object.entries(users)) {
@@ -64,8 +74,7 @@ export const reputationMuteEffects = (
   nowMs = Date.now(),
 ): readonly ReputationPendingMute[] => {
   if (!isMap(raw)) throw new Error('Reputation mute reconciliation root must be an object');
-  const discipline = raw['discipline'];
-  if (!isMap(discipline)) throw new Error('Reputation mute reconciliation discipline map is missing');
+  const discipline = disciplineMap(raw);
 
   const effects: ReputationPendingMute[] = [];
   for (const desired of reputationDesiredMutes(raw, nowMs)) {
