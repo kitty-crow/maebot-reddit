@@ -4,16 +4,18 @@ This is the first-stage migration into Mae's internal Reddit reputation system.
 
 ## Purpose
 
-`bun run bootstrap:reputation` inventories the live subreddit, reconciles discovered ordinary contributors who have no flair onto an existing tier-one flair, and writes the local migration artefacts:
+`bun run bootstrap:reputation` inventories the live source subreddit, reconciles discovered ordinary contributors who have no flair onto an existing tier-one flair, and writes the local migration artefacts:
 
 - `data/reputation.pb` — canonical protobuf-backed reputation state through the existing `Store` / `MutexProtoBuffStore` boundary;
 - `data/reputation-bootstrap-report.json` — human-readable audit report.
 
-The command never creates or copies Reddit flair templates. Existing live Reddit flair templates and their IDs are authoritative.
+The command never creates or copies Reddit flair templates. Existing live Reddit flair templates and their IDs are authoritative for the source community.
+
+After `reputation.pb` exists, `bun run clone:flairs` is the separate CatgirlCoin → NyaOnEarth community bootstrap. That command clones the source flair templates, builds subreddit-local template-ID mappings, projects the canonical reputation state into NyaOnEarth, clones/reuses sticky posts, and reconciles canonical permanent bans. It must not reinterpret legacy CSS classes as new moderation decisions.
 
 ## Inventory
 
-The bootstrap reads the configured source subreddit and records every user/post flair template, moderator, banned user, flair assignment, and authors discoverable in Reddit's accessible `/new` and `/comments` history, up to 1,000 items from each listing.
+The reputation bootstrap reads the configured source subreddit and records every user/post flair template, moderator, banned user, flair assignment, and authors discoverable in Reddit's accessible `/new` and `/comments` history, up to 1,000 items from each listing.
 
 For `r/catgirlcoin`, the live reputation-related inventory captured on 23 August 2026 is now recorded in source and validated by exact template ID before bootstrap proceeds:
 
@@ -67,27 +69,45 @@ The bootstrap applies the selected existing tier-one template to every discovere
 
 Known moderation states are represented independently of positive tiers:
 
-- warned: -1
-- uncivil: -2
-- permanent ban: -999,999,999
-- scam/promotion: -999,999,999 and permanently banned
+- warned: 0 through -3, with negative points represented as Strikes;
+- uncivil: -4 through -9, recoverable through clean accepted participation;
+- permanent-ban trigger: -10 or lower, immediately clamped to -999,999,999;
+- scam/prohibited malicious promotion: immediate -999,999,999 permanent enforcement.
 
--999,999,999 is the absolute reputation floor and no account can fall below it.
+-999,999,999 is the absolute reputation floor and no account can fall below it. Uncivil is not a permanent-ban alias: uncivil users may comment, cannot submit posts, and remain eligible for redemption until they cross the permanent-ban trigger.
 
 Any flair that cannot be mapped confidently is preserved verbatim, seeded at 0, marked `unmapped`, and emitted as `needsReview` rather than guessed.
 
+## Two-community projection
+
+Points, tier, status, moderation history and discipline are canonical per Reddit username and are not duplicated per subreddit. Reddit flair template UUIDs are local implementation identifiers, so the NyaOnEarth bootstrap records a source-template → target-template mapping in `data/flairs.json` and projects the one canonical user state through that mapping.
+
+After cutover, the same runtime ingests posts, comments and Modmail from both `r/catgirlcoin` and `r/nyaonearth`. Permanent bans and Mae communication restrictions are applied to both communities before their canonical side-effect checkpoint is marked complete. NyaOnEarth flair assignments are periodically reconciled from `reputation.pb` through the persisted template mapping.
+
+The community bootstrap fails closed when:
+
+- source and primary subreddit configuration resolve to the same community;
+- the canonical reputation store is absent;
+- any canonical user still requires semantic review;
+- live CatgirlCoin bans disagree with canonical `banned`/`scam` state;
+- NyaOnEarth contains an unexplained extra ban;
+- a canonical source flair cannot be mapped to exactly one NyaOnEarth template;
+- post-bootstrap flair or ban verification does not match the intended canonical state.
+
+Legacy `database.db` moderation lists and legacy uncivil CSS markers are not migration authority for this step.
+
 ## Safety
 
-The bootstrap refuses to overwrite an already initialised `reputation.pb` unless `--force` is supplied. `--force` is intended only after the prior report and state have been reviewed.
+The reputation bootstrap refuses to overwrite an already initialised `reputation.pb` unless `--force` is supplied. `--force` is intended only after the prior report and state have been reviewed.
 
 Flair reconciliation is limited to discovered ordinary users whose bootstrap record explicitly says they require a tier flair. Moderator and non-ordinary records are rejected by the reconciliation boundary rather than modified.
 
 After writing the state, the command reopens/verifies the protobuf bootstrap marker before reporting success.
 
-The reputation store also reserves empty `contributions` and `reputationJournal` maps for the next phase. Vote-score credits and contribution credits must be journalled atomically with user-point changes so retries cannot double-credit users. Point mutations must clamp normal members to 9,999, moderators to 999,999,999, and everybody to the -999,999,999 floor.
+The reputation store also reserves `contributions` and `reputationJournal` maps for runtime state. Vote-score credits and contribution credits are journalled atomically with user-point changes so retries cannot double-credit users. Point mutations clamp normal members to 9,999, moderators to 999,999,999, and everybody to the -999,999,999 floor.
 
 ## Legacy participation gates
 
-As part of the same migration candidate, the obsolete Reddit-global-karma participation restrictions are retired from the legacy Python moderation oracle. Participation will be governed by Mae's internal moderation/reputation system rather than Reddit account karma.
+As part of the same migration candidate, the obsolete Reddit-global-karma participation restrictions are retired from the legacy Python moderation oracle. Participation is governed by Mae's internal moderation/reputation system rather than Reddit account karma.
 
 The automated bot notice also includes a blank paragraph before its Markdown horizontal rule so Reddit does not render the preceding moderation message as a Setext heading.
