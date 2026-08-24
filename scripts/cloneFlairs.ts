@@ -7,10 +7,11 @@ import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
 import { mirrorKey, PostMirrorStore } from '../src/mirror/store.ts';
 import { communityFlairRestores } from '../src/reputation/communityProjection.ts';
 import { CommunityProjectionStore } from '../src/reputation/communityProjectionStore.ts';
+import { redditMuteAction } from '../src/reputation/mutePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
-import type { RedditFlairTemplate } from '../src/reddit/types.ts';
+import type { RedditFlairTemplate, RedditModerator } from '../src/reddit/types.ts';
 import { isMap, parseMap } from '../src/types/json.ts';
 
 const cfg = redditConfig();
@@ -40,10 +41,21 @@ if (!(await reputation.hasBootstrap())) {
   throw new Error(`Canonical reputation store is not bootstrapped at ${moderationCfg.stateFile}`);
 }
 
-const [me, source, target, sourceBans, targetBansBefore, reputationRaw] = await Promise.all([
+const [
+  me,
+  source,
+  target,
+  sourceModerators,
+  targetModerators,
+  sourceBans,
+  targetBansBefore,
+  reputationRaw,
+] = await Promise.all([
   read.me(),
   read.subreddit(cfg.sourceSubreddit),
   read.subreddit(cfg.primarySubreddit),
+  read.moderators(cfg.sourceSubreddit),
+  read.moderators(cfg.primarySubreddit),
   read.bannedUsers(cfg.sourceSubreddit),
   read.bannedUsers(cfg.primarySubreddit),
   reputation.raw(),
@@ -53,6 +65,23 @@ if (!target.userIsModerator) throw new Error(`${me.name} is not a moderator of r
 if (!isMap(reputationRaw) || !isMap(reputationRaw['users'])) {
   throw new Error('Canonical reputation users map is missing');
 }
+
+const requiredPermissions = ['access', 'flair', 'posts', 'mail'] as const;
+const assertPermissions = (
+  subreddit: string,
+  moderators: readonly RedditModerator[],
+): void => {
+  const mae = moderators.find(row => row.name.toLowerCase() === me.name.toLowerCase());
+  if (mae === undefined) throw new Error(`${me.name} is absent from r/${subreddit} moderator inventory`);
+  const granted = new Set(mae.permissions.map(value => value.toLowerCase()));
+  if (granted.has('all')) return;
+  const missing = requiredPermissions.filter(permission => !granted.has(permission));
+  if (missing.length > 0) {
+    throw new Error(`r/${subreddit} is missing Mae moderator permissions required for bootstrap: ${missing.join(', ')}`);
+  }
+};
+assertPermissions(cfg.sourceSubreddit, sourceModerators);
+assertPermissions(cfg.primarySubreddit, targetModerators);
 
 const canonicalBans = new Map<string, string>();
 const unresolvedUsers: string[] = [];
@@ -87,6 +116,25 @@ const targetExtraBans = [...targetBanKeysBefore].filter(key => !canonicalBanKeys
 if (targetExtraBans.length > 0) {
   throw new Error(
     `Community bootstrap refused: r/${cfg.primarySubreddit} has bans absent from canonical reputation: ${targetExtraBans.join(', ')}`,
+  );
+}
+
+// The dual-community Mae runtime must already have projected communication
+// protection into NyaOnEarth before this command is allowed to expose the mass
+// ban migration. A fresh/missing/expired target mute checkpoint means the
+// runtime has not converged yet, so abort before any subreddit mutation.
+const now = Date.now();
+const unprotectedPermanentUsers: string[] = [];
+for (const username of canonicalBans.values()) {
+  const current = await projection.muteState(cfg.primarySubreddit, username);
+  if (redditMuteAction({ muteUntil: null, permanent: true }, current, now) !== null) {
+    unprotectedPermanentUsers.push(username);
+  }
+}
+if (unprotectedPermanentUsers.length > 0) {
+  throw new Error(
+    `Community bootstrap refused: r/${cfg.primarySubreddit} communication projection has not converged for `
+    + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its initial projection complete first.`,
   );
 }
 
@@ -137,7 +185,7 @@ const mappings = (kind: 'user' | 'post', sourceTemplates: readonly RedditFlairTe
 const userFlairMappings = mappings('user', sourceUserTemplates, targetUserTemplates);
 const postFlairMappings = mappings('post', sourcePostTemplates, targetPostTemplates);
 const projectionCatalogue = parseMap(JSON.stringify({
-  schema: 1,
+  schema: 2,
   generatedAt: new Date().toISOString(),
   sourceSubreddit: cfg.sourceSubreddit,
   targetSubreddit: cfg.primarySubreddit,
@@ -195,9 +243,8 @@ const migratedBans: {
   targetBanApplied: boolean;
 }[] = [];
 for (const username of [...canonicalBans.values()].sort((left, right) => left.localeCompare(right))) {
-  // Communication enforcement is established before the target ban is exposed.
-  // Re-applying the finite Reddit mute is safe and guarantees an already-banned
-  // target user cannot sit outside Mae's canonical permanent restriction.
+  // Refresh immediately before exposing the target ban and advance the target
+  // projection checkpoint so the normal runtime does not duplicate this write.
   await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
   await projection.markMute(cfg.primarySubreddit, username, 'mute', Date.now());
   const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
