@@ -49,6 +49,7 @@ const [
   targetModerators,
   sourceBans,
   targetBansBefore,
+  targetMutedBefore,
   reputationRaw,
 ] = await Promise.all([
   read.me(),
@@ -58,6 +59,7 @@ const [
   read.moderators(cfg.primarySubreddit),
   read.bannedUsers(cfg.sourceSubreddit),
   read.bannedUsers(cfg.primarySubreddit),
+  read.mutedUsers(cfg.primarySubreddit),
   reputation.raw(),
 ]);
 if (!source.userIsModerator) throw new Error(`${me.name} is not a moderator of r/${cfg.sourceSubreddit}`);
@@ -119,22 +121,23 @@ if (targetExtraBans.length > 0) {
   );
 }
 
-// The dual-community Mae runtime must already have projected communication
-// protection into NyaOnEarth before this command is allowed to expose the mass
-// ban migration. A fresh/missing/expired target mute checkpoint means the
-// runtime has not converged yet, so abort before any subreddit mutation.
+// The running dual-community Mae must already have established communication
+// protection in NyaOnEarth before this command may expose the mass ban. Require
+// both Mae's durable projection checkpoint and Reddit's live muted relationship;
+// either one alone can be stale or manually altered.
 const now = Date.now();
+const targetMuteKeysBefore = new Set(targetMutedBefore.map(item => item.username.toLowerCase()));
 const unprotectedPermanentUsers: string[] = [];
 for (const username of canonicalBans.values()) {
+  const key = username.toLowerCase();
   const current = await projection.muteState(cfg.primarySubreddit, username);
-  if (redditMuteAction({ muteUntil: null, permanent: true }, current, now) !== null) {
-    unprotectedPermanentUsers.push(username);
-  }
+  const checkpointReady = redditMuteAction({ muteUntil: null, permanent: true }, current, now) === null;
+  if (!checkpointReady || !targetMuteKeysBefore.has(key)) unprotectedPermanentUsers.push(username);
 }
 if (unprotectedPermanentUsers.length > 0) {
   throw new Error(
-    `Community bootstrap refused: r/${cfg.primarySubreddit} communication projection has not converged for `
-    + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its initial projection complete first.`,
+    `Community bootstrap refused: r/${cfg.primarySubreddit} live communication protection has not converged for `
+    + `${unprotectedPermanentUsers.sort().join(', ')}. Start the dual-community Mae runtime and let its projection complete first.`,
   );
 }
 
@@ -263,13 +266,19 @@ for (const username of [...canonicalBans.values()].sort((left, right) => left.lo
   });
 }
 
-const [targetBansAfter, targetAssignmentsAfter] = await Promise.all([
+const [targetBansAfter, targetMutedAfter, targetAssignmentsAfter] = await Promise.all([
   read.bannedUsers(cfg.primarySubreddit),
+  read.mutedUsers(cfg.primarySubreddit),
   read.userFlairAssignments(cfg.primarySubreddit),
 ]);
 const targetBanAfterKeys = new Set(targetBansAfter.map(item => item.username.toLowerCase()));
+const targetMuteAfterKeys = new Set(targetMutedAfter.map(item => item.username.toLowerCase()));
 for (const username of canonicalBans.values()) {
-  if (!targetBanAfterKeys.has(username.toLowerCase())) {
+  const key = username.toLowerCase();
+  if (!targetMuteAfterKeys.has(key)) {
+    throw new Error(`Communication protection verification failed for u/${username}`);
+  }
+  if (!targetBanAfterKeys.has(key)) {
     throw new Error(`Ban migration verification failed for u/${username}`);
   }
 }
@@ -320,8 +329,10 @@ const catalogue = {
     canonicalBannedOrScamUsers: [...canonicalBans.values()].sort((a, b) => a.localeCompare(b)),
     sourceSubredditBans: sourceBans,
     targetBansBefore,
+    targetMutedBefore,
     migratedBans,
     targetBansAfter,
+    targetMutedAfter,
   },
   cloneResult: result,
 };
@@ -340,5 +351,6 @@ for (const sticky of stickyPosts) {
 }
 console.log(`canonical banned/scam users reconciled=${canonicalBans.size}`);
 console.log(`target bans before=${targetBansBefore.length} after=${targetBansAfter.length}`);
+console.log(`target mutes before=${targetMutedBefore.length} after=${targetMutedAfter.length}`);
 console.log(`canonical flair catalogue=${catalogueFile}`);
 console.log('Canonical flair, sticky and moderation-state bootstrap complete.');
