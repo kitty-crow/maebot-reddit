@@ -21,6 +21,12 @@ export type CommunityEmojiCloneOptions = {
   readonly log?: (message: string) => void;
 };
 
+export type CommunityEmojiCloneClients = {
+  readonly sourceRead: RedditReadClient;
+  readonly targetRead: RedditReadClient;
+  readonly targetWrite: RedditMutationClient;
+};
+
 const byName = (values: readonly RedditEmoji[]): ReadonlyMap<string, RedditEmoji> =>
   new Map(values.map(value => [value.name, value]));
 
@@ -29,8 +35,7 @@ const defaultSleep = async (milliseconds: number): Promise<void> => {
 };
 
 export const cloneCommunityEmojis = async (
-  read: RedditReadClient,
-  write: RedditMutationClient,
+  clients: CommunityEmojiCloneClients,
   sourceSubreddit: string,
   targetSubreddit: string,
   options: CommunityEmojiCloneOptions = {},
@@ -40,18 +45,21 @@ export const cloneCommunityEmojis = async (
   const sleep = options.sleep ?? defaultSleep;
   const log = options.log ?? (() => undefined);
 
-  // Custom emoji mutation is a subreddit appearance/settings operation on Reddit,
-  // not merely a flair operation. Fail before inventory/download/write work when
-  // the target moderator lacks Manage Settings (`config`).
-  const [account, targetModerators] = await Promise.all([
-    read.me(),
-    read.moderators(targetSubreddit),
+  // The target-side emoji client is intentionally allowed to be a different
+  // Reddit identity from Mae. Custom emoji mutation is a subreddit
+  // appearance/settings operation and therefore requires Manage Settings
+  // (`config`) on the target community. Verify that exact authenticated
+  // identity before inventory/download/write work starts.
+  const [operator, targetModerators] = await Promise.all([
+    clients.targetRead.me(),
+    clients.targetRead.moderators(targetSubreddit),
   ]);
-  assertModeratorPermissions(account.name, targetSubreddit, targetModerators, ['config']);
+  assertModeratorPermissions(operator.name, targetSubreddit, targetModerators, ['config']);
+  log(`Target emoji operator: u/${operator.name}`);
 
   const [source, targetBefore] = await Promise.all([
-    read.emojis(sourceSubreddit),
-    read.emojis(targetSubreddit),
+    clients.sourceRead.emojis(sourceSubreddit),
+    clients.targetRead.emojis(targetSubreddit),
   ]);
   const targetByName = byName(targetBefore);
   const sourceNames = new Set(source.map(emoji => emoji.name));
@@ -88,14 +96,14 @@ export const cloneCommunityEmojis = async (
     }
 
     if (action === 'permissions') {
-      await write.updateEmojiPermissions(targetSubreddit, emoji);
+      await clients.targetWrite.updateEmojiPermissions(targetSubreddit, emoji);
       permissionsUpdated += 1;
       log(`PERMS :${emoji.name}: copied source permissions`);
       continue;
     }
 
     uploadedPreviousUrls.set(emoji.name, current?.url ?? null);
-    await write.uploadEmoji(targetSubreddit, emoji, sourceAsset);
+    await clients.targetWrite.uploadEmoji(targetSubreddit, emoji, sourceAsset);
     uploaded += 1;
     log(`${current === undefined ? 'ADD   ' : 'IMAGE '} :${emoji.name}: uploaded source asset`);
   }
@@ -104,7 +112,7 @@ export const cloneCommunityEmojis = async (
   let unresolved: readonly string[] = [];
   let staleAssets: readonly string[] = [];
   for (let attempt = 1; attempt <= verificationAttempts; attempt += 1) {
-    targetAfter = await read.emojis(targetSubreddit);
+    targetAfter = await clients.targetRead.emojis(targetSubreddit);
     unresolved = unresolvedEmojiClone(source, targetAfter);
     const afterByName = byName(targetAfter);
     staleAssets = [...uploadedPreviousUrls.entries()]
