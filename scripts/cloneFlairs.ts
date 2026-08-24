@@ -4,7 +4,9 @@ import { dirname, resolve } from 'node:path';
 import { redditConfig, redditModerationConfig } from '../src/env.ts';
 import { FlairCloner } from '../src/flair/clone.ts';
 import { cloneStickyPosts } from '../src/migration/stickyClone.ts';
+import { mirrorKey, PostMirrorStore } from '../src/mirror/store.ts';
 import { communityFlairRestores } from '../src/reputation/communityProjection.ts';
+import { CommunityProjectionStore } from '../src/reputation/communityProjectionStore.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
@@ -26,6 +28,14 @@ if (
 const read = new RedditReadClient(cfg.auth);
 const write = new RedditMutationClient(cfg.auth);
 const reputation = new ReputationStore(moderationCfg.stateFile);
+const projection = new CommunityProjectionStore(resolve(
+  process.cwd(),
+  process.env['REDDIT_COMMUNITY_PROJECTION_STATE_FILE']?.trim() || 'data/communityProjection.pb',
+));
+const mirror = new PostMirrorStore(resolve(
+  process.cwd(),
+  process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb',
+));
 if (!(await reputation.hasBootstrap())) {
   throw new Error(`Canonical reputation store is not bootstrapped at ${moderationCfg.stateFile}`);
 }
@@ -170,6 +180,14 @@ const stickyPosts = await cloneStickyPosts(
   targetPostTemplates,
   postFlairMappings,
 );
+for (const sticky of stickyPosts) {
+  await mirror.completePair(
+    mirrorKey(cfg.sourceSubreddit, sticky.sourcePostId),
+    sticky.sourceFullname,
+    mirrorKey(cfg.primarySubreddit, sticky.targetPostId),
+    `t3_${sticky.targetPostId}`,
+  );
+}
 
 const migratedBans: {
   username: string;
@@ -181,6 +199,7 @@ for (const username of [...canonicalBans.values()].sort((left, right) => left.lo
   // Re-applying the finite Reddit mute is safe and guarantees an already-banned
   // target user cannot sit outside Mae's canonical permanent restriction.
   await write.muteUser(cfg.primarySubreddit, username, 'Mae permanent reputation enforcement');
+  await projection.markMute(cfg.primarySubreddit, username, 'mute', Date.now());
   const alreadyPresent = targetBanKeysBefore.has(username.toLowerCase());
   if (!alreadyPresent) {
     await write.banUser(
