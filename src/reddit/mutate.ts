@@ -1,6 +1,7 @@
 import type { RedditAuthCfg } from '../env.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
+import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
 import { rateLimitedRedditFetch } from './rateBudget.ts';
@@ -11,6 +12,7 @@ export type RedditMutationSleep = (ms: number) => Promise<void>;
 
 export type RedditMutationOptions = {
   readonly fetcher?: RedditMutationFetch;
+  readonly uploadFetcher?: RedditMutationFetch;
   readonly sleep?: RedditMutationSleep;
   readonly random?: () => number;
   readonly maxAttempts?: number;
@@ -26,6 +28,12 @@ export type RedditCreatedPost = {
 export type RedditSelectedUserFlair = {
   readonly templateId: string | null;
   readonly text: string | null;
+};
+
+export type RedditEmojiMedia = {
+  readonly bytes: ArrayBuffer;
+  readonly filename: string;
+  readonly mimeType: string;
 };
 
 type Token = {
@@ -97,8 +105,35 @@ const modmailConversationId = (id: string): string => {
   return value;
 };
 
+const emojiName = (name: string): string => {
+  const value = name.trim();
+  if (!/^[A-Za-z0-9_-]{1,24}$/u.test(value)) throw new Error(`Invalid Reddit emoji name ${name}`);
+  return value;
+};
+
+const emojiFile = (media: RedditEmojiMedia): RedditEmojiMedia => {
+  const filename = media.filename.trim();
+  const mimeType = media.mimeType.trim().toLowerCase();
+  if (filename.length === 0 || filename.length > 255 || filename.includes('/') || filename.includes('\\')) {
+    throw new Error(`Invalid Reddit emoji filename ${media.filename}`);
+  }
+  if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') {
+    throw new Error(`Unsupported Reddit emoji MIME type ${media.mimeType}`);
+  }
+  if (media.bytes.byteLength === 0) throw new Error('Reddit emoji image is empty');
+  return { bytes: media.bytes, filename, mimeType };
+};
+
+const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchParams({
+  mod_flair_only: String(emoji.modFlairOnly),
+  name: emojiName(emoji.name),
+  post_flair_allowed: String(emoji.postFlairAllowed),
+  user_flair_allowed: String(emoji.userFlairAllowed),
+});
+
 export class RedditMutationClient {
   private readonly fetcher: RedditMutationFetch;
+  private readonly uploadFetcher: RedditMutationFetch;
   private readonly sleep: RedditMutationSleep;
   private readonly random: () => number;
   private readonly maxAttempts: number;
@@ -117,6 +152,7 @@ export class RedditMutationClient {
           sleep: this.sleep,
         })
       : rawFetcher;
+    this.uploadFetcher = options.uploadFetcher ?? fetch;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
   }
@@ -186,6 +222,49 @@ export class RedditMutationClient {
       form.set('max_emojis', String(template.maxEmojis));
     }
     await this.form(pathFor(subreddit, '/api/flairtemplate_v2'), form);
+  }
+
+  public async uploadEmoji(
+    subreddit: string,
+    emoji: RedditEmoji,
+    input: RedditEmojiMedia,
+  ): Promise<void> {
+    const media = emojiFile(input);
+    const name = emojiName(emoji.name);
+    const lease = redditEmojiUploadLease(await this.form(
+      `/api/v1/${encodeURIComponent(subreddit)}/emoji_asset_upload_s3.json`,
+      new URLSearchParams({ filepath: media.filename, mimetype: media.mimeType }),
+    ));
+
+    const upload = new FormData();
+    for (const [field, value] of lease.fields) upload.append(field, value);
+    upload.append('file', new Blob([media.bytes], { type: media.mimeType }), media.filename);
+
+    let response: Response;
+    try {
+      response = await this.uploadFetcher(lease.uploadUrl, { method: 'POST', body: upload });
+    } catch {
+      throw new RedditError(`Reddit emoji S3 upload failed for ${name}`, 'network');
+    }
+    if (!response.ok) {
+      throw new RedditError(
+        `Reddit emoji S3 upload failed for ${name}`,
+        statusKind(response.status),
+        response.status,
+        retryAfterMs(response.headers),
+      );
+    }
+
+    const form = permissionForm({ ...emoji, name });
+    form.set('s3_key', lease.key);
+    await this.form(`/api/v1/${encodeURIComponent(subreddit)}/emoji.json`, form);
+  }
+
+  public async updateEmojiPermissions(subreddit: string, emoji: RedditEmoji): Promise<void> {
+    await this.form(
+      `/api/v1/${encodeURIComponent(subreddit)}/emoji_permissions`,
+      permissionForm(emoji),
+    );
   }
 
   public async setUserFlairTemplate(
