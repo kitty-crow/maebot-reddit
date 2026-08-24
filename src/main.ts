@@ -8,7 +8,6 @@ import { DmStore } from './dm/store.ts';
 import {
   dailyReviewApiConfig,
   internalApiConfig,
-  modmailTerminalConfig,
   redditConfig,
   redditDmConfig,
   redditModerationConfig,
@@ -27,7 +26,6 @@ import { ModmailMediaStore } from './modmail/media/store.ts';
 import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
-import { ModmailTerminalServer } from './modmail/terminalServer.ts';
 import { QuestionEventStore } from './questions/events.ts';
 import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
 import { CommunityProjectionStore } from './reputation/communityProjectionStore.ts';
@@ -51,7 +49,6 @@ const dmCfg = redditDmConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
-const terminalCfg = modmailTerminalConfig();
 if (dmCfg !== null && moderationCfg === null) {
   throw new Error('REDDIT_DM_ENABLED requires REDDIT_MODERATION_ENABLED so private moderation stays canonical');
 }
@@ -99,7 +96,6 @@ const modmailAudit = new ModmailAuditStore(resolve(process.cwd(), process.env['R
 const modmailOutbox = new ModmailReplyOutbox(resolve(process.cwd(), process.env['REDDIT_MODMAIL_OUTBOX_FILE']?.trim() || 'data/modmailReplies.pb'));
 const modmailMediaStore = new ModmailMediaStore(resolve(process.cwd(), process.env['REDDIT_MODMAIL_MEDIA_FILE']?.trim() || 'data/modmailMedia.pb'));
 const modmailMedia = new ModmailMediaService(modmailStore, new RedditMediaClient(redditCfg.auth), modmailMediaStore);
-const terminal = new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox, modmailMedia);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
@@ -232,13 +228,10 @@ const moderationPollMs = intervalMs('REDDIT_MODERATION_POLL_MS', 10_000, 5_000);
 const dmPollMs = intervalMs('REDDIT_DM_POLL_MS', 15_000, 5_000);
 const mirrorPollMs = intervalMs('REDDIT_MIRROR_POLL_MS', 10_000, 5_000);
 
-terminal.start();
-console.log(`Focused Reddit modmail terminal listening on ${terminal.address()}; preview=${terminal.previewAddress()}; public base=${terminalCfg.publicBase ?? 'unavailable'}.`);
-
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
-internal?.useModmail(modmailStore, modmailOutbox, terminal, reputation);
+internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
@@ -462,7 +455,6 @@ const stop = (): void => {
   stopping = true;
   clearInterval(timer);
   internal?.stop();
-  terminal.stop();
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
