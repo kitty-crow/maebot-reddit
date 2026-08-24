@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { cloneCommunityEmojis } from '../src/emoji/migrate.ts';
 import { redditConfig } from '../src/env.ts';
 import { RedditReadClient } from '../src/reddit/client.ts';
+import { redditEmojiAdminAuth } from '../src/reddit/emojiAdminAuth.ts';
 import { safeError } from '../src/reddit/error.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import { parseMap } from '../src/types/json.ts';
@@ -45,11 +46,12 @@ try {
       : 'Reddit migration pacing: shared 1000ms, reserve=30.',
   );
 
-  const read = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
-  const write = new RedditMutationClient(cfg.auth, { rateReserve: maintenanceRateReserve });
+  const sourceRead = new RedditReadClient(cfg.auth, { rateReserve: maintenanceRateReserve });
+  const adminAuth = redditEmojiAdminAuth(cfg.auth);
+  const targetRead = new RedditReadClient(adminAuth, { rateReserve: maintenanceRateReserve });
+  const targetWrite = new RedditMutationClient(adminAuth, { rateReserve: maintenanceRateReserve });
   const result = await cloneCommunityEmojis(
-    read,
-    write,
+    { sourceRead, targetRead, targetWrite },
     sourceSubreddit,
     targetSubreddit,
     { log: message => console.log(message) },
