@@ -17,8 +17,9 @@ import {
 import { RedditInternalHttpServer } from './http/server.ts';
 import { BidirectionalPostMirror } from './mirror/service.ts';
 import { PostMirrorStore } from './mirror/store.ts';
+import { CommunityModerationWriter } from './mod/communityWriter.ts';
 import { PrivateModmailRuntime } from './mod/privateRuntime.ts';
-import { ModerationPrivileges } from './mod/privileges.ts';
+import { ModerationPrivileges, type ModerationPrivilegeSource } from './mod/privileges.ts';
 import { ModerationReviewStore } from './mod/review.ts';
 import { RedditModerationRuntime } from './mod/runtime.ts';
 import { ModmailAuditStore } from './modmail/auditStore.ts';
@@ -29,6 +30,7 @@ import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
 import { ModmailTerminalServer } from './modmail/terminalServer.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
 import { safeError } from './reddit/error.ts';
@@ -51,6 +53,15 @@ if (dmCfg !== null && moderationCfg === null) {
 }
 
 const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
+if (moderationCfg !== null && singleTarget) {
+  throw new Error(
+    'Dual-community moderation requires distinct REDDIT_SOURCE_SUBREDDIT and REDDIT_PRIMARY_SUBREDDIT values',
+  );
+}
+const moderationCommunities = singleTarget
+  ? [redditCfg.sourceSubreddit]
+  : [redditCfg.sourceSubreddit, redditCfg.primarySubreddit];
+
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
 const reviews = new DailyReviewClient(reviewCfg);
@@ -80,26 +91,68 @@ const modmailMedia = new ModmailMediaService(modmailStore, new RedditMediaClient
 const terminal = new ModmailTerminalServer(terminalCfg, modmailStore, modmailOutbox, modmailMedia);
 const moderationReader = moderationCfg === null ? null : new RedditReadClient(redditCfg.auth);
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
+const moderationEffectWriter = moderationWriter === null
+  ? null
+  : new CommunityModerationWriter(moderationWriter, moderationCommunities);
 const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
 const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
-const moderationPrivileges = moderationReader === null
+
+const privilegeCache = new Map<string, ModerationPrivileges>();
+const privilegeFor = (subreddit: string): ModerationPrivileges | null => {
+  if (moderationReader === null) return null;
+  const key = subreddit.trim().toLowerCase();
+  const existing = privilegeCache.get(key);
+  if (existing !== undefined) return existing;
+  const created = new ModerationPrivileges(subreddit, moderationReader);
+  privilegeCache.set(key, created);
+  return created;
+};
+const moderationPrivileges: ModerationPrivilegeSource | null = moderationReader === null
   ? null
-  : new ModerationPrivileges(redditCfg.sourceSubreddit, moderationReader);
-const moderation = moderationCfg === null || moderationReader === null || moderationWriter === null || reputation === null
+  : {
+      exemption: async author => {
+        for (const subreddit of moderationCommunities) {
+          const privileges = privilegeFor(subreddit);
+          if (privileges === null) continue;
+          const exemption = await privileges.exemption(author);
+          if (exemption !== null) return exemption;
+        }
+        return null;
+      },
+    };
+
+const moderation = moderationCfg === null
+  || moderationReader === null
+  || moderationEffectWriter === null
+  || reputation === null
   ? null
   : new RedditModerationRuntime(
-      redditCfg.sourceSubreddit,
+      moderationCommunities,
       moderationCfg,
       moderationReader,
-      moderationWriter,
+      moderationEffectWriter,
       reputation,
       null,
       moderationReviews,
-      moderationPrivileges,
+      null,
+    );
+const communityProjection = moderationCfg === null
+  || moderationReader === null
+  || moderationWriter === null
+  || reputation === null
+  || singleTarget
+  ? null
+  : new CommunityProjectionRuntime(
+      redditCfg.primarySubreddit,
+      resolve(process.cwd(), process.env['REDDIT_FLAIR_CATALOGUE_FILE']?.trim() || 'data/flairs.json'),
+      moderationCfg.flairReconcileMs,
+      moderationReader,
+      moderationWriter,
+      reputation,
     );
 const modmail = new ModmailRuntime(
-  redditCfg.sourceSubreddit,
+  moderationCommunities,
   modmailReader,
   modmailWriter,
   modmailStore,
@@ -191,6 +244,14 @@ const tick = async (): Promise<void> => {
         console.error(`[Reddit moderation] tick failed: ${safeError(error)}`);
       }
     }
+    let projectionResult = null;
+    if (communityProjection !== null) {
+      try {
+        projectionResult = await communityProjection.tick();
+      } catch (error) {
+        console.error(`[Reddit reputation] community flair projection failed: ${safeError(error)}`);
+      }
+    }
     if (mirror !== null && (mirror.seeded || mirror.discovered > 0 || mirror.completed > 0 || mirror.failed > 0)) {
       console.log(`[Reddit post mirror] seeded=${mirror.seeded} discovered=${mirror.discovered} completed=${mirror.completed} failed=${mirror.failed}`);
     }
@@ -248,6 +309,11 @@ const tick = async (): Promise<void> => {
         `[Reddit moderation] discovered=${moderationResult.discovered} audited=${moderationResult.audited} exempt=${moderationResult.exempt} scoreCredits=${moderationResult.scoreCredits} voteReviews=${moderationResult.voteReviews} reviewActions=${moderationResult.reviewActions} flairRestored=${moderationResult.flairRestored} effects=${moderationResult.effectsApplied} failed=${moderationResult.failed}`,
       );
     }
+    if (projectionResult !== null && (projectionResult.applied > 0 || projectionResult.failed > 0)) {
+      console.log(
+        `[Reddit reputation] r/${redditCfg.primarySubreddit} flair projection applied=${projectionResult.applied} failed=${projectionResult.failed}`,
+      );
+    }
   } finally {
     ticking = false;
   }
@@ -300,7 +366,9 @@ if (singleTarget) {
 if (moderation === null) {
   console.log('LLM Reddit moderation and internal reputation are disabled by REDDIT_MODERATION_ENABLED.');
 } else {
-  console.log(`LLM post/comment/modmail moderation and internal reputation are enabled for r/${redditCfg.sourceSubreddit}.`);
+  console.log(
+    `LLM post/comment/modmail moderation and one canonical reputation store are enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')}.`,
+  );
 }
 if (directMessages === null) {
   console.log('Mae Reddit direct-message conversation handling is disabled by REDDIT_DM_ENABLED.');
