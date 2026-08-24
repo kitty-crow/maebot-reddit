@@ -56,7 +56,7 @@ export const redditEmojis = (value: Json): readonly RedditEmoji[] => {
     .sort((left, right) => left.name.localeCompare(right.name));
 };
 
-const leaseFields = (value: Json): ReadonlyMap<string, string> => {
+const leaseFields = (value: Json | undefined): ReadonlyMap<string, string> => {
   if (!Array.isArray(value)) throw new RedditError('Reddit emoji upload lease fields are missing', 'invalid_response');
   const fields = new Map<string, string>();
   for (const raw of value) {
