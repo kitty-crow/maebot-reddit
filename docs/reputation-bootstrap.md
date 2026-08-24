@@ -11,7 +11,7 @@ This is the first-stage migration into Mae's internal Reddit reputation system.
 
 The command never creates or copies Reddit flair templates. Existing live Reddit flair templates and their IDs are authoritative for the source community.
 
-After `reputation.pb` exists, `bun run clone:flairs` is the separate CatgirlCoin → NyaOnEarth community bootstrap. That command clones the source flair templates, builds subreddit-local template-ID mappings, projects the canonical reputation state into NyaOnEarth, clones/reuses sticky posts, and reconciles canonical permanent bans. It must not reinterpret legacy CSS classes as new moderation decisions.
+After `reputation.pb` exists, `bun run clone:flairs` is the separate CatgirlCoin → NyaOnEarth community bootstrap. That command explicitly targets NyaOnEarth, clones the source flair templates, builds subreddit-local template-ID mappings, projects the canonical reputation state, clones/reuses sticky posts, and reconciles canonical permanent bans. It does not require the publishing `REDDIT_PRIMARY_SUBREDDIT` to have switched to NyaOnEarth first and it must not reinterpret legacy CSS classes as new moderation decisions.
 
 ## Inventory
 
@@ -82,25 +82,28 @@ Any flair that cannot be mapped confidently is preserved verbatim, seeded at 0, 
 
 Points, tier, status, moderation history and discipline are canonical per Reddit username and are not duplicated per subreddit. Reddit flair template UUIDs are local implementation identifiers, so the NyaOnEarth bootstrap records a source-template → target-template mapping in `data/flairs.json` and projects the one canonical user state through that mapping.
 
-After dual-community activation, the same runtime ingests posts, comments and Modmail from both `r/catgirlcoin` and `r/nyaonearth`. CatgirlCoin remains the canonical external-effect surface represented directly inside `reputation.pb`. NyaOnEarth owns separate Reddit-local application state in `data/communityProjection.pb`, so a successful CatgirlCoin mute/ban can never falsely mark the target operation complete.
+When moderation is enabled, Mae's moderation and Modmail scope is CatgirlCoin + NyaOnEarth independently of the publishing primary. This permits the live publishing route to remain CatgirlCoin/CatgirlCoin during the protection/bootstrap phase. CatgirlCoin remains the canonical external-effect surface represented directly inside `reputation.pb`; NyaOnEarth owns separate Reddit-local application state in `data/communityProjection.pb`, so a successful CatgirlCoin mute/ban can never falsely mark the target operation complete.
 
-Before the community bootstrap is allowed to mutate NyaOnEarth, the running target projection must already have established a current communication restriction there for every canonical `banned`/`scam` user. `bun run clone:flairs` checks that invariant itself and aborts before any target mutation if the projection has not converged.
+Before the community bootstrap is allowed to mutate NyaOnEarth, the running target projection must already have established a current communication restriction there for every canonical `banned`/`scam` user. The preflight requires both Mae's local projection checkpoint and Reddit's live `/about/muted` relationship to agree. A manually removed target mute is therefore detected rather than hidden by stale local state.
 
-A successfully written schema-2 `data/flairs.json` is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. Before that file exists, the target projection applies communication restrictions only and deliberately does not mass-clone permanent bans. After activation, each poll reconciles target communication restrictions first and missing canonical permanent bans second; local flair assignment is reconciled on the configured flair interval. A failed permanent target mute prevents that user's target ban on the same poll.
+A successfully written schema-2 `data/flairs.json` is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. A missing or older schema-1 catalogue remains pre-bootstrap historical evidence and does not block Mae from running dual-community moderation. Before schema 2 exists, target projection establishes communication restrictions but deliberately does not mass-clone permanent bans or member flairs. After activation, live target moderation relationships are reconciled periodically: communication restrictions first, missing canonical permanent bans second, and local flair assignment on the configured flair cadence.
 
-Post mirroring is also moderation-gated. New posts wait until their canonical moderation result exists; content requiring removal is not mirrored; accepted/privileged posts may be mirrored. Mae-created mirror copies are privileged system activity and do not earn a second reputation contribution.
+The publishing/post-mirror cutover is separate. After the bootstrap has been verified, `REDDIT_PRIMARY_SUBREDDIT` may be changed from CatgirlCoin to NyaOnEarth and Mae restarted to activate the normal bidirectional publishing/mirror role.
+
+Post mirroring is moderation-gated. New posts wait until their canonical moderation result exists; content requiring removal is not mirrored; accepted/privileged posts may be mirrored. Mae-created mirror copies are privileged system activity and do not earn a second reputation contribution.
 
 The community bootstrap fails closed when:
 
-- source/primary are not exactly CatgirlCoin → NyaOnEarth;
+- the configured source is not CatgirlCoin;
+- the publishing primary is neither the valid pre-bootstrap CatgirlCoin value nor the post-cutover NyaOnEarth value;
 - the canonical reputation store is absent;
 - Mae lacks required `access`, `flair`, `posts` or `mail` moderator permission in either community;
 - any canonical user still requires semantic review;
 - live CatgirlCoin bans disagree with canonical `banned`/`scam` state;
 - NyaOnEarth contains an unexplained extra ban;
-- the target communication projection has not converged for every canonical permanent user;
+- either the local target mute checkpoint or Reddit's live muted-user relationship is missing for a canonical permanent user;
 - a canonical source flair cannot be mapped to exactly one NyaOnEarth template;
-- post-bootstrap flair or ban verification does not match the intended canonical state.
+- post-bootstrap live mute, flair or ban verification does not match the intended canonical state.
 
 Legacy `database.db` moderation lists and legacy uncivil CSS markers are not migration authority for this step.
 
