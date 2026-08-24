@@ -1,6 +1,6 @@
 import type { RedditModerator } from './types.ts';
 
-export type RedditModeratorPermission = 'access' | 'flair' | 'posts';
+export type RedditModeratorPermission = 'access' | 'config' | 'flair' | 'mail' | 'posts';
 
 const moderatorFor = (
   accountName: string,
@@ -10,8 +10,10 @@ const moderatorFor = (
   return moderators.find(moderator => moderator.name.toLowerCase() === key) ?? null;
 };
 
-const hasPermission = (moderator: RedditModerator, permission: RedditModeratorPermission): boolean =>
-  moderator.permissions.includes('all') || moderator.permissions.includes(permission);
+const hasPermission = (moderator: RedditModerator, permission: RedditModeratorPermission): boolean => {
+  const granted = new Set(moderator.permissions.map(value => value.toLowerCase()));
+  return granted.has('all') || granted.has(permission);
+};
 
 export const assertModeratorPermissions = (
   accountName: string,
