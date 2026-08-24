@@ -82,15 +82,23 @@ Any flair that cannot be mapped confidently is preserved verbatim, seeded at 0, 
 
 Points, tier, status, moderation history and discipline are canonical per Reddit username and are not duplicated per subreddit. Reddit flair template UUIDs are local implementation identifiers, so the NyaOnEarth bootstrap records a source-template → target-template mapping in `data/flairs.json` and projects the one canonical user state through that mapping.
 
-After cutover, the same runtime ingests posts, comments and Modmail from both `r/catgirlcoin` and `r/nyaonearth`. Permanent bans and Mae communication restrictions are applied to both communities before their canonical side-effect checkpoint is marked complete. NyaOnEarth flair assignments are periodically reconciled from `reputation.pb` through the persisted template mapping.
+After dual-community activation, the same runtime ingests posts, comments and Modmail from both `r/catgirlcoin` and `r/nyaonearth`. CatgirlCoin remains the canonical external-effect surface represented directly inside `reputation.pb`. NyaOnEarth owns separate Reddit-local application state in `data/communityProjection.pb`, so a successful CatgirlCoin mute/ban can never falsely mark the target operation complete.
+
+Before the community bootstrap is allowed to mutate NyaOnEarth, the running target projection must already have established a current communication restriction there for every canonical `banned`/`scam` user. `bun run clone:flairs` checks that invariant itself and aborts before any target mutation if the projection has not converged.
+
+A successfully written schema-2 `data/flairs.json` is the activation marker for ongoing NyaOnEarth ban/flair reconciliation. Before that file exists, the target projection applies communication restrictions only and deliberately does not mass-clone permanent bans. After activation, each poll reconciles target communication restrictions first and missing canonical permanent bans second; local flair assignment is reconciled on the configured flair interval. A failed permanent target mute prevents that user's target ban on the same poll.
+
+Post mirroring is also moderation-gated. New posts wait until their canonical moderation result exists; content requiring removal is not mirrored; accepted/privileged posts may be mirrored. Mae-created mirror copies are privileged system activity and do not earn a second reputation contribution.
 
 The community bootstrap fails closed when:
 
-- source and primary subreddit configuration resolve to the same community;
+- source/primary are not exactly CatgirlCoin → NyaOnEarth;
 - the canonical reputation store is absent;
+- Mae lacks required `access`, `flair`, `posts` or `mail` moderator permission in either community;
 - any canonical user still requires semantic review;
 - live CatgirlCoin bans disagree with canonical `banned`/`scam` state;
 - NyaOnEarth contains an unexplained extra ban;
+- the target communication projection has not converged for every canonical permanent user;
 - a canonical source flair cannot be mapped to exactly one NyaOnEarth template;
 - post-bootstrap flair or ban verification does not match the intended canonical state.
 
