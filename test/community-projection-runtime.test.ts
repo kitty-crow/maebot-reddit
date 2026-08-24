@@ -71,7 +71,7 @@ const bootstrap = (): ReputationBootstrap => ({
       immutableModeratorFlair: false,
       needsFlair: false,
       needsReview: false,
-      source: 'recent-contributor',
+      source: 'recent-unflaired-contributor',
       seededAt: 100,
     },
   ],
