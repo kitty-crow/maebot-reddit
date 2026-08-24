@@ -14,6 +14,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
+const relationship = (username: string): RedditRelationshipUser => ({
+  username,
+  note: null,
+  date: null,
+});
+
 const bootstrap = (): ReputationBootstrap => ({
   subreddit: 'catgirlcoin',
   at: 100,
@@ -35,22 +41,40 @@ const bootstrap = (): ReputationBootstrap => ({
     },
     post: { minorAnnouncement: null, announcement: null },
   },
-  users: [{
-    username: 'BannedUser',
-    points: REPUTATION_FLOOR,
-    tier: 0,
-    status: 'banned',
-    currentFlairTemplateId: null,
-    currentFlairText: null,
-    currentFlairCssClass: null,
-    desiredFlairTemplateId: null,
-    desiredFlairText: null,
-    immutableModeratorFlair: false,
-    needsFlair: false,
-    needsReview: false,
-    source: 'reddit-ban',
-    seededAt: 100,
-  }],
+  users: [
+    {
+      username: 'BannedUser',
+      points: REPUTATION_FLOOR,
+      tier: 0,
+      status: 'banned',
+      currentFlairTemplateId: null,
+      currentFlairText: null,
+      currentFlairCssClass: null,
+      desiredFlairTemplateId: null,
+      desiredFlairText: null,
+      immutableModeratorFlair: false,
+      needsFlair: false,
+      needsReview: false,
+      source: 'reddit-ban',
+      seededAt: 100,
+    },
+    {
+      username: 'OrdinaryUser',
+      points: 1,
+      tier: 1,
+      status: 'ordinary',
+      currentFlairTemplateId: null,
+      currentFlairText: null,
+      currentFlairCssClass: null,
+      desiredFlairTemplateId: null,
+      desiredFlairText: null,
+      immutableModeratorFlair: false,
+      needsFlair: false,
+      needsReview: false,
+      source: 'recent-contributor',
+      seededAt: 100,
+    },
+  ],
   coverage: {
     flairAssignments: 0,
     moderators: 0,
@@ -72,8 +96,10 @@ const catalogue = JSON.stringify({
 
 class Reader implements CommunityProjectionReader {
   public bans: readonly RedditRelationshipUser[] = [];
+  public mutes: readonly RedditRelationshipUser[] = [];
   public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> { return []; }
   public async bannedUsers(): Promise<readonly RedditRelationshipUser[]> { return this.bans; }
+  public async mutedUsers(): Promise<readonly RedditRelationshipUser[]> { return this.mutes; }
 }
 
 class Writer implements CommunityProjectionWriter {
@@ -115,13 +141,16 @@ const fixture = async () => {
 };
 
 describe('NyaOnEarth moderation projection', () => {
-  test('pre-bootstrap startup establishes permanent communication restriction without cloning bans', async () => {
+  test('pre-bootstrap startup establishes live permanent communication restriction before cloning bans', async () => {
     const f = await fixture();
     const first = await f.runtime.tick(1_000_000);
     expect(first.skipped).toBe(true);
     expect(first.failed).toBe(0);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
 
+    // Reddit is the authority for whether the protection really exists. A
+    // subsequent tick must observe the live relationship before exposing bans.
+    f.reader.mutes = [relationship('BannedUser')];
     await writeFile(f.catalogueFile, catalogue);
     const second = await f.runtime.tick(1_000_001);
     expect(second.failed).toBe(0);
@@ -135,7 +164,7 @@ describe('NyaOnEarth moderation projection', () => {
     });
   });
 
-  test('a failed permanent mute blocks the corresponding target ban', async () => {
+  test('a failed attempt to establish a missing permanent mute blocks the corresponding target ban', async () => {
     const f = await fixture();
     await writeFile(f.catalogueFile, catalogue);
     f.writer.failMute = true;
@@ -147,5 +176,27 @@ describe('NyaOnEarth moderation projection', () => {
       redditMuted: false,
       appliedAt: null,
     });
+  });
+
+  test('a stale Mae checkpoint is repaired when Reddit no longer reports the permanent mute', async () => {
+    const f = await fixture();
+    await f.projection.markMute('nyaonearth', 'BannedUser', 'mute', 1_000_000);
+
+    const result = await f.runtime.tick(2_000_000);
+    expect(result.failed).toBe(0);
+    expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
+    expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
+      redditMuted: true,
+      appliedAt: 2_000_000,
+    });
+  });
+
+  test('a live human mute not owned by Mae is never removed', async () => {
+    const f = await fixture();
+    f.reader.mutes = [relationship('OrdinaryUser')];
+
+    const result = await f.runtime.tick(3_000_000);
+    expect(result.failed).toBe(0);
+    expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
   });
 });
