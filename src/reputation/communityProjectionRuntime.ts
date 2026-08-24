@@ -1,11 +1,17 @@
-import { communityFlairRestoresFromFile } from './communityProjection.ts';
-import type { ReputationStore } from './store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
+import { communityFlairRestoresFromFile } from './communityProjection.ts';
+import type { CommunityProjectionStore } from './communityProjectionStore.ts';
+import { redditMuteAction } from './mutePolicy.ts';
+import { reputationDesiredMutes } from './muteReconcile.ts';
+import type { ReputationStore } from './store.ts';
 
 export type CommunityProjectionReader = Pick<RedditReadClient, 'userFlairAssignments'>;
-export type CommunityProjectionWriter = Pick<RedditMutationClient, 'setUserFlairTemplate'>;
+export type CommunityProjectionWriter = Pick<
+  RedditMutationClient,
+  'setUserFlairTemplate' | 'muteUser' | 'unmuteUser'
+>;
 
 export type CommunityProjectionTick = {
   readonly applied: number;
@@ -23,20 +29,56 @@ export class CommunityProjectionRuntime {
     private readonly reader: CommunityProjectionReader,
     private readonly writer: CommunityProjectionWriter,
     private readonly reputation: ReputationStore,
+    private readonly projection: CommunityProjectionStore,
   ) {
     if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) {
-      throw new Error('Community flair projection interval must be a positive integer');
+      throw new Error('Community projection interval must be a positive integer');
     }
+  }
+
+  private async reconcileMutes(raw: Awaited<ReturnType<ReputationStore['raw']>>, now: number): Promise<{
+    readonly applied: number;
+    readonly failed: number;
+  }> {
+    let applied = 0;
+    let failed = 0;
+    for (const desired of reputationDesiredMutes(raw, now)) {
+      const current = await this.projection.muteState(this.targetSubreddit, desired.username);
+      const action = redditMuteAction(
+        { muteUntil: desired.muteUntil, permanent: desired.permanent },
+        current,
+        now,
+      );
+      if (action === null) continue;
+      try {
+        if (action === 'mute') {
+          await this.writer.muteUser(
+            this.targetSubreddit,
+            desired.username,
+            desired.permanent ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
+          );
+        } else {
+          await this.writer.unmuteUser(this.targetSubreddit, desired.username);
+        }
+        await this.projection.markMute(this.targetSubreddit, desired.username, action, now);
+        applied += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(
+          `[Reddit reputation] r/${this.targetSubreddit} ${action} projection failed for u/${desired.username}: ${safeError(error)}`,
+        );
+      }
+    }
+    return { applied, failed };
   }
 
   public async tick(now = Date.now()): Promise<CommunityProjectionTick> {
     if (now < this.nextAt) return { applied: 0, failed: 0, skipped: true };
     this.nextAt = now + this.intervalMs;
 
-    const [raw, assignments] = await Promise.all([
-      this.reputation.raw(),
-      this.reader.userFlairAssignments(this.targetSubreddit),
-    ]);
+    const raw = await this.reputation.raw();
+    const muteResult = await this.reconcileMutes(raw, now);
+    const assignments = await this.reader.userFlairAssignments(this.targetSubreddit);
     const restores = await communityFlairRestoresFromFile(
       this.catalogueFile,
       raw,
@@ -44,8 +86,8 @@ export class CommunityProjectionRuntime {
       assignments,
     );
 
-    let applied = 0;
-    let failed = 0;
+    let applied = muteResult.applied;
+    let failed = muteResult.failed;
     for (const restore of restores) {
       try {
         await this.writer.setUserFlairTemplate(
