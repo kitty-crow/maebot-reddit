@@ -7,6 +7,7 @@ import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { numVal, strVal } from '../types/value.ts';
 import * as decode from './decode.ts';
+import { redditEmojis, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
 import { rateLimitedRedditFetch } from './rateBudget.ts';
@@ -99,6 +100,10 @@ export class RedditReadClient {
 
   public async mutedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
     return await this.pages(pathFor(name, '/about/muted'), 100, value => decode.relationshipUsers(value, 'muted users'));
+  }
+
+  public async emojis(name: string): Promise<readonly RedditEmoji[]> {
+    return redditEmojis(await this.get(`/api/v1/${encodeURIComponent(name)}/emojis/all`));
   }
 
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
