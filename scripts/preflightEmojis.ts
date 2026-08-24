@@ -27,7 +27,10 @@ try {
   console.log();
   console.log('Authenticating and checking both communities...');
 
-  const result = await emojiClonePreflight(read, [sourceSubreddit, targetSubreddit]);
+  const result = await emojiClonePreflight(read, [
+    { subreddit: sourceSubreddit, requireManageSettings: false },
+    { subreddit: targetSubreddit, requireManageSettings: true },
+  ]);
 
   console.log(`Authenticated as: u/${result.accountName}`);
   console.log();
@@ -35,7 +38,10 @@ try {
   for (const community of result.communities) {
     console.log(`r/${community.subreddit}`);
     console.log(`  moderator:                   ${yesNo(community.moderator)}`);
-    console.log(`  Manage Settings (config):    ${yesNo(community.manageSettings)}`);
+    console.log(
+      `  Manage Settings (config):    ${yesNo(community.manageSettings)}`
+      + `${community.manageSettingsRequired ? ' [REQUIRED]' : ' [not required for source read]'}`,
+    );
     console.log(`  custom emoji inventory read: ${yesNo(community.emojiInventoryReadable)}`);
     console.log(`  custom emojis visible:       ${community.emojiCount ?? '(unavailable)'}`);
     console.log(
@@ -44,6 +50,7 @@ try {
         : '(none)'}`,
     );
     for (const failure of community.failures) console.log(`  FAIL: ${failure}`);
+    console.log(`  community result:            ${community.passed ? 'PASS' : 'FAIL'}`);
     console.log();
   }
 
@@ -52,7 +59,7 @@ try {
     process.exitCode = 1;
   } else {
     console.log('EMOJI CLONE PRE-FLIGHT: PASS');
-    console.log(`u/${result.accountName} has the required access in both communities.`);
+    console.log(`u/${result.accountName} can perform the planned CatgirlCoin -> NyaOnEarth emoji clone.`);
   }
 } catch (error) {
   console.error(`EMOJI CLONE PRE-FLIGHT: FAIL — ${safeError(error)}`);
