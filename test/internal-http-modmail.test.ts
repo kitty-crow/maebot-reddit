@@ -8,7 +8,6 @@ import { ModmailMediaService } from '../src/modmail/media/service.ts';
 import { ModmailMediaStore } from '../src/modmail/media/store.ts';
 import { ModmailReplyOutbox } from '../src/modmail/outbox.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
-import { ModmailTerminalServer } from '../src/modmail/terminalServer.ts';
 import type { ModmailConversation } from '../src/modmail/types.ts';
 import { QuestionEventStore } from '../src/questions/events.ts';
 import type { ReputationUser } from '../src/reputation/store.ts';
@@ -20,7 +19,7 @@ afterEach(async () => {
 
 const conversation = (): ModmailConversation => ({
   id: 'abc123',
-  subreddit: 'catgirlcoin',
+  subreddit: 'nyaonearth',
   subject: 'Need help',
   participant: {
     id: 'u1',
@@ -90,12 +89,6 @@ const fixture = async (withReputation: boolean) => {
     { uploadMedia: async name => `https://reddit-uploaded-media.s3-accelerate.amazonaws.com/${encodeURIComponent(name)}` },
     new ModmailMediaStore(join(root, 'media.pb')),
   );
-  const terminal = new ModmailTerminalServer(
-    { host: '127.0.0.1', port: 0, publicBase: null, ttlSeconds: 3600 },
-    modmail,
-    outbox,
-    media,
-  );
   const server = new RedditInternalHttpServer(
     { host: '127.0.0.1', port: 0, token: 'secret' },
     new QuestionEventStore(join(root, 'questions.pb')),
@@ -105,15 +98,15 @@ const fixture = async (withReputation: boolean) => {
   server.useModmail(
     modmail,
     outbox,
-    terminal,
+    media,
     withReputation ? { user: async () => canonicalUser } : null,
   );
   server.start();
-  return { server, base: server.address(), outbox };
+  return { server, base: server.address(), outbox, modmail };
 };
 
 describe('Reddit internal Modmail API', () => {
-  test('returns only the canonical participant reputation snapshot with the canonical Reddit conversation', async () => {
+  test('returns canonical Reddit data plus the Mae Tickets presentation for NyaOnEarth', async () => {
     const { server, base } = await fixture(true);
     try {
       const response = await fetch(`${base}/v1/modmail/conversations/abc123`, {
@@ -123,11 +116,79 @@ describe('Reddit internal Modmail API', () => {
       const body = await response.json() as {
         conversation: { id: string; participant: { name: string } | null };
         reputation: ReputationSnapshot | null;
+        ticketView: {
+          participant: string | null;
+          subreddit: string;
+          state: string;
+          messages: readonly { side: string; sender: string; origin: string; bodyMarkdown: string }[];
+        };
       };
       expect(body.conversation.id).toBe('abc123');
       expect(body.conversation.participant?.name).toBe('SomeUser');
       expect(body.reputation).toEqual({ username: 'SomeUser', points: -4, tier: 0, status: 'uncivil' });
       expect(Object.keys(body.reputation ?? {}).sort()).toEqual(['points', 'status', 'tier', 'username']);
+      expect(body.ticketView.participant).toBe('SomeUser');
+      expect(body.ticketView.subreddit).toBe('nyaonearth');
+      expect(body.ticketView.state).toBe('inprogress');
+      expect(body.ticketView.messages[0]).toMatchObject({
+        side: 'participant',
+        sender: 'u/SomeUser',
+        origin: 'reddit',
+        bodyMarkdown: 'Hello moderators',
+      });
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('presents durable applied cross-platform replies as human moderator messages', async () => {
+    const { server, base, outbox, modmail } = await fixture(false);
+    try {
+      const queued = await outbox.queue({
+        key: 'discord:message-1',
+        conversationId: 'abc123',
+        moderator: { platform: 'discord', userId: '42', handle: '@AliceMod' },
+        text: 'Human reply from Discord.',
+        createdAt: 200,
+      });
+      await outbox.markApplied(queued.key, 205);
+      await modmail.sync([{
+        ...conversation(),
+        lastUpdatedAt: 205,
+        messages: [
+          ...conversation().messages,
+          {
+            id: 'm2',
+            conversationId: 'abc123',
+            author: {
+              id: 'mae',
+              name: 'this_is_the_mae',
+              isModerator: true,
+              isAdmin: false,
+              isParticipant: false,
+              isHidden: false,
+              isDeleted: false,
+            },
+            bodyMarkdown: queued.bodyMarkdown,
+            createdAt: 205,
+            isInternal: false,
+            participatingAs: 'moderator',
+          },
+        ],
+      }], 205);
+
+      const response = await fetch(`${base}/v1/modmail/conversations/abc123`, {
+        headers: { authorization: 'Bearer secret' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        ticketView: { messages: readonly { sender: string; origin: string; bodyMarkdown: string }[] };
+      };
+      expect(body.ticketView.messages[1]).toMatchObject({
+        sender: '@AliceMod',
+        origin: 'discord',
+        bodyMarkdown: 'Human reply from Discord.',
+      });
     } finally {
       server.stop();
     }
