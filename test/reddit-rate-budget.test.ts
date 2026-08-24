@@ -26,8 +26,15 @@ describe('shared Reddit rate budget', () => {
       now += milliseconds;
     };
 
-    const first = new RedditRateBudget('client', { stateFile: file, reserve: 30, now: () => now, sleep });
-    const second = new RedditRateBudget('client', { stateFile: file, reserve: 30, now: () => now, sleep });
+    const options = {
+      stateFile: file,
+      reserve: 30,
+      minimumIntervalMs: 0,
+      now: () => now,
+      sleep,
+    } as const;
+    const first = new RedditRateBudget('client', options);
+    const second = new RedditRateBudget('client', options);
 
     await first.acquire();
     await first.observe(new Response('', {
@@ -47,6 +54,31 @@ describe('shared Reddit rate budget', () => {
     expect(sleeps[0]).toBeGreaterThanOrEqual(60_000);
   });
 
+  test('paces independent instances through one shared one-second request slot', async () => {
+    const file = await stateFile();
+    let now = 1_000;
+    const sleeps: number[] = [];
+    const sleep = async (milliseconds: number): Promise<void> => {
+      sleeps.push(milliseconds);
+      now += milliseconds;
+    };
+
+    const first = new RedditRateBudget('client', { stateFile: file, now: () => now, sleep });
+    const second = new RedditRateBudget('client', { stateFile: file, now: () => now, sleep });
+
+    await first.acquire();
+    await first.observe(new Response('', {
+      status: 200,
+      headers: {
+        'x-ratelimit-remaining': '999',
+        'x-ratelimit-reset': '600',
+      },
+    }));
+    await second.acquire();
+
+    expect(sleeps).toEqual([1_000]);
+  });
+
   test('a 429 blocks the shared budget for the reset window instead of retrying immediately', async () => {
     const file = await stateFile();
     let now = 10_000;
@@ -56,8 +88,9 @@ describe('shared Reddit rate budget', () => {
       now += milliseconds;
     };
 
-    const first = new RedditRateBudget('client', { stateFile: file, now: () => now, sleep });
-    const second = new RedditRateBudget('client', { stateFile: file, now: () => now, sleep });
+    const options = { stateFile: file, minimumIntervalMs: 0, now: () => now, sleep } as const;
+    const first = new RedditRateBudget('client', options);
+    const second = new RedditRateBudget('client', options);
 
     await first.acquire();
     await first.observe(new Response('', { status: 429 }));
