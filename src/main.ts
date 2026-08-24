@@ -42,6 +42,9 @@ import { RedditStateStore } from './store/state.ts';
 import { TwitterRedditBridge } from './twitter/bridge.ts';
 import { LiveTwitterRedditPublisher } from './twitter/publisher.ts';
 
+const canonicalSourceSubreddit = 'catgirlcoin';
+const canonicalTargetSubreddit = 'nyaonearth';
+
 const redditCfg = redditConfig();
 const moderationCfg = redditModerationConfig();
 const dmCfg = redditDmConfig();
@@ -53,18 +56,31 @@ if (dmCfg !== null && moderationCfg === null) {
   throw new Error('REDDIT_DM_ENABLED requires REDDIT_MODERATION_ENABLED so private moderation stays canonical');
 }
 
-const singleTarget = redditCfg.primarySubreddit.toLowerCase() === redditCfg.sourceSubreddit.toLowerCase();
-if (moderationCfg !== null && (
-  redditCfg.sourceSubreddit.toLowerCase() !== 'catgirlcoin'
-  || redditCfg.primarySubreddit.toLowerCase() !== 'nyaonearth'
-)) {
+const sourceKey = redditCfg.sourceSubreddit.toLowerCase();
+const primaryKey = redditCfg.primarySubreddit.toLowerCase();
+const singleTarget = primaryKey === sourceKey;
+if (moderationCfg !== null && sourceKey !== canonicalSourceSubreddit) {
+  throw new Error('Canonical Reddit moderation requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin');
+}
+if (
+  moderationCfg !== null
+  && primaryKey !== canonicalSourceSubreddit
+  && primaryKey !== canonicalTargetSubreddit
+) {
   throw new Error(
-    'Dual-community moderation requires REDDIT_SOURCE_SUBREDDIT=catgirlcoin and REDDIT_PRIMARY_SUBREDDIT=nyaonearth',
+    'REDDIT_PRIMARY_SUBREDDIT must be catgirlcoin before community bootstrap or nyaonearth after cutover',
   );
 }
-const moderationCommunities = singleTarget
-  ? [redditCfg.sourceSubreddit]
-  : [redditCfg.sourceSubreddit, redditCfg.primarySubreddit];
+
+// Moderation/Modmail activation is deliberately independent of publishing and
+// post-mirror routing. This lets Mae protect NyaOnEarth first while the existing
+// CatgirlCoin/CatgirlCoin publishing configuration stays untouched until the
+// community bootstrap has completed.
+const moderationCommunities = moderationCfg === null
+  ? singleTarget
+    ? [redditCfg.sourceSubreddit]
+    : [redditCfg.sourceSubreddit, redditCfg.primarySubreddit]
+  : [canonicalSourceSubreddit, canonicalTargetSubreddit];
 
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
@@ -102,7 +118,7 @@ const postMirror = postMirrorStore === null
       redditCfg.sourceSubreddit,
       reputation === null ? null : new ReputationPostMirrorGate(reputation),
     );
-const communityProjectionStore = moderationCfg === null || singleTarget
+const communityProjectionStore = moderationCfg === null
   ? null
   : new CommunityProjectionStore(resolve(
       process.cwd(),
@@ -153,11 +169,10 @@ const communityProjection = moderationCfg === null
   || moderationWriter === null
   || reputation === null
   || communityProjectionStore === null
-  || singleTarget
   ? null
   : new CommunityProjectionRuntime(
-      redditCfg.sourceSubreddit,
-      redditCfg.primarySubreddit,
+      canonicalSourceSubreddit,
+      canonicalTargetSubreddit,
       resolve(process.cwd(), process.env['REDDIT_FLAIR_CATALOGUE_FILE']?.trim() || 'data/flairs.json'),
       moderationCfg.flairReconcileMs,
       moderationReader,
@@ -332,7 +347,7 @@ const tick = async (): Promise<void> => {
     }
     if (projectionResult !== null && (projectionResult.applied > 0 || projectionResult.failed > 0)) {
       console.log(
-        `[Reddit reputation] r/${redditCfg.primarySubreddit} projection applied=${projectionResult.applied} failed=${projectionResult.failed}`,
+        `[Reddit reputation] r/${canonicalTargetSubreddit} projection applied=${projectionResult.applied} failed=${projectionResult.failed}`,
       );
     }
   } finally {
@@ -379,8 +394,8 @@ const startupSmoke = async (): Promise<void> => {
 };
 
 if (singleTarget) {
-  console.log(`Mae Reddit single-subreddit mode starting for r/${redditCfg.primarySubreddit}.`);
-  console.log('Cross-subreddit mirroring and migration are disabled until distinct source/primary subreddits are configured.');
+  console.log(`Mae Reddit publishing remains in single-subreddit mode for r/${redditCfg.primarySubreddit}.`);
+  console.log('Cross-subreddit publishing and post mirroring remain disabled until the post-bootstrap primary cutover.');
 } else {
   console.log(`Mae Reddit Twitter consumer, weekly Daily Task relay and bidirectional post mirror starting for r/${redditCfg.primarySubreddit} ⇄ r/${redditCfg.sourceSubreddit}.`);
 }
@@ -406,7 +421,7 @@ if (directMessages !== null) {
 if (communityProjection !== null) {
   const primed = await communityProjection.tick();
   console.log(
-    `Initial r/${redditCfg.primarySubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
+    `Initial r/${canonicalTargetSubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
   );
 }
 if (postMirror !== null) await postMirror.tick();
