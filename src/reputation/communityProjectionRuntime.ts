@@ -55,8 +55,10 @@ const shouldMute = (
 ): boolean => desired.permanent || (desired.muteUntil !== null && desired.muteUntil > now);
 
 export class CommunityProjectionRuntime {
+  private nextModerationAt = 0;
   private nextFlairAt = 0;
   private activated = false;
+  private readonly moderationIntervalMs: number;
 
   public constructor(
     private readonly sourceSubreddit: string,
@@ -71,6 +73,9 @@ export class CommunityProjectionRuntime {
     if (!Number.isSafeInteger(flairIntervalMs) || flairIntervalMs < 1) {
       throw new Error('Community flair projection interval must be a positive integer');
     }
+    // Relationship inventories are paginated moderator endpoints. Reconcile
+    // them promptly, but not on every fast process poll.
+    this.moderationIntervalMs = Math.min(flairIntervalMs, 30_000);
   }
 
   private async bootstrapActive(): Promise<boolean> {
@@ -212,17 +217,29 @@ export class CommunityProjectionRuntime {
 
   public async tick(now = Date.now()): Promise<CommunityProjectionTick> {
     const raw = await this.reputation.raw();
-    const mutes = await this.reconcileMutes(raw, now);
-    if (!(await this.bootstrapActive())) {
-      return { applied: mutes.applied, failed: mutes.failed, skipped: true };
+    const moderationDue = now >= this.nextModerationAt;
+    let mutes: MuteReconcileResult = {
+      applied: 0,
+      failed: 0,
+      blockedPermanentUsers: new Set<string>(),
+    };
+    if (moderationDue) {
+      this.nextModerationAt = now + this.moderationIntervalMs;
+      mutes = await this.reconcileMutes(raw, now);
     }
 
-    const bans = await this.reconcileBans(raw, mutes.blockedPermanentUsers);
+    if (!(await this.bootstrapActive())) {
+      return { applied: mutes.applied, failed: mutes.failed, skipped: !moderationDue };
+    }
+
+    const bans = moderationDue
+      ? await this.reconcileBans(raw, mutes.blockedPermanentUsers)
+      : { applied: 0, failed: 0 };
     const flairs = await this.reconcileFlairs(raw, now);
     return {
       applied: mutes.applied + bans.applied + flairs.applied,
       failed: mutes.failed + bans.failed + flairs.failed,
-      skipped: flairs.skipped,
+      skipped: !moderationDue && flairs.skipped,
     };
   }
 }
