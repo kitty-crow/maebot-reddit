@@ -116,18 +116,11 @@ describe('modmail relay store', () => {
     expect((await store.eventsAfter(0)).events[0]?.relayOrigin).toBeNull();
   });
 
-  test('terminal session is scoped to one conversation and retired when Reddit archives it', async () => {
+  test('archived state remains canonical without Reddit-owned browser session state', async () => {
     const { store } = await fixture();
     const first = message('m1', 'initial message', 100);
     await store.sync([conversation([first])], 100);
-    const session = await store.createTerminalSession('abc', {
-      platform: 'telegram',
-      userId: '42',
-      handle: '@alice',
-    }, 3600, 200);
-
-    expect((await store.terminalSession(session.token, 201))?.conversationId).toBe('abc');
     await store.sync([conversation([first], 'archived')], 300);
-    expect(await store.terminalSession(session.token, 301)).toBeNull();
+    expect((await store.conversation('abc'))?.state).toBe('archived');
   });
 });
