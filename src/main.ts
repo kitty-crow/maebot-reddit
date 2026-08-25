@@ -231,7 +231,7 @@ const mirrorPollMs = intervalMs('REDDIT_MIRROR_POLL_MS', 10_000, 5_000);
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
-internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation);
+internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
