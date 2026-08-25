@@ -89,6 +89,7 @@ const fixture = async (withReputation: boolean) => {
     { uploadMedia: async name => `https://reddit-uploaded-media.s3-accelerate.amazonaws.com/${encodeURIComponent(name)}` },
     new ModmailMediaStore(join(root, 'media.pb')),
   );
+  const archived: string[] = [];
   const server = new RedditInternalHttpServer(
     { host: '127.0.0.1', port: 0, token: 'secret' },
     new QuestionEventStore(join(root, 'questions.pb')),
@@ -100,9 +101,10 @@ const fixture = async (withReputation: boolean) => {
     outbox,
     media,
     withReputation ? { user: async () => canonicalUser } : null,
+    { archiveModmail: async id => { archived.push(id); } },
   );
   server.start();
-  return { server, base: server.address(), outbox, modmail };
+  return { server, base: server.address(), outbox, modmail, archived };
 };
 
 describe('Reddit internal Modmail API', () => {
@@ -208,11 +210,37 @@ describe('Reddit internal Modmail API', () => {
     }
   });
 
-  test('keeps Modmail conversation data behind bearer authentication', async () => {
-    const { server, base } = await fixture(true);
+  test('keeps Modmail conversation data and archive mutation behind bearer authentication', async () => {
+    const { server, base, archived } = await fixture(true);
     try {
-      const response = await fetch(`${base}/v1/modmail/conversations/abc123`);
-      expect(response.status).toBe(401);
+      expect((await fetch(`${base}/v1/modmail/conversations/abc123`)).status).toBe(401);
+      const close = await fetch(`${base}/v1/modmail/conversations/abc123/archive`, { method: 'POST' });
+      expect(close.status).toBe(401);
+      expect(archived).toHaveLength(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('archives a Modmail conversation through the canonical mutation writer and treats already archived state as closed', async () => {
+    const { server, base, archived, modmail } = await fixture(false);
+    try {
+      const first = await fetch(`${base}/v1/modmail/conversations/abc123/archive`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      });
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ closed: true });
+      expect(archived).toEqual(['abc123']);
+
+      await modmail.sync([{ ...conversation(), state: 'archived', lastUpdatedAt: 200 }], 200);
+      const second = await fetch(`${base}/v1/modmail/conversations/abc123/archive`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      });
+      expect(second.status).toBe(200);
+      expect(await second.json()).toEqual({ closed: true });
+      expect(archived).toEqual(['abc123']);
     } finally {
       server.stop();
     }
