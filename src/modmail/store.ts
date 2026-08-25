@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import type {
@@ -8,7 +7,6 @@ import type {
   ModmailMessage,
   ModmailModeratorIdentity,
   ModmailParticipant,
-  ModmailTerminalSession,
 } from './types.ts';
 
 export type ModmailRelayOrigin = ModmailModeratorIdentity['platform'] | null;
@@ -43,7 +41,6 @@ const initial = (): JsonMap => ({
   subreddits: {},
   conversations: {},
   events: {},
-  terminalSessions: {},
 });
 
 const normaliseSubreddit = (value: string): string => value.trim().toLowerCase();
@@ -52,7 +49,6 @@ const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail store');
   if (!isMap(value['conversations'])) value['conversations'] = {};
   if (!isMap(value['events'])) value['events'] = {};
-  if (!isMap(value['terminalSessions'])) value['terminalSessions'] = {};
   if (!isMap(value['subreddits'])) {
     const subreddits: JsonMap = {};
     const conversations = value['conversations'];
@@ -229,38 +225,6 @@ const eventFrom = (value: Json | undefined): ModmailRelayEvent | null => {
   };
 };
 
-const terminalJson = (value: ModmailTerminalSession): JsonMap => ({
-  token: value.token,
-  conversationId: value.conversationId,
-  moderator: {
-    platform: value.moderator.platform,
-    userId: value.moderator.userId,
-    handle: value.moderator.handle,
-  },
-  createdAt: value.createdAt,
-  expiresAt: value.expiresAt,
-});
-
-const terminalFrom = (value: Json | undefined): ModmailTerminalSession | null => {
-  if (!isMap(value) || !isMap(value['moderator'])) return null;
-  const token = text(value['token']);
-  const conversationId = text(value['conversationId']);
-  const platform = value['moderator']['platform'];
-  const userId = text(value['moderator']['userId']);
-  const handle = text(value['moderator']['handle']);
-  if (
-    token === null || conversationId === null || userId === null || handle === null
-    || (platform !== 'discord' && platform !== 'telegram')
-  ) return null;
-  return {
-    token,
-    conversationId,
-    moderator: { platform, userId, handle },
-    createdAt: integer(value['createdAt']),
-    expiresAt: integer(value['expiresAt']),
-  };
-};
-
 const eventFor = (sequence: number, conversation: ModmailConversation, message: ModmailMessage): ModmailRelayEvent => ({
   sequence,
   key: `modmail:${conversation.id}:${message.id}`,
@@ -276,15 +240,6 @@ const eventFor = (sequence: number, conversation: ModmailConversation, message: 
   createdAt: message.createdAt,
   relayOrigin: null,
 });
-
-const retireConversationSessions = (value: JsonMap, conversationId: string): void => {
-  const sessions = value['terminalSessions'];
-  if (!isMap(sessions)) return;
-  for (const [token, raw] of Object.entries(sessions)) {
-    const session = terminalFrom(raw);
-    if (session?.conversationId === conversationId) delete sessions[token];
-  }
-};
 
 export class ModmailStore {
   private readonly store: Store;
@@ -348,7 +303,6 @@ export class ModmailStore {
           || prior.subject !== incoming.subject
           || prior.lastUpdatedAt !== incoming.lastUpdatedAt
         ) changed.add(incoming.id);
-        if (incoming.state === 'archived') retireConversationSessions(value, incoming.id);
         if (firstSync || newlyActivated.has(normaliseSubreddit(incoming.subreddit))) continue;
         for (const message of newMessages) {
           sequence += 1;
@@ -419,66 +373,5 @@ export class ModmailStore {
     const conversations = value['conversations'];
     if (!isMap(conversations)) throw new Error('Modmail conversation map is missing');
     return conversationFrom(conversations[id]);
-  }
-
-  public async createTerminalSession(
-    conversationId: string,
-    moderator: ModmailModeratorIdentity,
-    ttlSeconds: number,
-    at = Math.floor(Date.now() / 1_000),
-  ): Promise<ModmailTerminalSession> {
-    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60) throw new Error('Modmail terminal TTL must be at least 60 seconds');
-    let output: ModmailTerminalSession | null = null;
-    await this.store.edit(current => {
-      const value = root(current);
-      const conversations = value['conversations'];
-      const sessions = value['terminalSessions'];
-      if (!isMap(conversations) || !isMap(sessions)) throw new Error('Modmail store maps are missing');
-      const conversation = conversationFrom(conversations[conversationId]);
-      if (conversation === null) throw new Error(`Unknown modmail conversation ${conversationId}`);
-      if (conversation.state === 'archived') throw new Error(`Modmail conversation ${conversationId} is archived`);
-      const token = randomBytes(24).toString('base64url');
-      const session: ModmailTerminalSession = {
-        token,
-        conversationId,
-        moderator,
-        createdAt: at,
-        expiresAt: at + ttlSeconds,
-      };
-      sessions[token] = terminalJson(session);
-      output = session;
-      return value;
-    });
-    if (output === null) throw new Error('Failed to create modmail terminal session');
-    return output;
-  }
-
-  public async terminalSession(token: string, at = Math.floor(Date.now() / 1_000)): Promise<ModmailTerminalSession | null> {
-    let output: ModmailTerminalSession | null = null;
-    await this.store.edit(current => {
-      const value = root(current);
-      const sessions = value['terminalSessions'];
-      const conversations = value['conversations'];
-      if (!isMap(sessions) || !isMap(conversations)) throw new Error('Modmail store maps are missing');
-      const session = terminalFrom(sessions[token]);
-      if (session === null) return value;
-      const conversation = conversationFrom(conversations[session.conversationId]);
-      if (session.expiresAt <= at || conversation === null || conversation.state === 'archived') {
-        delete sessions[token];
-        return value;
-      }
-      output = session;
-      return value;
-    });
-    return output;
-  }
-
-  public async closeTerminalSession(token: string): Promise<void> {
-    await this.store.edit(current => {
-      const value = root(current);
-      const sessions = value['terminalSessions'];
-      if (isMap(sessions)) delete sessions[token];
-      return value;
-    });
   }
 }
