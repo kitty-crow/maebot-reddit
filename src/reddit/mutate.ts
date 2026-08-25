@@ -375,6 +375,14 @@ export class RedditMutationClient {
     }));
   }
 
+  public async archiveModmail(conversationId: string): Promise<void> {
+    const id = modmailConversationId(conversationId);
+    await this.form(
+      `/api/mod/conversations/${encodeURIComponent(id)}/archive`,
+      new URLSearchParams({ api_type: 'json' }),
+    );
+  }
+
   public async muteModmail(conversationId: string, hours: 72 | 168 | 672): Promise<void> {
     const id = modmailConversationId(conversationId);
     await this.form(`/api/mod/conversations/${encodeURIComponent(id)}/mute`, new URLSearchParams({
