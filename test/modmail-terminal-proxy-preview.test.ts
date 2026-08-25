@@ -1,10 +1,14 @@
 import { expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 
-test('focused Modmail preview remains read-only behind an arbitrary reverse-proxy prefix', async () => {
-  const source = await readFile('src/modmail/web/runtime.ts', 'utf8');
-  expect(source).toContain("const preview = base.endsWith('/preview');");
-  expect(source).not.toContain("const preview = base === '/preview';");
-  expect(source).toContain("status.textContent = 'Synthetic read-only preview. Nothing here can reach Reddit.';");
-  expect(source).toContain('setEnabled(false);');
+test('Reddit no longer owns or starts the Modmail browser terminal', async () => {
+  const main = await readFile('src/main.ts', 'utf8');
+  const env = await readFile('src/env.ts', 'utf8');
+  const pkg = await readFile('package.json', 'utf8');
+
+  expect(main).not.toContain('ModmailTerminalServer');
+  expect(main).not.toContain('modmailTerminalConfig');
+  expect(env).not.toContain('REDDIT_MODMAIL_WEBAPP_');
+  expect(pkg).not.toContain('react-dom');
+  expect(pkg).not.toContain('"react"');
 });
