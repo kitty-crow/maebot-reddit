@@ -6,6 +6,7 @@ import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
 import type { ReputationStore } from '../reputation/store.ts';
+import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
@@ -18,6 +19,7 @@ export type RedditInternalHttpCfg = {
 export type RedditInternalHttpLogger = (line: string) => void;
 
 type ModmailReputationReader = Pick<ReputationStore, 'user'>;
+type ModmailCloser = Pick<RedditMutationClient, 'archiveModmail'>;
 
 const json = (value: object, status = 200): Response => new Response(JSON.stringify(value), {
   status,
@@ -83,6 +85,7 @@ export class RedditInternalHttpServer {
   private modmailReplies: ModmailReplyOutbox | null = null;
   private modmailMedia: ModmailMediaService | null = null;
   private modmailReputation: ModmailReputationReader | null = null;
+  private modmailCloser: ModmailCloser | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -96,12 +99,14 @@ export class RedditInternalHttpServer {
     replies: ModmailReplyOutbox,
     media: ModmailMediaService,
     reputation: ModmailReputationReader | null = null,
+    closer: ModmailCloser | null = null,
   ): void {
     if (this.server !== null) throw new Error('Modmail services must be attached before the Reddit internal API starts');
     this.modmail = store;
     this.modmailReplies = replies;
     this.modmailMedia = media;
     this.modmailReputation = reputation;
+    this.modmailCloser = closer;
   }
 
   public start(): void {
@@ -195,6 +200,24 @@ export class RedditInternalHttpServer {
     }
   }
 
+  private async archive(req: Request, url: URL, id: string): Promise<Response> {
+    if (this.modmail === null || this.modmailCloser === null) {
+      return this.record(req, url, json({ error: 'modmail archive unavailable' }, 503));
+    }
+    const conversation = await this.modmail.conversation(id);
+    if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
+    if (conversation.state === 'archived') {
+      return this.record(req, url, json({ closed: true }), 200, `conversation=${id} already=archived`);
+    }
+    try {
+      await this.modmailCloser.archiveModmail(id);
+      return this.record(req, url, json({ closed: true }), 200, `conversation=${id}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'modmail archive failed';
+      return this.record(req, url, json({ error: message }, 503), `conversation=${id}`);
+    }
+  }
+
   private async route(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -221,6 +244,12 @@ export class RedditInternalHttpServer {
       }
       const page = await this.modmail.eventsAfter(after, limit);
       return this.record(req, url, json(page), `after=${after} events=${page.events.length} next=${page.next}`);
+    }
+
+    const archivePath = url.pathname.match(/^\/v1\/modmail\/conversations\/([A-Za-z0-9]+)\/archive$/u);
+    if (req.method === 'POST' && archivePath !== null) {
+      const id = archivePath[1] ?? '';
+      return await this.archive(req, url, id);
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/modmail/conversations/')) {
