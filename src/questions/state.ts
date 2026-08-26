@@ -5,12 +5,14 @@ export type QuestionStateInput = {
   readonly submissionId: string;
   readonly subreddit: string;
   readonly title: string;
+  readonly summary?: string;
   readonly author: string | null;
   readonly permalink: string;
   readonly createdAt: number;
 };
 
-export type QuestionStateRecord = QuestionStateInput & {
+export type QuestionStateRecord = Omit<QuestionStateInput, 'summary'> & {
+  readonly summary: string;
   readonly openedHandled: boolean;
   readonly bestAnswerCommentId: string | null;
   readonly updatedAt: number;
@@ -52,6 +54,7 @@ const decodeQuestion = (value: Json | undefined): QuestionStateRecord | null => 
     submissionId,
     subreddit,
     title: text(value['title']),
+    summary: text(value['summary']),
     author: author.length === 0 ? null : author,
     permalink: text(value['permalink']),
     createdAt: Math.max(0, integer(value['createdAt'])),
@@ -65,6 +68,7 @@ const encodeQuestion = (value: QuestionStateRecord): JsonMap => ({
   submissionId: value.submissionId,
   subreddit: value.subreddit,
   title: value.title,
+  summary: value.summary,
   author: value.author ?? '',
   permalink: value.permalink,
   createdAt: value.createdAt,
@@ -73,7 +77,7 @@ const encodeQuestion = (value: QuestionStateRecord): JsonMap => ({
   updatedAt: value.updatedAt,
 });
 
-const validate = (input: QuestionStateInput): QuestionStateInput => {
+const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'updatedAt'> => {
   const submissionId = input.submissionId.trim();
   const subreddit = input.subreddit.trim();
   const permalink = input.permalink.trim();
@@ -84,12 +88,13 @@ const validate = (input: QuestionStateInput): QuestionStateInput => {
     throw new Error('Question creation timestamp is invalid');
   }
   return {
-    ...input,
     submissionId,
     subreddit,
     title: input.title.trim(),
+    summary: input.summary?.trim() ?? '',
     author: input.author?.trim() || null,
     permalink,
+    createdAt: input.createdAt,
   };
 };
 
@@ -111,6 +116,7 @@ const mergeQuestion = (
     ...existing,
     subreddit: existing.subreddit || next.subreddit,
     title: existing.title || next.title,
+    summary: existing.summary || next.summary,
     author: existing.author ?? next.author,
     permalink: existing.permalink || next.permalink,
     createdAt: existing.createdAt > 0 ? existing.createdAt : next.createdAt,
@@ -164,6 +170,14 @@ export class QuestionStateStore {
   public async question(submissionId: string): Promise<QuestionStateRecord | null> {
     const value = root(await this.store.read());
     return decodeQuestion(child(value, 'questions')[submissionId]);
+  }
+
+  public async all(): Promise<readonly QuestionStateRecord[]> {
+    const value = root(await this.store.read());
+    return Object.values(child(value, 'questions'))
+      .map(decodeQuestion)
+      .filter((entry): entry is QuestionStateRecord => entry !== null)
+      .sort((a, b) => a.createdAt - b.createdAt || a.submissionId.localeCompare(b.submissionId));
   }
 
   public async ensureQuestion(input: QuestionStateInput, openedHandled = false): Promise<QuestionStateRecord> {
