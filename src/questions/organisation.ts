@@ -16,7 +16,8 @@ import type { QuestionEventStore } from './events.ts';
 import type { QuestionStateStore } from './state.ts';
 
 export type PostOrganisationReader = Pick<RedditReadClient, 'postFlairTemplates'>;
-export type PostOrganisationWriter = Pick<RedditMutationClient, 'setPostFlairTemplate'>;
+export type PostOrganisationWriter = Pick<RedditMutationClient, 'setPostFlairTemplate' | 'sendPrivateMessage'>;
+export type PostOrganisationReputation = Pick<ReputationStore, 'hasContribution'>;
 
 export type PostOrganisationPlan = {
   readonly fullname: string;
@@ -96,6 +97,9 @@ const submissionIdFromPermalink = (permalink: string): string | null => {
 };
 
 const questionFlair = (textValue: string): boolean => /^question(?:\s|$)/iu.test(textValue.trim());
+const absoluteRedditUrl = (permalink: string): string => /^https?:\/\//iu.test(permalink)
+  ? permalink
+  : `https://reddit.com${permalink.startsWith('/') ? '' : '/'}${permalink}`;
 
 export class PostOrganisationStore {
   private readonly store: Store;
@@ -147,7 +151,7 @@ type FlairCache = {
 };
 
 export class OrganisingModerationClassifier implements ModerationClassifier {
-  private readonly inner: RedditModerationClassifier;
+  private readonly inner: ModerationClassifier;
   private readonly flairs = new Map<string, FlairCache>();
 
   public constructor(
@@ -155,8 +159,9 @@ export class OrganisingModerationClassifier implements ModerationClassifier {
     private readonly reader: PostOrganisationReader,
     private readonly plans: PostOrganisationStore,
     private readonly flairTtlMs = 5 * 60_000,
+    classifier: ModerationClassifier | null = null,
   ) {
-    this.inner = new RedditModerationClassifier(cfg.ai);
+    this.inner = classifier ?? new RedditModerationClassifier(cfg.ai);
   }
 
   public async classify(item: ModerationItem): Promise<ModerationClassification> {
@@ -219,7 +224,7 @@ export type PostOrganisationTick = {
 export class PostOrganisationRuntime {
   public constructor(
     private readonly plans: PostOrganisationStore,
-    private readonly reputation: ReputationStore,
+    private readonly reputation: PostOrganisationReputation,
     private readonly writer: PostOrganisationWriter,
     private readonly questions: QuestionStateStore,
     private readonly events: QuestionEventStore,
@@ -248,30 +253,40 @@ export class PostOrganisationRuntime {
         organised += 1;
 
         if (plan.isQuestion) {
-          const previous = (await this.questions.all())
-            .filter(value => value.submissionId !== plan.submissionId)
-            .map(value => ({
-              submissionId: value.submissionId,
-              normalisedTitle: normaliseLegacyQuestion(value.title),
-            }));
+          const catalogue = (await this.questions.all())
+            .filter(value => value.submissionId !== plan.submissionId);
+          const previous = catalogue.map(value => ({
+            submissionId: value.submissionId,
+            normalisedTitle: normaliseLegacyQuestion(value.title),
+          }));
           const duplicate = firstLegacySimilarQuestion(plan.questionTitle, previous);
           if (duplicate !== null) {
             duplicates += 1;
+            const existing = catalogue.find(value => value.submissionId === duplicate.submissionId) ?? null;
+            if (existing !== null && plan.author.length > 0) {
+              const link = absoluteRedditUrl(existing.permalink);
+              await this.writer.sendPrivateMessage(
+                plan.author,
+                'Mae found a similar Reddit question',
+                `Your question in r/${plan.subreddit} looks very similar to an earlier question in r/${existing.subreddit}:\n\n${existing.title}\n${link}\n\nYou may find the answer you need there.`,
+              );
+            }
           } else {
             const stored = await this.questions.ensureQuestion({
               submissionId: plan.submissionId,
               subreddit: plan.subreddit,
               title: plan.questionTitle,
+              summary: plan.questionSummary,
               author: plan.author || null,
               permalink: plan.permalink,
               createdAt: plan.createdAt,
             });
             if (!stored.openedHandled) {
-              const relayTitle = `${plan.questionTitle}\n${plan.questionSummary}`.trim();
               await this.events.opened({
                 submissionId: stored.submissionId,
                 subreddit: stored.subreddit,
-                title: relayTitle,
+                title: stored.title,
+                summary: stored.summary,
                 submissionAuthor: stored.author ?? '',
                 submissionPermalink: stored.permalink,
                 at: stored.createdAt,
