@@ -113,26 +113,30 @@ export const presentRedditModmailTicket = (
   appliedReplies: readonly ModmailReplyIntent[],
 ): RedditTicketView => {
   const used = new Set<string>();
-  const messages = conversation.messages.map(message => {
+  const messages: RedditTicketMessageView[] = conversation.messages.map(message => {
     const side = sideFor(conversation, message);
     if (side === 'moderator') {
       const relay = appliedMatch(message, appliedReplies, used);
       if (relay !== null) return relayView(relay, message);
     }
+
+    const actor = redditProvenance(message.author);
     return {
       id: message.id,
       bodyMarkdown: message.bodyMarkdown,
       createdAt: message.createdAt,
       side,
       sender: redditHandle(message.author?.name ?? null),
-      origin: 'reddit' as const,
-      provenance: redditProvenance(message.author),
+      origin: 'reddit',
+      ...(actor === undefined ? {} : { provenance: actor }),
       attachments: [],
     };
   });
+
+  const participantProvenance = redditProvenance(conversation.participant);
   return {
     participant: conversation.participant?.name ?? null,
-    participantProvenance: redditProvenance(conversation.participant),
+    ...(participantProvenance === undefined ? {} : { participantProvenance }),
     subreddit: conversation.subreddit,
     subject: conversation.subject,
     state: conversation.state,
