@@ -27,6 +27,8 @@ import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import { RedditQuestionRuntime } from './questions/runtime.ts';
+import { QuestionStateStore } from './questions/state.ts';
 import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
 import { CommunityProjectionStore } from './reputation/communityProjectionStore.ts';
 import { ReputationPostMirrorGate } from './reputation/mirrorGate.ts';
@@ -100,6 +102,11 @@ const moderationReader = moderationCfg === null ? null : new RedditReadClient(re
 const moderationWriter = moderationCfg === null ? null : new RedditMutationClient(redditCfg.auth);
 const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
 const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
+const questionEvents = new QuestionEventStore();
+const questionState = new QuestionStateStore();
+const questions = internalCfg === null
+  ? null
+  : new RedditQuestionRuntime(moderationCommunities, modmailReader, questionState, questionEvents);
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
 const postMirrorStore = singleTarget
   ? null
@@ -227,15 +234,17 @@ const modmailPollMs = intervalMs('REDDIT_MODMAIL_POLL_MS', 15_000, 5_000);
 const moderationPollMs = intervalMs('REDDIT_MODERATION_POLL_MS', 10_000, 5_000);
 const dmPollMs = intervalMs('REDDIT_DM_POLL_MS', 15_000, 5_000);
 const mirrorPollMs = intervalMs('REDDIT_MIRROR_POLL_MS', 10_000, 5_000);
+const questionPollMs = 15_000;
 
 const internal = internalCfg === null
   ? null
-  : new RedditInternalHttpServer(internalCfg, new QuestionEventStore(), moderationReviews);
+  : new RedditInternalHttpServer(internalCfg, questionEvents, moderationReviews);
 internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
 let ticking = false;
+let nextQuestionAt = 0;
 let nextModmailAt = 0;
 let nextModerationAt = 0;
 let nextDmAt = 0;
@@ -248,6 +257,15 @@ const tick = async (): Promise<void> => {
     const delivery = await bridge.deliverPending();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
+    let questionResult = null;
+    if (questions !== null && now >= nextQuestionAt) {
+      nextQuestionAt = now + questionPollMs;
+      try {
+        questionResult = await questions.tick();
+      } catch (error) {
+        console.error(`[Reddit questions] tick failed: ${safeError(error)}`);
+      }
+    }
     let modmailResult = null;
     if (now >= nextModmailAt) {
       nextModmailAt = now + modmailPollMs;
@@ -311,6 +329,18 @@ const tick = async (): Promise<void> => {
     }
     if (weeklyResult.inspected > 0 || weeklyResult.completed > 0 || weeklyResult.failed > 0) {
       console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
+    }
+    if (questionResult !== null && (
+      questionResult.activated > 0
+      || questionResult.seeded > 0
+      || questionResult.opened > 0
+      || questionResult.resolved > 0
+      || questionResult.ignored > 0
+      || questionResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit questions] activated=${questionResult.activated} seeded=${questionResult.seeded} opened=${questionResult.opened} resolved=${questionResult.resolved} ignored=${questionResult.ignored} failed=${questionResult.failed}`,
+      );
     }
     if (modmailResult !== null && (
       modmailResult.relayed > 0
@@ -421,8 +451,13 @@ if (moderation === null) {
 if (directMessages === null) {
   console.log('Mae Reddit direct-message conversation handling is disabled by REDDIT_DM_ENABLED.');
 }
+if (questions !== null) {
+  console.log(
+    `Reddit-owned question lifecycle events are enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')} and exposed through the internal API.`,
+  );
+}
 console.log(
-  `Reddit API polling cadence: moderation=${moderationPollMs}ms modmail=${modmailPollMs}ms dm=${dmPollMs}ms mirror=${mirrorPollMs}ms; shared quota gate caps Data API traffic at 1 request/second.`,
+  `Reddit API polling cadence: moderation=${moderationPollMs}ms modmail=${modmailPollMs}ms dm=${dmPollMs}ms questions=${questionPollMs}ms mirror=${mirrorPollMs}ms; shared quota gate caps Data API traffic at 1 request/second.`,
 );
 
 if (privateModmail !== null) {
