@@ -10,6 +10,7 @@ export type QuestionEvent = {
   readonly submissionId: string;
   readonly subreddit: string;
   readonly title: string;
+  readonly summary: string;
   readonly submissionAuthor: string;
   readonly submissionPermalink: string;
   readonly selectionCommentId: string | null;
@@ -28,6 +29,7 @@ export type QuestionOpenedInput = {
   readonly submissionId: string;
   readonly subreddit: string;
   readonly title: string;
+  readonly summary?: string;
   readonly submissionAuthor: string;
   readonly submissionPermalink: string;
   readonly at: number;
@@ -79,6 +81,7 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
     submissionId,
     subreddit: text(value['subreddit']),
     title: text(value['title']),
+    summary: text(value['summary']),
     submissionAuthor: text(value['submissionAuthor']),
     submissionPermalink: text(value['submissionPermalink']),
     selectionCommentId: selectionCommentId.length === 0 ? null : selectionCommentId,
@@ -96,6 +99,7 @@ const encode = (event: QuestionEvent): JsonMap => ({
   submissionId: event.submissionId,
   subreddit: event.subreddit,
   title: event.title,
+  summary: event.summary,
   submissionAuthor: event.submissionAuthor,
   submissionPermalink: event.submissionPermalink,
   selectionCommentId: event.selectionCommentId ?? '',
@@ -131,6 +135,7 @@ export class QuestionEventStore {
       key: `question_opened:${input.submissionId}`,
       kind: 'question_opened',
       ...input,
+      summary: input.summary?.trim() ?? '',
       selectionCommentId: null,
       answerCommentId: null,
       answerAuthor: null,
@@ -147,6 +152,7 @@ export class QuestionEventStore {
       key: `best_answer_selected:${input.submissionId}:${input.selectionCommentId}`,
       kind: 'best_answer_selected',
       ...input,
+      summary: input.summary?.trim() ?? '',
     });
   }
 
