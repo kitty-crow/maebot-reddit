@@ -83,3 +83,30 @@ test('Reddit ticket presentation emits stable actor provenance for native and re
     app: 'telegram',
   });
 });
+
+test('Reddit ticket presentation omits unavailable provenance rather than emitting undefined fields', () => {
+  const conversation: ModmailConversation = {
+    id: 'deleted123',
+    subreddit: 'catgirlcoin',
+    subject: 'Deleted participant',
+    participant: null,
+    kind: 'sr_user',
+    state: 'inprogress',
+    isInternal: false,
+    isAuto: false,
+    lastUpdatedAt: 100,
+    messages: [{
+      id: 'deleted-m1',
+      conversationId: 'deleted123',
+      author: null,
+      bodyMarkdown: 'Anonymous/deleted author message',
+      createdAt: 100,
+      isInternal: false,
+      participatingAs: null,
+    }],
+  };
+
+  const view = presentRedditModmailTicket(conversation, []);
+  expect('participantProvenance' in view).toBe(false);
+  expect('provenance' in (view.messages[0] ?? {})).toBe(false);
+});
