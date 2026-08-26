@@ -21,12 +21,12 @@ type ModeratorSnapshot = {
 };
 
 const normal = (value: string): string => value.trim().toLowerCase();
-const questionFlair = (value: string | null): boolean => normal(value ?? '') === 'question';
+const questionFlair = (value: string | null | undefined): boolean => normal(value ?? '') === 'question';
 const submissionId = (fullname: string): string | null => {
   const match = fullname.match(/^t3_([A-Za-z0-9]+)$/u);
   return match?.[1] ?? null;
 };
-const answerId = (fullname: string | null): string | null => {
+const answerId = (fullname: string | null | undefined): string | null => {
   const match = fullname?.match(/^t1_([A-Za-z0-9]+)$/u) ?? null;
   return match?.[1] ?? null;
 };
@@ -44,9 +44,8 @@ const questionFromPost = (post: RedditPost): QuestionStateInput => ({
 });
 
 const submissionPermalink = (comment: RedditComment): string => {
-  if (comment.submissionPermalink !== null && comment.submissionPermalink.trim().length > 0) {
-    return comment.submissionPermalink;
-  }
+  const canonical = comment.submissionPermalink?.trim();
+  if (canonical !== undefined && canonical.length > 0) return canonical;
   return comment.permalink.replace(new RegExp(`/${comment.id}/?$`, 'u'), '/');
 };
 
@@ -59,7 +58,7 @@ const questionFromComment = (comment: RedditComment): QuestionStateInput | null 
     submissionId: id,
     subreddit: comment.subreddit,
     title: comment.submissionTitle ?? '',
-    author: comment.submissionAuthor,
+    author: comment.submissionAuthor ?? null,
     permalink,
     createdAt: Math.max(0, Math.floor(comment.createdUtc)),
   };
