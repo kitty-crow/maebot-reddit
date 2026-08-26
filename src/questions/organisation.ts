@@ -1,3 +1,4 @@
+import { firstLegacySimilarQuestion, normaliseLegacyQuestion } from '../community/questions.ts';
 import type { RedditModerationCfg } from '../env.ts';
 import {
   RedditModerationClassifier,
@@ -9,7 +10,6 @@ import {
 import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
-import { firstLegacySimilarQuestion } from '../community/questions.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import type { QuestionEventStore } from './events.ts';
@@ -109,7 +109,12 @@ export class PostOrganisationStore {
       const state = root(current);
       const plans = state['plans'];
       if (!isMap(plans)) throw new Error('Post organisation plans map is invalid');
-      if (!Object.hasOwn(plans, value.fullname)) plans[value.fullname] = encodePlan({ ...value, applied: false });
+      const existing = decodePlan(plans[value.fullname]);
+      if (existing?.applied === true) return state;
+      // A moderation transaction can be retried after a transient persistence
+      // failure. Keep the latest successful semantic classification until the
+      // deterministic organiser applies it.
+      plans[value.fullname] = encodePlan({ ...value, applied: false });
       return state;
     });
   }
@@ -247,7 +252,7 @@ export class PostOrganisationRuntime {
             .filter(value => value.submissionId !== plan.submissionId)
             .map(value => ({
               submissionId: value.submissionId,
-              normalisedTitle: value.title,
+              normalisedTitle: normaliseLegacyQuestion(value.title),
             }));
           const duplicate = firstLegacySimilarQuestion(plan.questionTitle, previous);
           if (duplicate !== null) {
