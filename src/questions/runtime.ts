@@ -1,10 +1,10 @@
 import { command } from '../community/commands.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
-import type { RedditComment, RedditPost } from '../reddit/types.ts';
+import type { RedditComment } from '../reddit/types.ts';
 import { QuestionEventStore } from './events.ts';
 import { QuestionStateStore, type QuestionStateInput, type QuestionStateRecord } from './state.ts';
 
-export type QuestionRuntimeReader = Pick<RedditReadClient, 'newPosts' | 'newComments' | 'moderators'>;
+export type QuestionRuntimeReader = Pick<RedditReadClient, 'newComments' | 'moderators'>;
 
 export type QuestionTickResult = {
   readonly activated: number;
@@ -31,24 +31,15 @@ const answerId = (fullname: string | null | undefined): string | null => {
   return match?.[1] ?? null;
 };
 
-const nativeQuestion = (post: RedditPost): boolean =>
-  post.crosspostParent === null && questionFlair(post.flairText);
-
-const questionFromPost = (post: RedditPost): QuestionStateInput => ({
-  submissionId: post.id,
-  subreddit: post.subreddit,
-  title: post.title,
-  author: post.author,
-  permalink: post.permalink,
-  createdAt: Math.max(0, Math.floor(post.createdUtc)),
-});
-
 const submissionPermalink = (comment: RedditComment): string => {
   const canonical = comment.submissionPermalink?.trim();
   if (canonical !== undefined && canonical.length > 0) return canonical;
   return comment.permalink.replace(new RegExp(`/${comment.id}/?$`, 'u'), '/');
 };
 
+// This fallback exists only for an already-live Question post that predates the
+// semantic organisation store. New question discovery is owned exclusively by
+// PostOrganisationRuntime; a Question flair alone never opens a question event.
 const questionFromComment = (comment: RedditComment): QuestionStateInput | null => {
   const id = submissionId(comment.submissionFullname);
   if (id === null || !questionFlair(comment.submissionFlairText)) return null;
@@ -91,38 +82,12 @@ export class RedditQuestionRuntime {
   public async tick(): Promise<QuestionTickResult> {
     const result = { activated: 0, seeded: 0, opened: 0, resolved: 0, ignored: 0, failed: 0 };
     for (const subreddit of this.communities) {
-      const posts = await this.reader.newPosts(subreddit, 100);
       const comments = await this.reader.newComments(subreddit, 100);
 
       if (!await this.state.activated(subreddit)) {
-        const questions = posts.filter(nativeQuestion).map(questionFromPost);
         const commands = comments.filter(value => command(value.body) === 'thankyou').map(value => value.id);
-        if (await this.state.bootstrap(subreddit, questions, commands)) {
-          result.activated += 1;
-          result.seeded += questions.length;
-        }
+        if (await this.state.bootstrap(subreddit, [], commands)) result.activated += 1;
         continue;
-      }
-
-      const orderedPosts = [...posts].sort((a, b) => a.createdUtc - b.createdUtc || a.id.localeCompare(b.id));
-      for (const post of orderedPosts) {
-        if (!nativeQuestion(post)) continue;
-        try {
-          const stored = await this.state.ensureQuestion(questionFromPost(post));
-          if (stored.openedHandled) continue;
-          await this.events.opened({
-            submissionId: stored.submissionId,
-            subreddit: stored.subreddit,
-            title: stored.title,
-            submissionAuthor: stored.author ?? '',
-            submissionPermalink: stored.permalink,
-            at: stored.createdAt,
-          });
-          await this.state.markOpenedHandled(stored.submissionId);
-          result.opened += 1;
-        } catch {
-          result.failed += 1;
-        }
       }
 
       const orderedComments = [...comments].sort((a, b) => a.createdUtc - b.createdUtc || a.id.localeCompare(b.id));
