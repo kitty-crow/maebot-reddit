@@ -159,10 +159,11 @@ describe('Mae-managed attachments at the Reddit boundary', () => {
 
       const queued = pending[0];
       if (queued === undefined) throw new Error('Managed reply was not queued');
-      await outbox.markApplied(queued.key, 1_105);
+      const echoedAt = queued.createdAt + 5;
+      await outbox.markApplied(queued.key, echoedAt);
       await modmail.sync([{
         ...conversation(),
-        lastUpdatedAt: 1_105,
+        lastUpdatedAt: echoedAt,
         messages: [
           ...conversation().messages,
           {
@@ -178,12 +179,12 @@ describe('Mae-managed attachments at the Reddit boundary', () => {
               isDeleted: false,
             },
             bodyMarkdown: queued.bodyMarkdown,
-            createdAt: 1_105,
+            createdAt: echoedAt,
             isInternal: false,
             participatingAs: 'moderator',
           },
         ],
-      }], 1_105);
+      }], echoedAt);
 
       const view = await fetch(`${base}/v1/modmail/conversations/abc123`, {
         headers: { authorization: 'Bearer secret' },
