@@ -83,6 +83,11 @@ export type RedditComment = {
   readonly fullname: string;
   readonly subreddit: string;
   readonly submissionFullname: string;
+  readonly parentFullname: string | null;
+  readonly submissionTitle: string | null;
+  readonly submissionAuthor: string | null;
+  readonly submissionPermalink: string | null;
+  readonly submissionFlairText: string | null;
   readonly author: string | null;
   readonly body: string;
   readonly permalink: string;
