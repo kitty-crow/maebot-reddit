@@ -166,6 +166,14 @@ export class QuestionStateStore {
     return decodeQuestion(child(value, 'questions')[submissionId]);
   }
 
+  public async all(): Promise<readonly QuestionStateRecord[]> {
+    const value = root(await this.store.read());
+    return Object.values(child(value, 'questions'))
+      .map(decodeQuestion)
+      .filter((entry): entry is QuestionStateRecord => entry !== null)
+      .sort((a, b) => a.createdAt - b.createdAt || a.submissionId.localeCompare(b.submissionId));
+  }
+
   public async ensureQuestion(input: QuestionStateInput, openedHandled = false): Promise<QuestionStateRecord> {
     let out: QuestionStateRecord | null = null;
     await this.store.edit(current => {
