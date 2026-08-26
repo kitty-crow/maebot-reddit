@@ -21,7 +21,7 @@ type ModeratorSnapshot = {
 };
 
 const normal = (value: string): string => value.trim().toLowerCase();
-const questionFlair = (value: string | null | undefined): boolean => normal(value ?? '') === 'question';
+const questionFlair = (value: string | null | undefined): boolean => /^question(?:\s|$)/u.test(normal(value ?? ''));
 const submissionId = (fullname: string): string | null => {
   const match = fullname.match(/^t3_([A-Za-z0-9]+)$/u);
   return match?.[1] ?? null;
