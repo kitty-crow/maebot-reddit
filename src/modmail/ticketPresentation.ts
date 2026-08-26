@@ -13,8 +13,11 @@ export type RedditTicketActorProvenance = {
 export type RedditTicketAttachment = {
   readonly id: string;
   readonly name: string;
-  readonly kind: 'image' | 'video';
+  readonly kind: 'image' | 'video' | 'file';
   readonly url: string;
+  readonly mimeType: string;
+  readonly size: number;
+  readonly expiresAt: number;
 };
 
 export type RedditTicketMessageView = {
@@ -105,6 +108,9 @@ const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): RedditTi
     name: attachment.name,
     kind: attachment.kind,
     url: attachment.url,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    expiresAt: attachment.expiresAt,
   })),
 });
 
