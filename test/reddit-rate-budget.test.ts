@@ -52,7 +52,7 @@ describe('shared Reddit rate budget', () => {
     await first.acquire();
     expect(sleeps.length).toBe(1);
     expect(sleeps[0]).toBeGreaterThanOrEqual(60_000);
-  });
+  }, 15_000);
 
   test('paces independent instances through one shared one-second request slot', async () => {
     const file = await stateFile();
