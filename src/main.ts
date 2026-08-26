@@ -29,6 +29,11 @@ import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
 import { ModmailTerminalServer } from './modmail/terminalServer.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import {
+  OrganisingModerationClassifier,
+  PostOrganisationRuntime,
+  PostOrganisationStore,
+} from './questions/organisation.ts';
 import { RedditQuestionRuntime } from './questions/runtime.ts';
 import { QuestionStateStore } from './questions/state.ts';
 import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
@@ -108,10 +113,30 @@ const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
 const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
 const questionEvents = new QuestionEventStore();
 const questionState = new QuestionStateStore();
+const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
+const postOrganisationStore = moderationCfg === null
+  ? null
+  : new PostOrganisationStore(resolve(
+      process.cwd(),
+      process.env['REDDIT_POST_ORGANISATION_STATE_FILE']?.trim() || 'data/postOrganisation.pb',
+    ));
+const organisingClassifier = moderationCfg === null || moderationReader === null || postOrganisationStore === null
+  ? null
+  : new OrganisingModerationClassifier(moderationCfg, moderationReader, postOrganisationStore);
+const postOrganisation = postOrganisationStore === null
+  || reputation === null
+  || moderationWriter === null
+  ? null
+  : new PostOrganisationRuntime(
+      postOrganisationStore,
+      reputation,
+      moderationWriter,
+      questionState,
+      questionEvents,
+    );
 const questions = internalCfg === null
   ? null
   : new RedditQuestionRuntime(moderationCommunities, modmailReader, questionState, questionEvents);
-const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
 const postMirrorStore = singleTarget
   ? null
   : new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb'));
@@ -167,7 +192,7 @@ const moderation = moderationCfg === null
       moderationReader,
       moderationWriter,
       reputation,
-      null,
+      organisingClassifier,
       moderationReviews,
       null,
     );
@@ -264,15 +289,7 @@ const tick = async (): Promise<void> => {
     const delivery = await bridge.deliverPending();
     const review = await bridge.syncReviews();
     const weeklyResult = await weekly.sync();
-    let questionResult = null;
-    if (questions !== null && now >= nextQuestionAt) {
-      nextQuestionAt = now + questionPollMs;
-      try {
-        questionResult = await questions.tick();
-      } catch (error) {
-        console.error(`[Reddit questions] tick failed: ${safeError(error)}`);
-      }
-    }
+
     let modmailResult = null;
     if (now >= nextModmailAt) {
       nextModmailAt = now + modmailPollMs;
@@ -299,6 +316,10 @@ const tick = async (): Promise<void> => {
         console.error(`[Reddit DM] tick failed: ${safeError(error)}`);
       }
     }
+
+    // Submission policy is deliberately ordered: moderation audit/effects first,
+    // then deterministic flair organisation/question emission, and only then
+    // !thankyou reconciliation. A removed post can never reach Discord.
     let moderationResult = null;
     if (moderation !== null && now >= nextModerationAt) {
       nextModerationAt = now + moderationPollMs;
@@ -308,6 +329,24 @@ const tick = async (): Promise<void> => {
         console.error(`[Reddit moderation] tick failed: ${safeError(error)}`);
       }
     }
+    let organisationResult = null;
+    if (postOrganisation !== null) {
+      try {
+        organisationResult = await postOrganisation.tick();
+      } catch (error) {
+        console.error(`[Reddit organisation] tick failed: ${safeError(error)}`);
+      }
+    }
+    let questionResult = null;
+    if (questions !== null && now >= nextQuestionAt) {
+      nextQuestionAt = now + questionPollMs;
+      try {
+        questionResult = await questions.tick();
+      } catch (error) {
+        console.error(`[Reddit questions] tick failed: ${safeError(error)}`);
+      }
+    }
+
     let projectionResult = null;
     if (communityProjection !== null) {
       try {
@@ -336,6 +375,17 @@ const tick = async (): Promise<void> => {
     }
     if (weeklyResult.inspected > 0 || weeklyResult.completed > 0 || weeklyResult.failed > 0) {
       console.log(`[Reddit weekly Daily Task] inspected=${weeklyResult.inspected} completed=${weeklyResult.completed} failed=${weeklyResult.failed}`);
+    }
+    if (organisationResult !== null && (
+      organisationResult.organised > 0
+      || organisationResult.questions > 0
+      || organisationResult.duplicates > 0
+      || organisationResult.deferred > 0
+      || organisationResult.failed > 0
+    )) {
+      console.log(
+        `[Reddit organisation] pending=${organisationResult.pending} organised=${organisationResult.organised} questions=${organisationResult.questions} duplicates=${organisationResult.duplicates} deferred=${organisationResult.deferred} failed=${organisationResult.failed}`,
+      );
     }
     if (questionResult !== null && (
       questionResult.activated > 0
@@ -455,12 +505,17 @@ if (moderation === null) {
     `LLM post/comment/modmail moderation and one canonical reputation store are enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')}.`,
   );
 }
+if (postOrganisation !== null) {
+  console.log(
+    `Moderation-owned post organisation is enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')}; allowed posts are reclassified against the live flair inventory before question routing.`,
+  );
+}
 if (directMessages === null) {
   console.log('Mae Reddit direct-message conversation handling is disabled by REDDIT_DM_ENABLED.');
 }
 if (questions !== null) {
   console.log(
-    `Reddit-owned question lifecycle events are enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')} and exposed through the internal API.`,
+    `Reddit-owned question best-answer reconciliation is enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')} and canonical question events are exposed through the internal API.`,
   );
 }
 console.log(
