@@ -8,9 +8,11 @@ export type QuestionEvent = {
   readonly key: string;
   readonly kind: QuestionEventKind;
   readonly submissionId: string;
+  readonly subreddit: string;
   readonly title: string;
   readonly submissionAuthor: string;
   readonly submissionPermalink: string;
+  readonly selectionCommentId: string | null;
   readonly answerCommentId: string | null;
   readonly answerAuthor: string | null;
   readonly answerPermalink: string | null;
@@ -24,6 +26,7 @@ export type QuestionEventPage = {
 
 export type QuestionOpenedInput = {
   readonly submissionId: string;
+  readonly subreddit: string;
   readonly title: string;
   readonly submissionAuthor: string;
   readonly submissionPermalink: string;
@@ -31,8 +34,9 @@ export type QuestionOpenedInput = {
 };
 
 export type BestAnswerSelectedInput = QuestionOpenedInput & {
+  readonly selectionCommentId: string;
   readonly answerCommentId: string;
-  readonly answerAuthor: string;
+  readonly answerAuthor: string | null;
   readonly answerPermalink: string;
 };
 
@@ -62,21 +66,22 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
     || submissionId.length === 0
   ) return null;
 
+  const selectionCommentId = text(value['selectionCommentId']);
   const answerCommentId = text(value['answerCommentId']);
   const answerAuthor = text(value['answerAuthor']);
   const answerPermalink = text(value['answerPermalink']);
-  if (kind === 'best_answer_selected' && (
-    answerCommentId.length === 0 || answerAuthor.length === 0 || answerPermalink.length === 0
-  )) return null;
+  if (kind === 'best_answer_selected' && (answerCommentId.length === 0 || answerPermalink.length === 0)) return null;
 
   return {
     sequence,
     key,
     kind,
     submissionId,
+    subreddit: text(value['subreddit']),
     title: text(value['title']),
     submissionAuthor: text(value['submissionAuthor']),
     submissionPermalink: text(value['submissionPermalink']),
+    selectionCommentId: selectionCommentId.length === 0 ? null : selectionCommentId,
     answerCommentId: answerCommentId.length === 0 ? null : answerCommentId,
     answerAuthor: answerAuthor.length === 0 ? null : answerAuthor,
     answerPermalink: answerPermalink.length === 0 ? null : answerPermalink,
@@ -89,9 +94,11 @@ const encode = (event: QuestionEvent): JsonMap => ({
   key: event.key,
   kind: event.kind,
   submissionId: event.submissionId,
+  subreddit: event.subreddit,
   title: event.title,
   submissionAuthor: event.submissionAuthor,
   submissionPermalink: event.submissionPermalink,
+  selectionCommentId: event.selectionCommentId ?? '',
   answerCommentId: event.answerCommentId ?? '',
   answerAuthor: event.answerAuthor ?? '',
   answerPermalink: event.answerPermalink ?? '',
@@ -100,6 +107,7 @@ const encode = (event: QuestionEvent): JsonMap => ({
 
 const validateBase = (input: QuestionOpenedInput): void => {
   if (input.submissionId.trim().length === 0) throw new Error('Question submission ID is required');
+  if (input.subreddit.trim().length === 0) throw new Error('Question subreddit is required');
   if (input.submissionPermalink.trim().length === 0) throw new Error('Question submission permalink is required');
   if (!Number.isSafeInteger(input.at) || input.at < 0) throw new Error('Question event timestamp is invalid');
 };
@@ -123,6 +131,7 @@ export class QuestionEventStore {
       key: `question_opened:${input.submissionId}`,
       kind: 'question_opened',
       ...input,
+      selectionCommentId: null,
       answerCommentId: null,
       answerAuthor: null,
       answerPermalink: null,
@@ -131,10 +140,11 @@ export class QuestionEventStore {
 
   public async bestAnswer(input: BestAnswerSelectedInput): Promise<QuestionEvent> {
     validateBase(input);
+    if (input.selectionCommentId.trim().length === 0) throw new Error('Best-answer selection comment ID is required');
     if (input.answerCommentId.trim().length === 0) throw new Error('Best-answer comment ID is required');
     if (input.answerPermalink.trim().length === 0) throw new Error('Best-answer permalink is required');
     return await this.append({
-      key: `best_answer_selected:${input.submissionId}:${input.answerCommentId}`,
+      key: `best_answer_selected:${input.submissionId}:${input.selectionCommentId}`,
       kind: 'best_answer_selected',
       ...input,
     });
