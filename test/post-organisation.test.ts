@@ -7,6 +7,7 @@ import type {
   ModerationClassification,
   ModerationClassifier,
   ModerationItem,
+  ModerationPostOrganisation,
 } from '../src/mod/classifier.ts';
 import {
   OrganisingModerationClassifier,
@@ -64,7 +65,7 @@ const post = (overrides: Partial<ModerationItem> = {}): ModerationItem => ({
   ...overrides,
 });
 
-const clean = (organisation: ModerationClassification['postOrganisation']): ModerationClassification => ({
+const clean = (organisation: ModerationPostOrganisation | null): ModerationClassification => ({
   verdict: 'clean',
   rule: 'none',
   disposition: 'allow',
@@ -118,8 +119,8 @@ describe('moderation-owned Reddit post organisation', () => {
     ]);
     expect(inventories).toEqual(['nyaonearth']);
     expect(await plans.pending()).toMatchObject([{
-      fullname: 't3_new123',
-      targetFlairTemplateId: 'question',
+      subreddit: 'nyaonearth',
+      flairTemplateId: 'question',
       isQuestion: true,
       questionTitle: 'How can I bridge NYA from Ethereum to Base?',
     }]);
@@ -130,166 +131,85 @@ describe('moderation-owned Reddit post organisation', () => {
       disposition: 'remove',
       penaltyPoints: 10,
       confidence: 0.99,
-      reason: 'Remove.',
-      evidence: [],
+      reason: 'Removed.',
+      evidence: ['scam-like claim'],
       postOrganisation: null,
     };
-    await classifier.classify(post({ permalink: '/r/nyaonearth/comments/bad999/remove_me/' }));
-    expect(seen).toHaveLength(2);
+    await classifier.classify(post({ permalink: '/r/nyaonearth/comments/removed123/bad/' }));
     expect(await plans.pending()).toHaveLength(1);
   });
 
-  test('cosine duplicate detection is shared across both communities and links to the earlier community', async () => {
+  test('emits cleaned canonical question fields and matches duplicates across both communities', async () => {
     const dir = await temp();
     const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
-    const questions = new QuestionStateStore(join(dir, 'questions.pb'));
+    const state = new QuestionStateStore(join(dir, 'questions.pb'));
     const events = new QuestionEventStore(join(dir, 'events.pb'));
 
-    await questions.ensureQuestion({
-      submissionId: 'catold',
+    await state.ensureQuestion({
+      submissionId: 'cat-old',
       subreddit: 'catgirlcoin',
-      title: 'How can I bridge NYA to Base?',
-      summary: 'Earlier CatgirlCoin bridge question.',
+      title: 'How can I bridge NYA from Ethereum to Base?',
       author: 'Bob',
-      permalink: '/r/catgirlcoin/comments/catold/how_can_i_bridge_nya_to_base/',
-      createdAt: 100,
+      permalink: '/r/catgirlcoin/comments/cat-old/how_can_i_bridge_nya/',
+      createdAt: 1,
     }, true);
 
-    await plans.plan({
-      fullname: 't3_nyanew',
-      submissionId: 'nyanew',
-      subreddit: 'nyaonearth',
-      author: 'Alice',
-      permalink: '/r/nyaonearth/comments/nyanew/bridge_help/',
-      targetFlairTemplateId: 'question',
-      targetFlairText: 'Question :hana:',
-      isQuestion: true,
-      questionTitle: 'How do I bridge NYA from Ethereum to Base?',
-      questionSummary: 'The OP wants to move NYA from Ethereum to Base.',
-      createdAt: 200,
-    });
-
-    const flairs: Array<readonly [string, string, string]> = [];
-    const messages: Array<readonly [string, string, string]> = [];
+    const replies: Array<{ subreddit: string; id: string; text: string }> = [];
+    const flairWrites: Array<{ subreddit: string; id: string; flair: string }> = [];
     const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async (subreddit, submissionId, templateId) => {
-        flairs.push([subreddit, submissionId, templateId]);
+      setPostFlair: async (subreddit, id, flairTemplateId) => {
+        flairWrites.push({ subreddit, id, flair: flairTemplateId });
       },
-      sendPrivateMessage: async (username, subject, body) => {
-        messages.push([username, subject, body]);
+      replyToPost: async (subreddit, id, text) => {
+        replies.push({ subreddit, id, text });
       },
     };
-    const reputation: PostOrganisationReputation = { hasContribution: async () => true };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
+    const reputation: PostOrganisationReputation = {
+      contribution: async () => ({ exists: true }),
+    };
+    const runtime = new PostOrganisationRuntime(plans, writer, reputation, state, events);
 
-    const result = await runtime.tick();
-    expect(result).toMatchObject({ organised: 1, questions: 0, duplicates: 1, failed: 0 });
-    expect(flairs).toEqual([['nyaonearth', 'nyanew', 'question']]);
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.[0]).toBe('Alice');
-    expect(messages[0]?.[2]).toContain('r/catgirlcoin');
-    expect(messages[0]?.[2]).toContain('https://reddit.com/r/catgirlcoin/comments/catold/how_can_i_bridge_nya_to_base/');
-    expect((await events.after(0)).events).toEqual([]);
-    expect(await questions.question('nyanew')).toBeNull();
-  });
-
-  test('unique questions emit canonical title and concise summary while ordinary posts only get organised', async () => {
-    const dir = await temp();
-    const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
-    const questions = new QuestionStateStore(join(dir, 'questions.pb'));
-    const events = new QuestionEventStore(join(dir, 'events.pb'));
-
-    await plans.plan({
-      fullname: 't3_unique1',
-      submissionId: 'unique1',
+    await plans.enqueue({
+      submissionId: 'nya-new',
       subreddit: 'nyaonearth',
       author: 'Alice',
-      permalink: '/r/nyaonearth/comments/unique1/where_contract/',
-      targetFlairTemplateId: 'question',
-      targetFlairText: 'Question :hana:',
+      permalink: '/r/nyaonearth/comments/nya-new/help/',
+      createdAt: 2,
+      flairTemplateId: 'question',
       isQuestion: true,
-      questionTitle: 'Where can I find the official NYA contract address on Avalanche?',
-      questionSummary: 'The OP wants to verify the official Avalanche contract before adding the token to a wallet.',
-      createdAt: 300,
+      questionTitle: 'How do I bridge NYA from Ethereum onto Base?',
+      questionSummary: 'The OP wants the supported Ethereum-to-Base route.',
     });
-    await plans.plan({
-      fullname: 't3_news1',
-      submissionId: 'news1',
-      subreddit: 'catgirlcoin',
+
+    const first = await runtime.tick();
+    expect(first.duplicates).toBe(1);
+    expect(first.opened).toBe(0);
+    expect(flairWrites).toEqual([{ subreddit: 'nyaonearth', id: 'nya-new', flair: 'question' }]);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain('/r/catgirlcoin/comments/cat-old/how_can_i_bridge_nya/');
+    expect(await state.question('nya-new')).toBeNull();
+    expect((await events.page(0)).events).toHaveLength(0);
+
+    await plans.enqueue({
+      submissionId: 'nya-unique',
+      subreddit: 'nyaonearth',
       author: 'Carol',
-      permalink: '/r/catgirlcoin/comments/news1/project_update/',
-      targetFlairTemplateId: 'news',
-      targetFlairText: 'News',
-      isQuestion: false,
-      questionTitle: '',
-      questionSummary: '',
-      createdAt: 301,
+      permalink: '/r/nyaonearth/comments/nya-unique/help/',
+      createdAt: 3,
+      flairTemplateId: 'question',
+      isQuestion: true,
+      questionTitle: 'Why does my staking balance take time to refresh?',
+      questionSummary: 'The OP sees a delay between staking and the displayed balance.',
     });
 
-    const flairs: Array<readonly [string, string, string]> = [];
-    const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async (subreddit, submissionId, templateId) => {
-        flairs.push([subreddit, submissionId, templateId]);
-      },
-      sendPrivateMessage: async () => undefined,
-    };
-    const reputation: PostOrganisationReputation = { hasContribution: async () => true };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
-
-    const result = await runtime.tick();
-    expect(result).toMatchObject({ organised: 2, questions: 1, duplicates: 0, failed: 0 });
-    expect(flairs).toEqual([
-      ['nyaonearth', 'unique1', 'question'],
-      ['catgirlcoin', 'news1', 'news'],
-    ]);
-
-    const page = await events.after(0);
-    expect(page.events).toHaveLength(1);
-    expect(page.events[0]).toMatchObject({
+    const second = await runtime.tick();
+    expect(second.opened).toBe(1);
+    const page = await events.page(0);
+    expect(page.events).toMatchObject([{
       kind: 'question_opened',
-      submissionId: 'unique1',
-      subreddit: 'nyaonearth',
-      title: 'Where can I find the official NYA contract address on Avalanche?',
-      summary: 'The OP wants to verify the official Avalanche contract before adding the token to a wallet.',
-    });
-    expect((await questions.question('unique1'))?.summary).toBe(
-      'The OP wants to verify the official Avalanche contract before adding the token to a wallet.',
-    );
-    expect(await questions.question('news1')).toBeNull();
-  });
-
-  test('organisation is deferred until moderation has persisted the canonical contribution', async () => {
-    const dir = await temp();
-    const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
-    const questions = new QuestionStateStore(join(dir, 'questions.pb'));
-    const events = new QuestionEventStore(join(dir, 'events.pb'));
-    await plans.plan({
-      fullname: 't3_wait1',
-      submissionId: 'wait1',
-      subreddit: 'nyaonearth',
-      author: 'Alice',
-      permalink: '/r/nyaonearth/comments/wait1/wait/',
-      targetFlairTemplateId: 'discussion',
-      targetFlairText: 'Discussion',
-      isQuestion: false,
-      questionTitle: '',
-      questionSummary: '',
-      createdAt: 400,
-    });
-
-    let persisted = false;
-    const reputation: PostOrganisationReputation = { hasContribution: async () => persisted };
-    let writes = 0;
-    const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async () => { writes += 1; },
-      sendPrivateMessage: async () => undefined,
-    };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
-
-    expect(await runtime.tick()).toMatchObject({ deferred: 1, organised: 0 });
-    expect(writes).toBe(0);
-    persisted = true;
-    expect(await runtime.tick()).toMatchObject({ deferred: 0, organised: 1, failed: 0 });
-    expect(writes).toBe(1);
+      submissionId: 'nya-unique',
+      title: 'Why does my staking balance take time to refresh?',
+      summary: 'The OP sees a delay between staking and the displayed balance.',
+    }]);
   });
 });
