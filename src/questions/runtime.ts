@@ -2,7 +2,7 @@ import { command } from '../community/commands.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditComment } from '../reddit/types.ts';
 import { QuestionEventStore } from './events.ts';
-import { QuestionStateStore, type QuestionStateInput, type QuestionStateRecord } from './state.ts';
+import { QuestionStateStore, type QuestionStateRecord } from './state.ts';
 
 export type QuestionRuntimeReader = Pick<RedditReadClient, 'newComments' | 'moderators'>;
 
@@ -21,7 +21,6 @@ type ModeratorSnapshot = {
 };
 
 const normal = (value: string): string => value.trim().toLowerCase();
-const questionFlair = (value: string | null | undefined): boolean => /^question(?:\s|$)/u.test(normal(value ?? ''));
 const submissionId = (fullname: string): string | null => {
   const match = fullname.match(/^t3_([A-Za-z0-9]+)$/u);
   return match?.[1] ?? null;
@@ -35,24 +34,6 @@ const submissionPermalink = (comment: RedditComment): string => {
   const canonical = comment.submissionPermalink?.trim();
   if (canonical !== undefined && canonical.length > 0) return canonical;
   return comment.permalink.replace(new RegExp(`/${comment.id}/?$`, 'u'), '/');
-};
-
-// This fallback exists only for an already-live Question post that predates the
-// semantic organisation store. New question discovery is owned exclusively by
-// PostOrganisationRuntime; a Question flair alone never opens a question event.
-const questionFromComment = (comment: RedditComment): QuestionStateInput | null => {
-  const id = submissionId(comment.submissionFullname);
-  if (id === null || !questionFlair(comment.submissionFlairText)) return null;
-  const permalink = submissionPermalink(comment);
-  if (permalink.trim().length === 0) return null;
-  return {
-    submissionId: id,
-    subreddit: comment.subreddit,
-    title: comment.submissionTitle ?? '',
-    author: comment.submissionAuthor ?? null,
-    permalink,
-    createdAt: Math.max(0, Math.floor(comment.createdUtc)),
-  };
 };
 
 const answerPermalink = (comment: RedditComment, parentId: string): string => {
@@ -112,22 +93,18 @@ export class RedditQuestionRuntime {
     const id = submissionId(comment.submissionFullname);
     if (actor === null || parentId === null || id === null) return false;
 
-    let question = await this.state.question(id);
-    if (question === null) {
-      const input = questionFromComment(comment);
-      if (input === null) return false;
-      question = await this.state.ensureQuestion(input, true);
-    } else {
-      const enriched = questionFromComment(comment);
-      if (enriched !== null) question = await this.state.ensureQuestion(enriched, question.openedHandled);
-    }
-
+    // QuestionStateStore is authoritative. A Reddit flair or a !thankyou command
+    // can never manufacture a question that did not pass moderation + semantic
+    // organisation first.
+    const question = await this.state.question(id);
+    if (question === null) return false;
     if (!await this.canChoose(actor, question)) return false;
 
     await this.events.bestAnswer({
       submissionId: question.submissionId,
       subreddit: question.subreddit,
       title: question.title,
+      summary: question.summary,
       submissionAuthor: question.author ?? '',
       submissionPermalink: question.permalink,
       selectionCommentId: comment.id,
