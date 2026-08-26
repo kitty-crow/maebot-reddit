@@ -1,9 +1,13 @@
 import type { Tweet } from '../../vendor/maebot-twitter/src/index.ts';
-import type { RedditCfg } from '../env.ts';
+import type { RedditAuthCfg, RedditCfg } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import { readStickySlots } from '../reddit/stickySlots.ts';
 import { twitterAnnouncementFlair } from './flair.ts';
+import {
+  redditAnnouncementAuth,
+  twitterRedditPublishingIdentity,
+} from './publishingAuth.ts';
 import { renderLegacyFallback, renderTweetForReddit } from './render.ts';
 import { planSticky } from './sticky.ts';
 import type { RedditLegacyPost, RedditPrimaryPost, TwitterRedditPublisher } from './bridge.ts';
@@ -13,18 +17,28 @@ const redditPostUrl = (subreddit: string, postId: string): string =>
 
 export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
   private readonly read: RedditReadClient;
-  private readonly write: RedditMutationClient;
+  private readonly maeWrite: RedditMutationClient;
+  private readonly announcementWrite: RedditMutationClient;
   private readonly flairIds = new Map<string, string>();
 
-  public constructor(private readonly cfg: RedditCfg) {
+  public constructor(
+    private readonly cfg: RedditCfg,
+    announcementAuth: RedditAuthCfg = redditAnnouncementAuth(cfg.auth),
+  ) {
     this.read = new RedditReadClient(cfg.auth);
-    this.write = new RedditMutationClient(cfg.auth);
+    this.maeWrite = new RedditMutationClient(cfg.auth);
+    this.announcementWrite = new RedditMutationClient(announcementAuth);
   }
 
   public async publishPrimary(tweet: Tweet, worthy: boolean | null): Promise<RedditPrimaryPost> {
     const rendered = renderTweetForReddit(tweet);
     const flairId = await this.flairId(this.cfg.primarySubreddit, worthy);
-    const created = await this.write.submitSelf(this.cfg.primarySubreddit, rendered.title, rendered.body, flairId);
+    const created = await this.writer(worthy).submitSelf(
+      this.cfg.primarySubreddit,
+      rendered.title,
+      rendered.body,
+      flairId,
+    );
     return { postId: created.id };
   }
 
@@ -49,13 +63,14 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
 
     const flairId = await this.flairId(this.cfg.sourceSubreddit, worthy);
     const title = renderTweetForReddit(tweet).title;
+    const writer = this.writer(worthy);
     try {
-      const created = await this.write.crosspost(this.cfg.sourceSubreddit, primaryPostId, title, flairId);
+      const created = await writer.crosspost(this.cfg.sourceSubreddit, primaryPostId, title, flairId);
       return { postId: created.id, mode: 'crosspost' };
     } catch (crosspostError) {
       console.error(`[Reddit Twitter publisher] native crosspost failed; using self-post fallback: ${String(crosspostError)}`);
       const fallback = renderLegacyFallback(tweet, primaryUrl);
-      const created = await this.write.submitSelf(this.cfg.sourceSubreddit, fallback.title, fallback.body, flairId);
+      const created = await writer.submitSelf(this.cfg.sourceSubreddit, fallback.title, fallback.body, flairId);
       return { postId: created.id, mode: 'fallback' };
     }
   }
@@ -68,7 +83,13 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
     if (plan.action === 'blocked') {
       throw new Error(`Both sticky slots in r/${subreddit} are occupied; refusing to evict an unrelated post`);
     }
-    await this.write.sticky(postId, plan.slot);
+    await this.maeWrite.sticky(postId, plan.slot);
+  }
+
+  private writer(worthy: boolean | null): RedditMutationClient {
+    return twitterRedditPublishingIdentity(worthy) === 'announcement'
+      ? this.announcementWrite
+      : this.maeWrite;
   }
 
   private async flairId(subreddit: string, worthy: boolean | null): Promise<string> {

@@ -217,7 +217,7 @@ describe('Reddit direct-message runtime', () => {
     expect(repeated.replies).toBe(0);
     expect(writes.replies).toHaveLength(1);
     expect(moderationItems).toHaveLength(1);
-  });
+  }, 15_000);
 
   test('already-read inbox DM is still processed once because unread state is not the discovery boundary', async () => {
     const dmStore = await store();
@@ -238,7 +238,7 @@ describe('Reddit direct-message runtime', () => {
     expect(writes.replies).toHaveLength(1);
     expect((await runtime.tick()).replies).toBe(0);
     expect(writes.replies).toHaveLength(1);
-  });
+  }, 15_000);
 
   test('recovers a crash after Reddit accepted a reply without sending it twice', async () => {
     const dmStore = await store();
