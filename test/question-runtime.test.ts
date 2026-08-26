@@ -24,7 +24,7 @@ const post = (id: string, createdUtc: number, overrides: Partial<RedditPost> = {
   selfText: '',
   url: `https://reddit.com/r/catgirlcoin/comments/${id}/question_${id}/`,
   flairTemplateId: 'question-template',
-  flairText: 'Question',
+  flairText: 'Question :hana:',
   stickied: false,
   locked: false,
   over18: false,
