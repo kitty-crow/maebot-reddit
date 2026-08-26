@@ -207,11 +207,11 @@ export class RedditInternalHttpServer {
     const conversation = await this.modmail.conversation(id);
     if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
     if (conversation.state === 'archived') {
-      return this.record(req, url, json({ closed: true }), 200, `conversation=${id} already=archived`);
+      return this.record(req, url, json({ closed: true }, 200), `conversation=${id} already=archived`);
     }
     try {
       await this.modmailCloser.archiveModmail(id);
-      return this.record(req, url, json({ closed: true }), 200, `conversation=${id}`);
+      return this.record(req, url, json({ closed: true }, 200), `conversation=${id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'modmail archive failed';
       return this.record(req, url, json({ error: message }, 503), `conversation=${id}`);
