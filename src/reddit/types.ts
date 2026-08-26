@@ -83,11 +83,14 @@ export type RedditComment = {
   readonly fullname: string;
   readonly subreddit: string;
   readonly submissionFullname: string;
-  readonly parentFullname: string | null;
-  readonly submissionTitle: string | null;
-  readonly submissionAuthor: string | null;
-  readonly submissionPermalink: string | null;
-  readonly submissionFlairText: string | null;
+  // Link-context fields are present on Reddit subreddit comment listings. They
+  // remain optional here so existing readers/tests that only need comment-local
+  // data do not become coupled to the question workflow.
+  readonly parentFullname?: string | null;
+  readonly submissionTitle?: string | null;
+  readonly submissionAuthor?: string | null;
+  readonly submissionPermalink?: string | null;
+  readonly submissionFlairText?: string | null;
   readonly author: string | null;
   readonly body: string;
   readonly permalink: string;
