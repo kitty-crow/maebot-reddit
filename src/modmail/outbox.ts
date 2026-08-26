@@ -1,14 +1,28 @@
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
-import type { ModmailMediaAttachment } from './media/types.ts';
 import type { ModmailModeratorIdentity } from './types.ts';
+
+export type ModmailReplyAttachment = {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly kind: 'image' | 'video' | 'file';
+  /** Mae's 24-hour public URL exposed back to the moderator ticket. */
+  readonly url: string;
+  /** URL actually sent to the Reddit participant; native when available. */
+  readonly deliveryUrl: string;
+  readonly size: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+};
 
 export type ModmailReplyIntent = {
   readonly key: string;
   readonly conversationId: string;
   readonly moderator: ModmailModeratorIdentity;
   readonly text: string;
-  readonly attachments: readonly ModmailMediaAttachment[];
+  readonly attachments: readonly ModmailReplyAttachment[];
   readonly bodyMarkdown: string;
   readonly createdAt: number;
   readonly appliedAt: number | null;
@@ -28,7 +42,7 @@ const text = (value: Json | undefined): string | null =>
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 
-const attachmentFrom = (value: Json | undefined): ModmailMediaAttachment | null => {
+const attachmentFrom = (value: Json | undefined): ModmailReplyAttachment | null => {
   if (!isMap(value)) return null;
   const id = text(value['id']);
   const conversationId = text(value['conversationId']);
@@ -40,20 +54,24 @@ const attachmentFrom = (value: Json | undefined): ModmailMediaAttachment | null 
   const createdAt = integerOrNull(value['createdAt']);
   if (
     id === null || conversationId === null || name === null || mimeType === null || url === null
-    || (kind !== 'image' && kind !== 'video') || size === null || createdAt === null
+    || (kind !== 'image' && kind !== 'video' && kind !== 'file') || size === null || createdAt === null
   ) return null;
-  return { id, conversationId, name, mimeType, kind, url, size, createdAt };
+  const deliveryUrl = text(value['deliveryUrl']) ?? url;
+  const expiresAt = integerOrNull(value['expiresAt']) ?? createdAt + (24 * 60 * 60);
+  return { id, conversationId, name, mimeType, kind, url, deliveryUrl, size, createdAt, expiresAt };
 };
 
-const attachmentJson = (value: ModmailMediaAttachment): JsonMap => ({
+const attachmentJson = (value: ModmailReplyAttachment): JsonMap => ({
   id: value.id,
   conversationId: value.conversationId,
   name: value.name,
   mimeType: value.mimeType,
   kind: value.kind,
   url: value.url,
+  deliveryUrl: value.deliveryUrl,
   size: value.size,
   createdAt: value.createdAt,
+  expiresAt: value.expiresAt,
 });
 
 const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
@@ -69,7 +87,7 @@ const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
     || (platform !== 'discord' && platform !== 'telegram')
   ) return null;
   const attachments = Array.isArray(value['attachments'])
-    ? value['attachments'].map(attachmentFrom).filter((item): item is ModmailMediaAttachment => item !== null)
+    ? value['attachments'].map(attachmentFrom).filter((item): item is ModmailReplyAttachment => item !== null)
     : [];
   return {
     key,
@@ -105,16 +123,16 @@ export const modmailReplyAttribution = (moderator: ModmailModeratorIdentity): st
   return `**Reply from ${moderator.handle} via ${platform}:**`;
 };
 
-const attachmentLabel = (attachment: ModmailMediaAttachment): string => {
-  const icon = attachment.kind === 'image' ? '🖼️' : '🎞️';
+const attachmentLabel = (attachment: ModmailReplyAttachment): string => {
+  const icon = attachment.kind === 'image' ? '🖼️' : attachment.kind === 'video' ? '🎞️' : '📎';
   const name = attachment.name.replace(/[\[\]]/gu, '_');
-  return `- [${icon} ${name}](${attachment.url})`;
+  return `- [${icon} ${name}](${attachment.deliveryUrl})`;
 };
 
 export const attributedModmailReply = (
   moderator: ModmailModeratorIdentity,
   textBody: string,
-  attachments: readonly ModmailMediaAttachment[] = [],
+  attachments: readonly ModmailReplyAttachment[] = [],
 ): string => {
   const body = textBody.trim();
   if (body.length === 0 && attachments.length === 0) throw new Error('Modmail reply cannot be empty');
@@ -136,7 +154,7 @@ export class ModmailReplyOutbox {
     readonly conversationId: string;
     readonly moderator: ModmailModeratorIdentity;
     readonly text: string;
-    readonly attachments?: readonly ModmailMediaAttachment[];
+    readonly attachments?: readonly ModmailReplyAttachment[];
     readonly createdAt?: number;
   }): Promise<ModmailReplyIntent> {
     const key = input.key.trim();
