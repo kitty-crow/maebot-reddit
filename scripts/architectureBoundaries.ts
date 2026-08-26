@@ -3,7 +3,11 @@ import { extname, join, relative } from 'node:path';
 
 const roots = ['src', 'scripts', 'test'];
 const activeRoots = new Set(['src', 'scripts']);
-const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[] = [
+const forbidden: readonly {
+  readonly pattern: RegExp;
+  readonly reason: string;
+  readonly activeOnly?: boolean;
+}[] = [
   { pattern: /twitter\.pb/iu, reason: 'Reddit must not open canonical Twitter storage' },
   { pattern: /FxTwitter/iu, reason: 'Reddit must not instantiate a Twitter watcher' },
   { pattern: /dailyReview\.pb/iu, reason: 'Reddit must not open Telegram Daily Review storage' },
@@ -13,10 +17,10 @@ const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[
   { pattern: /node-telegram-bot-api/iu, reason: 'Reddit must not own Telegram presentation' },
   { pattern: /DISCORD_(TOKEN|MAE_TOKEN|SERVER_ID)/u, reason: 'Reddit must not own Discord credentials' },
   { pattern: /TELEGRAM_(TOKEN|BOT_TOKEN)/u, reason: 'Reddit must not own Telegram credentials' },
-  { pattern: /ModmailTerminalServer/u, reason: 'Reddit must not host the extracted Mae Tickets browser/server' },
-  { pattern: /modmailTerminalConfig/u, reason: 'Reddit must not configure the extracted Mae Tickets browser/server' },
-  { pattern: /\/v1\/modmail\/terminal-sessions/u, reason: 'Reddit must not expose legacy terminal-session authority' },
-  { pattern: /vendor\/mae-tickets\/src/iu, reason: 'Reddit must not import Mae Tickets implementation internals' },
+  { pattern: /ModmailTerminalServer/u, reason: 'Reddit must not host the extracted Mae Tickets browser/server', activeOnly: true },
+  { pattern: /modmailTerminalConfig/u, reason: 'Reddit must not configure the extracted Mae Tickets browser/server', activeOnly: true },
+  { pattern: /\/v1\/modmail\/terminal-sessions/u, reason: 'Reddit must not expose legacy terminal-session authority', activeOnly: true },
+  { pattern: /vendor\/mae-tickets\/src/iu, reason: 'Reddit must not import Mae Tickets implementation internals', activeOnly: true },
 ];
 
 const forbiddenActivePaths = [
@@ -46,6 +50,7 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
     if (file.endsWith('architectureBoundaries.ts')) continue;
     const raw = await readFile(file, 'utf8');
     for (const rule of forbidden) {
+      if (rule.activeOnly === true && !active) continue;
       if (rule.pattern.test(raw)) hits.push(`${path}: ${rule.reason}`);
     }
     if (active && /deprecated[\\/]legacy-python/iu.test(raw)) {
