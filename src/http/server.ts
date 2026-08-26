@@ -1,7 +1,7 @@
 import type { ModerationReviewStore } from '../mod/review.ts';
 import type { ModmailMediaService } from '../modmail/media/service.ts';
 import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
-import type { ModmailReplyOutbox } from '../modmail/outbox.ts';
+import type { ModmailReplyAttachment, ModmailReplyOutbox } from '../modmail/outbox.ts';
 import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
@@ -20,6 +20,10 @@ export type RedditInternalHttpLogger = (line: string) => void;
 
 type ModmailReputationReader = Pick<ReputationStore, 'user'>;
 type ModmailCloser = Pick<RedditMutationClient, 'archiveModmail'>;
+
+type IncomingManagedAttachment = Omit<ModmailReplyAttachment, 'conversationId' | 'deliveryUrl'> & {
+  readonly sourceId: string | null;
+};
 
 const json = (value: object, status = 200): Response => new Response(JSON.stringify(value), {
   status,
@@ -73,11 +77,68 @@ const attachmentIds = (value: Json | undefined): readonly string[] | null => {
   return ids.length === value.length ? ids : null;
 };
 
+const integer = (value: Json | undefined): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+
+const httpsUrl = (value: Json | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username.length > 0 || url.password.length > 0) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+};
+
+const managedAttachments = (value: Json | undefined): readonly IncomingManagedAttachment[] | null => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 8) return null;
+  const output: IncomingManagedAttachment[] = [];
+  for (const raw of value) {
+    if (!isMap(raw)) return null;
+    const id = nonEmptyText(raw['id'], 128);
+    const name = nonEmptyText(raw['name'], 180);
+    const mimeType = nonEmptyText(raw['mimeType'], 180);
+    const kind = raw['kind'];
+    const url = httpsUrl(raw['url']);
+    const size = integer(raw['size']);
+    const createdAt = integer(raw['createdAt']);
+    const expiresAt = integer(raw['expiresAt']);
+    const sourceIdRaw = raw['sourceId'];
+    const sourceId = sourceIdRaw === null || sourceIdRaw === undefined
+      ? null
+      : simpleKey(sourceIdRaw);
+    if (
+      id === null || name === null || mimeType === null || url === null
+      || (kind !== 'image' && kind !== 'video' && kind !== 'file')
+      || size === null || size < 1 || size > 100 * 1024 * 1024
+      || createdAt === null || expiresAt === null || expiresAt !== createdAt + (24 * 60 * 60)
+      || (sourceIdRaw !== null && sourceIdRaw !== undefined && sourceId === null)
+    ) return null;
+    output.push({ id, name, mimeType, kind, url, size, createdAt, expiresAt, sourceId });
+  }
+  return output;
+};
+
 const uploadName = (value: string | null): string | null => {
   if (value === null) return null;
   const name = value.trim();
   return name.length > 0 && name.length <= 180 ? name : null;
 };
+
+const legacyAttachment = (attachment: ModmailMediaAttachment): ModmailReplyAttachment => ({
+  id: attachment.id,
+  conversationId: attachment.conversationId,
+  name: attachment.name,
+  mimeType: attachment.mimeType,
+  kind: attachment.kind,
+  url: attachment.url,
+  deliveryUrl: attachment.url,
+  size: attachment.size,
+  createdAt: attachment.createdAt,
+  expiresAt: attachment.createdAt + (24 * 60 * 60),
+});
 
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
@@ -153,24 +214,50 @@ export class RedditInternalHttpServer {
     const handle = nonEmptyText(raw['handle'], 128);
     const text = optionalText(raw['text'], 10_000);
     const ids = attachmentIds(raw['attachmentIds']);
+    const managed = managedAttachments(raw['attachments']);
     if (
       key === null || id === null || source === null || userId === null || handle === null
-      || text === null || ids === null || (text.length === 0 && ids.length === 0)
+      || text === null || ids === null || managed === null
+      || (text.length === 0 && ids.length === 0 && managed.length === 0)
     ) {
       return this.record(req, url, json({ error: 'invalid reply body' }, 400));
     }
     const conversation = await this.modmail.conversation(id);
     if (conversation === null) return this.record(req, url, json({ error: 'conversation not found' }, 404));
     if (conversation.state === 'archived') return this.record(req, url, json({ error: 'conversation archived' }, 409));
-    let attachments: ModmailMediaAttachment[] = [];
-    if (ids.length > 0) {
+
+    let attachments: ModmailReplyAttachment[] = [];
+    if (managed.length > 0) {
+      let native = new Map<string, ModmailMediaAttachment>();
+      const sourceIds = managed.flatMap(item => item.sourceId === null ? [] : [item.sourceId]);
+      if (sourceIds.length > 0 && this.modmailMedia !== null) {
+        try {
+          native = new Map((await this.modmailMedia.resolve(id, sourceIds)).map(item => [item.id, item]));
+        } catch {
+          native = new Map();
+        }
+      }
+      attachments = managed.map(item => ({
+        id: item.id,
+        conversationId: id,
+        name: item.name,
+        mimeType: item.mimeType,
+        kind: item.kind,
+        url: item.url,
+        deliveryUrl: item.sourceId === null ? item.url : native.get(item.sourceId)?.url ?? item.url,
+        size: item.size,
+        createdAt: item.createdAt,
+        expiresAt: item.expiresAt,
+      }));
+    } else if (ids.length > 0) {
       if (this.modmailMedia === null) return this.record(req, url, json({ error: 'modmail media unavailable' }, 503));
       try {
-        attachments = [...await this.modmailMedia.resolve(id, ids)];
+        attachments = [...await this.modmailMedia.resolve(id, ids)].map(legacyAttachment);
       } catch {
         return this.record(req, url, json({ error: 'invalid or unavailable attachment' }, 400));
       }
     }
+
     const queued = await this.modmailReplies.queue({
       key,
       conversationId: id,
