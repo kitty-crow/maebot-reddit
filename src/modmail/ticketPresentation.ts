@@ -1,8 +1,14 @@
 import type { ModmailReplyIntent } from './outbox.ts';
-import type { ModmailConversation, ModmailMessage } from './types.ts';
+import type { ModmailConversation, ModmailMessage, ModmailParticipant } from './types.ts';
 
 export type RedditTicketMessageSide = 'participant' | 'moderator' | 'internal';
 export type RedditTicketMessageOrigin = 'reddit' | 'discord' | 'telegram';
+
+export type RedditTicketActorProvenance = {
+  readonly userId: string;
+  readonly handle: string;
+  readonly app: string;
+};
 
 export type RedditTicketAttachment = {
   readonly id: string;
@@ -18,11 +24,13 @@ export type RedditTicketMessageView = {
   readonly side: RedditTicketMessageSide;
   readonly sender: string;
   readonly origin: RedditTicketMessageOrigin;
+  readonly provenance?: RedditTicketActorProvenance;
   readonly attachments: readonly RedditTicketAttachment[];
 };
 
 export type RedditTicketView = {
   readonly participant: string | null;
+  readonly participantProvenance?: RedditTicketActorProvenance;
   readonly subreddit: string;
   readonly subject: string;
   readonly state: ModmailConversation['state'];
@@ -30,6 +38,15 @@ export type RedditTicketView = {
 };
 
 const redditHandle = (name: string | null): string => name === null ? '[deleted]' : `u/${name}`;
+
+const redditProvenance = (actor: ModmailParticipant | null): RedditTicketActorProvenance | undefined => {
+  if (actor?.id === null || actor?.id === undefined || actor.name === null) return undefined;
+  return {
+    userId: actor.id,
+    handle: redditHandle(actor.name),
+    app: 'reddit',
+  };
+};
 
 const sideFor = (conversation: ModmailConversation, message: ModmailMessage): RedditTicketMessageSide => {
   if (message.isInternal) return 'internal';
@@ -78,6 +95,11 @@ const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): RedditTi
   side: 'moderator',
   sender: reply.moderator.handle,
   origin: reply.moderator.platform,
+  provenance: {
+    userId: reply.moderator.userId,
+    handle: reply.moderator.handle,
+    app: reply.moderator.platform,
+  },
   attachments: reply.attachments.map(attachment => ({
     id: attachment.id,
     name: attachment.name,
@@ -104,11 +126,13 @@ export const presentRedditModmailTicket = (
       side,
       sender: redditHandle(message.author?.name ?? null),
       origin: 'reddit' as const,
+      provenance: redditProvenance(message.author),
       attachments: [],
     };
   });
   return {
     participant: conversation.participant?.name ?? null,
+    participantProvenance: redditProvenance(conversation.participant),
     subreddit: conversation.subreddit,
     subject: conversation.subject,
     state: conversation.state,
