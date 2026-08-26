@@ -13,7 +13,17 @@ const forbidden: readonly { readonly pattern: RegExp; readonly reason: string }[
   { pattern: /node-telegram-bot-api/iu, reason: 'Reddit must not own Telegram presentation' },
   { pattern: /DISCORD_(TOKEN|MAE_TOKEN|SERVER_ID)/u, reason: 'Reddit must not own Discord credentials' },
   { pattern: /TELEGRAM_(TOKEN|BOT_TOKEN)/u, reason: 'Reddit must not own Telegram credentials' },
+  { pattern: /ModmailTerminalServer/u, reason: 'Reddit must not host the extracted Mae Tickets browser/server' },
+  { pattern: /modmailTerminalConfig/u, reason: 'Reddit must not configure the extracted Mae Tickets browser/server' },
+  { pattern: /\/v1\/modmail\/terminal-sessions/u, reason: 'Reddit must not expose legacy terminal-session authority' },
+  { pattern: /vendor\/mae-tickets\/src/iu, reason: 'Reddit must not import Mae Tickets implementation internals' },
 ];
+
+const forbiddenActivePaths = [
+  /^src[\\/]modmail[\\/]terminalServer\.ts$/iu,
+  /^src[\\/]modmail[\\/]terminalPage(?:View)?\.(?:ts|tsx)$/iu,
+  /^src[\\/]modmail[\\/]web(?:[\\/]|$)/iu,
+] as const;
 
 const hits: string[] = [];
 const sourceFile = (file: string): boolean => {
@@ -29,13 +39,17 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
       continue;
     }
     if (!sourceFile(file)) continue;
+    const path = relative(process.cwd(), file);
+    if (active && forbiddenActivePaths.some(pattern => pattern.test(path))) {
+      hits.push(`${path}: Reddit must not contain the extracted Mae Tickets browser/server implementation`);
+    }
     if (file.endsWith('architectureBoundaries.ts')) continue;
     const raw = await readFile(file, 'utf8');
     for (const rule of forbidden) {
-      if (rule.pattern.test(raw)) hits.push(`${relative(process.cwd(), file)}: ${rule.reason}`);
+      if (rule.pattern.test(raw)) hits.push(`${path}: ${rule.reason}`);
     }
     if (active && /deprecated[\\/]legacy-python/iu.test(raw)) {
-      hits.push(`${relative(process.cwd(), file)}: active TypeScript must not depend on deprecated legacy Python code`);
+      hits.push(`${path}: active TypeScript must not depend on deprecated legacy Python code`);
     }
   }
 };
