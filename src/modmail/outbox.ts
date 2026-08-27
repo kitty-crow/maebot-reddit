@@ -21,6 +21,8 @@ export type ModmailReplyIntent = {
   readonly key: string;
   readonly conversationId: string;
   readonly moderator: ModmailModeratorIdentity;
+  /** Opaque stable Mae Nya identity; absent on pre-Nya/legacy relays. */
+  readonly authorNyaId?: string;
   readonly text: string;
   readonly attachments: readonly ModmailReplyAttachment[];
   readonly bodyMarkdown: string;
@@ -41,6 +43,8 @@ const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
 const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+const nyaId = (value: Json | undefined): string | undefined =>
+  typeof value === 'string' && /^[A-Za-z0-9_-]{20,128}$/u.test(value) ? value : undefined;
 
 const attachmentFrom = (value: Json | undefined): ModmailReplyAttachment | null => {
   if (!isMap(value)) return null;
@@ -86,6 +90,9 @@ const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
     key === null || conversationId === null || userId === null || handle === null || bodyMarkdown === null
     || (platform !== 'discord' && platform !== 'telegram')
   ) return null;
+  const rawNyaId = value['authorNyaId'];
+  const authorNyaId = nyaId(rawNyaId);
+  if (rawNyaId !== undefined && authorNyaId === undefined) return null;
   const attachments = Array.isArray(value['attachments'])
     ? value['attachments'].map(attachmentFrom).filter((item): item is ModmailReplyAttachment => item !== null)
     : [];
@@ -93,6 +100,7 @@ const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
     key,
     conversationId,
     moderator: { platform, userId, handle },
+    ...(authorNyaId === undefined ? {} : { authorNyaId }),
     text: text(value['text']) ?? '',
     attachments,
     bodyMarkdown,
@@ -110,6 +118,7 @@ const replyJson = (value: ModmailReplyIntent): JsonMap => ({
     userId: value.moderator.userId,
     handle: value.moderator.handle,
   },
+  ...(value.authorNyaId === undefined ? {} : { authorNyaId: value.authorNyaId }),
   text: value.text,
   attachments: value.attachments.map(attachmentJson),
   bodyMarkdown: value.bodyMarkdown,
@@ -153,6 +162,7 @@ export class ModmailReplyOutbox {
     readonly key: string;
     readonly conversationId: string;
     readonly moderator: ModmailModeratorIdentity;
+    readonly authorNyaId?: string;
     readonly text: string;
     readonly attachments?: readonly ModmailReplyAttachment[];
     readonly createdAt?: number;
@@ -162,6 +172,9 @@ export class ModmailReplyOutbox {
     const attachments = input.attachments ?? [];
     if (key.length === 0) throw new Error('Modmail reply idempotency key is required');
     if (!/^[A-Za-z0-9]+$/u.test(conversationId)) throw new Error('Modmail reply conversation id is invalid');
+    if (input.authorNyaId !== undefined && !/^[A-Za-z0-9_-]{20,128}$/u.test(input.authorNyaId)) {
+      throw new Error('Modmail reply Nya author id is invalid');
+    }
     if (attachments.some(attachment => attachment.conversationId !== conversationId)) {
       throw new Error('Modmail attachment belongs to another conversation');
     }
@@ -177,6 +190,7 @@ export class ModmailReplyOutbox {
           existing.conversationId !== conversationId
           || existing.moderator.platform !== input.moderator.platform
           || existing.moderator.userId !== input.moderator.userId
+          || existing.authorNyaId !== input.authorNyaId
           || existing.bodyMarkdown !== bodyMarkdown
         ) throw new Error(`Modmail reply key ${key} was reused with different content`);
         output = existing;
@@ -186,6 +200,7 @@ export class ModmailReplyOutbox {
         key,
         conversationId,
         moderator: input.moderator,
+        ...(input.authorNyaId === undefined ? {} : { authorNyaId: input.authorNyaId }),
         text: input.text.trim(),
         attachments,
         bodyMarkdown,
