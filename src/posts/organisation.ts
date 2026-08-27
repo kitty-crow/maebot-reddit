@@ -1,4 +1,8 @@
-import { firstLegacySimilarQuestion, normaliseLegacyQuestion } from '../community/questions.ts';
+import {
+  countVectorCosine,
+  firstLegacySimilarQuestion,
+  normaliseLegacyQuestion,
+} from '../community/questions.ts';
 import type { RedditModerationCfg } from '../env.ts';
 import {
   RedditModerationClassifier,
@@ -7,16 +11,24 @@ import {
   type ModerationItem,
   type ModerationPostFlair,
 } from '../mod/classifier.ts';
+import { ensureQuestionAcknowledgement } from '../questions/acknowledgement.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
+import { RepeatedQuestionStore } from '../questions/repeats.ts';
 import type { QuestionStateStore } from '../questions/state.ts';
 import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
+import type { RedditFlairTemplate } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 
+export const REPEATED_QUESTION_FLAIR_TEXT = 'Repeated question :lisa:';
+
 export type PostOrganisationReader = Pick<RedditReadClient, 'postFlairTemplates'>;
-export type PostOrganisationWriter = Pick<RedditMutationClient, 'setPostFlairTemplate' | 'sendPrivateMessage'>;
+export type PostOrganisationWriter = Pick<
+  RedditMutationClient,
+  'setPostFlairTemplate' | 'sendPrivateMessage' | 'reply' | 'lock' | 'distinguish' | 'createFlairTemplate'
+>;
 export type PostOrganisationReputation = Pick<ReputationStore, 'hasContribution'>;
 
 export type PostOrganisationPlan = {
@@ -97,9 +109,60 @@ const submissionIdFromPermalink = (permalink: string): string | null => {
 };
 
 const questionFlair = (textValue: string): boolean => /^question(?:\s|$)/iu.test(textValue.trim());
+const repeatedQuestionFlair = (textValue: string): boolean =>
+  textValue.trim().toLowerCase() === REPEATED_QUESTION_FLAIR_TEXT.toLowerCase();
 const absoluteRedditUrl = (permalink: string): string => /^https?:\/\//iu.test(permalink)
   ? permalink
   : `https://reddit.com${permalink.startsWith('/') ? '' : '/'}${permalink}`;
+
+const repeatedFlairTemplate = (): RedditFlairTemplate => ({
+  id: '',
+  text: REPEATED_QUESTION_FLAIR_TEXT,
+  cssClass: null,
+  textColour: null,
+  backgroundColour: null,
+  modOnly: true,
+  textEditable: false,
+  allowableContent: 'all',
+  maxEmojis: 1,
+});
+
+export const ensureRepeatedQuestionFlair = async (
+  subreddit: string,
+  reader: PostOrganisationReader,
+  writer: Pick<RedditMutationClient, 'createFlairTemplate'>,
+): Promise<RedditFlairTemplate> => {
+  const before = await reader.postFlairTemplates(subreddit);
+  const existing = before.find(value => repeatedQuestionFlair(value.text)) ?? null;
+  if (existing !== null) return existing;
+
+  await writer.createFlairTemplate(subreddit, 'post', repeatedFlairTemplate());
+  const after = await reader.postFlairTemplates(subreddit);
+  const created = after.find(value => repeatedQuestionFlair(value.text)) ?? null;
+  if (created === null) {
+    throw new Error(`r/${subreddit} did not expose ${REPEATED_QUESTION_FLAIR_TEXT} after creation`);
+  }
+  return created;
+};
+
+const duplicateComment = (
+  subreddit: string,
+  existingSubreddit: string,
+  existingTitle: string,
+  existingPermalink: string,
+): string => [
+  `This question in r/${subreddit} appears very similar to an earlier question in r/${existingSubreddit}:`,
+  '',
+  `**${existingTitle}**`,
+  absoluteRedditUrl(existingPermalink),
+  '',
+  `I've temporarily marked this post as **${REPEATED_QUESTION_FLAIR_TEXT}** and locked it while our moderators review the match.`,
+  '',
+  'If this was flagged in error, a subreddit moderator can reply `!false` **directly to this comment**. Mae will then restore the Question, unlock it, remove this notice, and bypass this duplicate match.',
+  '',
+  '---',
+  '^beep ^boop! ^I ^am ^a ^bot. ^This ^response ^is ^automated.',
+].join('\n');
 
 export class PostOrganisationStore {
   private readonly store: Store;
@@ -200,7 +263,7 @@ export class OrganisingModerationClassifier implements ModerationClassifier {
     if (cached !== undefined && cached.until > now) return cached.values;
     const templates = await this.reader.postFlairTemplates(subreddit);
     const values = templates
-      .filter(value => !value.modOnly)
+      .filter(value => !value.modOnly && !repeatedQuestionFlair(value.text))
       .map(value => ({ id: value.id, text: value.text }))
       .filter(value => value.id.trim().length > 0 && value.text.trim().length > 0);
     if (values.length === 0) throw new Error(`r/${subreddit} exposes no assignable post flair templates`);
@@ -222,9 +285,11 @@ export class PostOrganisationRuntime {
   public constructor(
     private readonly plans: PostOrganisationStore,
     private readonly reputation: PostOrganisationReputation,
+    private readonly reader: PostOrganisationReader,
     private readonly writer: PostOrganisationWriter,
     private readonly questions: QuestionStateStore,
     private readonly events: QuestionEventStore,
+    private readonly repeats: RepeatedQuestionStore,
   ) {}
 
   public async tick(): Promise<PostOrganisationTick> {
@@ -241,58 +306,50 @@ export class PostOrganisationRuntime {
         continue;
       }
       try {
-        await this.writer.setPostFlairTemplate(
-          plan.subreddit,
-          plan.submissionId,
-          plan.targetFlairTemplateId,
-          null,
-        );
-        organised += 1;
-
-        if (plan.isQuestion) {
-          const catalogue = (await this.questions.all())
-            .filter(value => value.submissionId !== plan.submissionId);
-          const previous = catalogue.map(value => ({
-            submissionId: value.submissionId,
-            normalisedTitle: normaliseLegacyQuestion(value.title),
-          }));
-          const duplicate = firstLegacySimilarQuestion(plan.questionTitle, previous);
-          if (duplicate !== null) {
-            duplicates += 1;
-            const existing = catalogue.find(value => value.submissionId === duplicate.submissionId) ?? null;
-            if (existing !== null && plan.author.length > 0) {
-              const link = absoluteRedditUrl(existing.permalink);
-              await this.writer.sendPrivateMessage(
-                plan.author,
-                'Mae found a similar Reddit question',
-                `Your question in r/${plan.subreddit} looks very similar to an earlier question in r/${existing.subreddit}:\n\n${existing.title}\n${link}\n\nYou may find the answer you need there.`,
-              );
-            }
-          } else {
-            const stored = await this.questions.ensureQuestion({
-              submissionId: plan.submissionId,
-              subreddit: plan.subreddit,
-              title: plan.questionTitle,
-              summary: plan.questionSummary,
-              author: plan.author || null,
-              permalink: plan.permalink,
-              createdAt: plan.createdAt,
-            });
-            if (!stored.openedHandled) {
-              await this.events.opened({
-                submissionId: stored.submissionId,
-                subreddit: stored.subreddit,
-                title: stored.title,
-                summary: stored.summary,
-                submissionAuthor: stored.author ?? '',
-                submissionPermalink: stored.permalink,
-                at: stored.createdAt,
-              });
-              await this.questions.markOpenedHandled(stored.submissionId);
-              questions += 1;
-            }
-          }
+        if (!plan.isQuestion) {
+          await this.writer.setPostFlairTemplate(
+            plan.subreddit,
+            plan.submissionId,
+            plan.targetFlairTemplateId,
+            null,
+          );
+          organised += 1;
+          await this.plans.markApplied(plan.fullname);
+          continue;
         }
+
+        if (await this.repeats.bypassed(plan.submissionId)) {
+          const opened = await this.openQuestion(plan);
+          organised += 1;
+          questions += opened ? 1 : 0;
+          await this.plans.markApplied(plan.fullname);
+          continue;
+        }
+
+        const catalogue = (await this.questions.all())
+          .filter(value => value.submissionId !== plan.submissionId);
+        const previous = catalogue.map(value => ({
+          submissionId: value.submissionId,
+          normalisedTitle: normaliseLegacyQuestion(value.title),
+        }));
+        const duplicate = firstLegacySimilarQuestion(plan.questionTitle, previous);
+
+        if (duplicate !== null) {
+          const existing = catalogue.find(value => value.submissionId === duplicate.submissionId) ?? null;
+          if (existing === null) throw new Error(`Duplicate catalogue entry ${duplicate.submissionId} disappeared`);
+          const similarity = countVectorCosine(
+            normaliseLegacyQuestion(plan.questionTitle),
+            duplicate.normalisedTitle,
+          );
+          await this.flagRepeatedQuestion(plan, existing, similarity);
+          organised += 1;
+          duplicates += 1;
+        } else {
+          const opened = await this.openQuestion(plan);
+          organised += 1;
+          questions += opened ? 1 : 0;
+        }
+
         await this.plans.markApplied(plan.fullname);
       } catch (error) {
         failed += 1;
@@ -301,5 +358,138 @@ export class PostOrganisationRuntime {
     }
 
     return { pending: pending.length, organised, questions, duplicates, deferred, failed };
+  }
+
+  private async openQuestion(plan: PostOrganisationPlan): Promise<boolean> {
+    await this.writer.setPostFlairTemplate(
+      plan.subreddit,
+      plan.submissionId,
+      plan.targetFlairTemplateId,
+      null,
+    );
+    let stored = await this.questions.ensureQuestion({
+      submissionId: plan.submissionId,
+      subreddit: plan.subreddit,
+      title: plan.questionTitle,
+      summary: plan.questionSummary,
+      author: plan.author || null,
+      permalink: plan.permalink,
+      createdAt: plan.createdAt,
+    });
+    stored = await ensureQuestionAcknowledgement(stored, this.questions, this.writer, plan.createdAt);
+    if (stored.openedHandled) return false;
+    await this.events.opened({
+      submissionId: stored.submissionId,
+      subreddit: stored.subreddit,
+      title: stored.title,
+      summary: stored.summary,
+      submissionAuthor: stored.author ?? '',
+      submissionPermalink: stored.permalink,
+      at: stored.createdAt,
+    });
+    await this.questions.markOpenedHandled(stored.submissionId);
+    return true;
+  }
+
+  private async flagRepeatedQuestion(
+    plan: PostOrganisationPlan,
+    existing: Awaited<ReturnType<QuestionStateStore['question']>> & {},
+    similarity: number,
+  ): Promise<void> {
+    const prior = await this.repeats.question(plan.submissionId);
+    const repeatedFlair = prior === null
+      ? await ensureRepeatedQuestionFlair(plan.subreddit, this.reader, this.writer)
+      : {
+          id: prior.repeatedFlairTemplateId,
+          text: REPEATED_QUESTION_FLAIR_TEXT,
+        };
+    if (repeatedFlair.id.trim().length === 0) throw new Error('Repeated question flair template ID is missing');
+
+    let review = await this.repeats.ensure({
+      submissionId: plan.submissionId,
+      subreddit: plan.subreddit,
+      author: plan.author || null,
+      permalink: plan.permalink,
+      title: plan.questionTitle,
+      summary: plan.questionSummary,
+      questionFlairTemplateId: plan.targetFlairTemplateId,
+      questionFlairText: plan.targetFlairText,
+      repeatedFlairTemplateId: repeatedFlair.id,
+      matchedSubmissionId: existing.submissionId,
+      matchedSubreddit: existing.subreddit,
+      matchedTitle: existing.title,
+      matchedPermalink: existing.permalink,
+      similarity,
+      createdAt: plan.createdAt,
+    });
+
+    if (review.status === 'overturned') {
+      await this.openQuestion(plan);
+      return;
+    }
+
+    if (!review.flairApplied) {
+      await this.writer.setPostFlairTemplate(plan.subreddit, plan.submissionId, review.repeatedFlairTemplateId, null);
+      review = await this.requireRepeat(await this.repeats.markFlairApplied(plan.submissionId), plan.submissionId);
+    }
+
+    if (review.duplicateCommentId === null) {
+      const created = await this.writer.reply(
+        `t3_${plan.submissionId}`,
+        duplicateComment(plan.subreddit, existing.subreddit, existing.title, existing.permalink),
+      );
+      review = await this.requireRepeat(
+        await this.repeats.setDuplicateComment(plan.submissionId, created.id, created.permalink),
+        plan.submissionId,
+      );
+      try {
+        await this.writer.distinguish(created.fullname, false);
+      } catch (error) {
+        console.error(
+          `[Reddit organisation] could not distinguish repeated-question notice ${created.fullname}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (!review.locked) {
+      await this.writer.lock(`t3_${plan.submissionId}`);
+      review = await this.requireRepeat(await this.repeats.markLocked(plan.submissionId), plan.submissionId);
+    }
+
+    if (!review.pmSent) {
+      if (plan.author.length > 0) {
+        await this.writer.sendPrivateMessage(
+          plan.author,
+          'Mae found a similar Reddit question',
+          `Your question in r/${plan.subreddit} looks very similar to an earlier question in r/${existing.subreddit}:\n\n${existing.title}\n${absoluteRedditUrl(existing.permalink)}\n\nI've temporarily marked and locked your post while our moderators review whether it is a repeat.`,
+        );
+      }
+      review = await this.requireRepeat(await this.repeats.markPmSent(plan.submissionId), plan.submissionId);
+    }
+
+    if (!review.reviewEventSent) {
+      if (review.duplicateCommentPermalink === null) throw new Error('Repeated question review comment permalink is missing');
+      await this.events.repeatReview({
+        submissionId: plan.submissionId,
+        subreddit: plan.subreddit,
+        title: plan.questionTitle,
+        summary: plan.questionSummary,
+        submissionAuthor: plan.author,
+        submissionPermalink: plan.permalink,
+        matchedSubmissionId: existing.submissionId,
+        matchedSubreddit: existing.subreddit,
+        matchedTitle: existing.title,
+        matchedPermalink: existing.permalink,
+        similarity,
+        reviewCommentPermalink: review.duplicateCommentPermalink,
+        at: plan.createdAt,
+      });
+      await this.repeats.markReviewEventSent(plan.submissionId);
+    }
+  }
+
+  private async requireRepeat<T>(value: T | null, submissionId: string): Promise<T> {
+    if (value === null) throw new Error(`Repeated question ${submissionId} disappeared from durable state`);
+    return value;
   }
 }
