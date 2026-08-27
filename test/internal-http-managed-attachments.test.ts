@@ -76,7 +76,19 @@ const fixture = async () => {
   return { server, base: server.address(), modmail, outbox };
 };
 
-const managed = (overrides: Record<string, unknown> = {}) => ({
+type ManagedAttachmentFixture = {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly kind: 'image' | 'video' | 'file';
+  readonly url: string;
+  readonly size: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly sourceId: string | null;
+};
+
+const managed = (overrides: Partial<ManagedAttachmentFixture> = {}): ManagedAttachmentFixture => ({
   id: 'mae-managed-file-0001',
   name: 'diagnostic.zip',
   mimeType: 'application/zip',
