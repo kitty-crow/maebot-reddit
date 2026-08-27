@@ -28,6 +28,8 @@ export type RedditTicketMessageView = {
   readonly sender: string;
   readonly origin: RedditTicketMessageOrigin;
   readonly provenance?: RedditTicketActorProvenance;
+  /** Opaque stable Mae Nya identity when this message came from a Mae relay. */
+  readonly authorNyaId?: string;
   readonly attachments: readonly RedditTicketAttachment[];
 };
 
@@ -103,6 +105,7 @@ const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): RedditTi
     handle: reply.moderator.handle,
     app: reply.moderator.platform,
   },
+  ...(reply.authorNyaId === undefined ? {} : { authorNyaId: reply.authorNyaId }),
   attachments: reply.attachments.map(attachment => ({
     id: attachment.id,
     name: attachment.name,
