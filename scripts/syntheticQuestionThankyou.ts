@@ -75,7 +75,7 @@ let comments: readonly RedditComment[] = [{
   submissionPermalink: question.permalink,
   submissionFlairText: 'Question',
   author: SYNTHETIC_AUTHOR,
-  body: '  !thankyou  ',
+  body: '!thankyou',
   permalink: `${question.permalink.replace(/\/$/u, '')}/${commandId}/`,
   createdUtc: now,
   distinguished: null,
