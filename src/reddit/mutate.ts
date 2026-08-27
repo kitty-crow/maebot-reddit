@@ -25,6 +25,12 @@ export type RedditCreatedPost = {
   readonly url: string;
 };
 
+export type RedditCreatedComment = {
+  readonly id: string;
+  readonly fullname: string;
+  readonly permalink: string;
+};
+
 export type RedditSelectedUserFlair = {
   readonly templateId: string | null;
   readonly text: string | null;
@@ -84,6 +90,27 @@ const createdPost = (value: Json): RedditCreatedPost => {
   return { id, fullname, url: text(data['url']) };
 };
 
+const createdComment = (value: Json): RedditCreatedComment => {
+  if (!isMap(value)) throw new RedditError('Reddit comment response was not an object', 'invalid_response');
+  const envelope = value['json'];
+  if (!isMap(envelope)) throw new RedditError('Reddit comment response did not contain json', 'invalid_response');
+  const data = envelope['data'];
+  if (!isMap(data) || !Array.isArray(data['things'])) {
+    throw new RedditError('Reddit comment response did not contain things', 'invalid_response');
+  }
+  const thing = data['things'][0];
+  if (!isMap(thing) || !isMap(thing['data'])) {
+    throw new RedditError('Reddit comment response did not contain comment data', 'invalid_response');
+  }
+  const comment = thing['data'];
+  const id = text(comment['id']);
+  if (id.length === 0) throw new RedditError('Reddit comment response did not contain a comment id', 'invalid_response');
+  const fullname = text(comment['name']) || `t1_${id}`;
+  const permalink = text(comment['permalink']);
+  if (permalink.length === 0) throw new RedditError('Reddit comment response did not contain a permalink', 'invalid_response');
+  return { id, fullname, permalink };
+};
+
 const selectedUserFlair = (value: Json, username: string): RedditSelectedUserFlair => {
   if (!isMap(value) || !isMap(value['current'])) {
     throw new RedditError(`Reddit flair selector did not return current flair for u/${username}`, 'invalid_response');
@@ -130,6 +157,13 @@ const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchPar
   post_flair_allowed: String(emoji.postFlairAllowed),
   user_flair_allowed: String(emoji.userFlairAllowed),
 });
+
+const thingFullname = (value: string, kinds: readonly ('t1' | 't3')[]): string => {
+  const id = value.trim();
+  const match = /^(t1|t3)_[A-Za-z0-9]+$/u.exec(id);
+  if (match === null || !kinds.includes(match[1] as 't1' | 't3')) throw new Error(`Invalid Reddit fullname ${value}`);
+  return id;
+};
 
 export class RedditMutationClient {
   private readonly fetcher: RedditMutationFetch;
@@ -313,6 +347,38 @@ export class RedditMutationClient {
     });
     add(form, 'text', customText);
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
+  }
+
+  public async reply(fullname: string, body: string): Promise<RedditCreatedComment> {
+    const parent = thingFullname(fullname, ['t1', 't3']);
+    const value = body.trim();
+    if (value.length === 0) throw new Error('Reddit comment body cannot be empty');
+    return createdComment(await this.form('/api/comment', new URLSearchParams({
+      api_type: 'json',
+      thing_id: parent,
+      text: value,
+    })));
+  }
+
+  public async lock(fullname: string): Promise<void> {
+    await this.form('/api/lock', new URLSearchParams({ id: thingFullname(fullname, ['t1', 't3']) }));
+  }
+
+  public async unlock(fullname: string): Promise<void> {
+    await this.form('/api/unlock', new URLSearchParams({ id: thingFullname(fullname, ['t1', 't3']) }));
+  }
+
+  public async deleteContent(fullname: string): Promise<void> {
+    await this.form('/api/del', new URLSearchParams({ id: thingFullname(fullname, ['t1']) }));
+  }
+
+  public async distinguish(fullname: string, sticky = false): Promise<void> {
+    await this.form('/api/distinguish', new URLSearchParams({
+      api_type: 'json',
+      how: 'yes',
+      id: thingFullname(fullname, ['t1']),
+      sticky: String(sticky),
+    }));
   }
 
   public async remove(fullname: string): Promise<void> {
