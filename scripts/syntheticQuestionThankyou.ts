@@ -8,7 +8,7 @@ import {
 } from '../src/questions/runtime.ts';
 import { QuestionStateStore, type QuestionStateRecord } from '../src/questions/state.ts';
 import type { RedditComment } from '../src/reddit/types.ts';
-import { isMap, parseJson } from '../src/types/json.ts';
+import { isMap, parseJson, type Json } from '../src/types/json.ts';
 
 const SYNTHETIC_AUTHOR = 'MaeSyntheticTest';
 const questionFooterPrefix = 'Mae Reddit question · ';
@@ -51,7 +51,7 @@ type DiscordQuestionCard = {
   readonly reactions: ReadonlySet<string>;
 };
 
-const reactionNames = (raw: object): ReadonlySet<string> => {
+const reactionNames = (raw: Json): ReadonlySet<string> => {
   if (!isMap(raw)) return new Set<string>();
   const reactions = raw['reactions'];
   if (!Array.isArray(reactions)) return new Set<string>();
@@ -66,7 +66,7 @@ const reactionNames = (raw: object): ReadonlySet<string> => {
   return names;
 };
 
-const footerText = (raw: object): string | null => {
+const footerText = (raw: Json): string | null => {
   if (!isMap(raw)) return null;
   const embeds = raw['embeds'];
   if (!Array.isArray(embeds)) return null;
