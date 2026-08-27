@@ -111,7 +111,7 @@ const writer = (templates: RedditFlairTemplate[], trace: WriterTrace): PostOrgan
   lock: async fullname => {
     trace.locks.push(fullname);
   },
-  distinguish: async (fullname, sticky) => {
+  distinguish: async (fullname, sticky = false) => {
     trace.distinguished.push([fullname, sticky]);
   },
   createFlairTemplate: async (_subreddit, kind, template) => {
