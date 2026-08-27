@@ -342,6 +342,7 @@ export class RedditInternalHttpServer {
     }
     try {
       await this.modmailCloser.archiveModmail(id);
+      await this.modmail.sync([{ ...conversation, state: 'archived' }]);
       return this.record(req, url, json({ closed: true }, 200), `conversation=${id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'modmail archive failed';
@@ -417,7 +418,7 @@ export class RedditInternalHttpServer {
 
     if (req.method === 'GET' && url.pathname === '/v1/moderation/reviews/pending') {
       const reviews = await this.moderation.pending();
-      return this.record(req, url, json({ reviews }), `reviews=${reviews.length}`);
+      return this.record(req, url, json({ reviews }), `reviews=${reviews.length} next=${page.next}`);
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/moderation/reviews/')) {
