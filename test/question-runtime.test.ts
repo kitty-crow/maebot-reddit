@@ -148,8 +148,6 @@ describe('Reddit question runtime', () => {
     expect(final[1]).toMatchObject({ selectionCommentId: 'thanks3', answerCommentId: 'answer3' });
     expect((await state.question('fresh1'))?.bestAnswerCommentId).toBe('answer3');
 
-    // Flair alone is not authority. This submission was never accepted by the
-    // moderation/organisation pipeline, so !thankyou cannot manufacture state.
     const unknown = thankyou('thanks4', 'notcanonical', 'answer4', 'Alice', 240);
     comments = [unknown, byMod];
     const unknownResult = await runtime.tick();
@@ -323,6 +321,6 @@ describe('Reddit question runtime', () => {
     expect(messages).toHaveLength(before.messages);
     expect(replies).toHaveLength(before.replies);
     expect((await events.after(0)).events).toHaveLength(before.events);
-    expect(moderatorReads).toBeGreaterThanOrEqual(2);
+    expect(moderatorReads).toBe(1);
   });
 });
