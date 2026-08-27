@@ -1,8 +1,9 @@
-export type CommunityCommand = 'remove' | 'thankyou';
+export type CommunityCommand = 'remove' | 'thankyou' | 'false';
 
 export const command = (body: string): CommunityCommand | null => {
   if (body.startsWith('!remove')) return 'remove';
   if (body.startsWith('!thankyou')) return 'thankyou';
+  if (body.startsWith('!false')) return 'false';
   return null;
 };
 
