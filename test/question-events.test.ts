@@ -85,4 +85,54 @@ describe('Reddit question event store', () => {
     expect(empty.events).toEqual([]);
     expect(empty.next).toBe(3);
   });
+
+  test('potential-repeat review events carry the current question, matched question, similarity and exact Mae comment', async () => {
+    const store = await questionStore();
+    const review = await store.repeatReview({
+      submissionId: 'new123',
+      subreddit: 'nyaonearth',
+      title: 'How can I bridge NYA to Base?',
+      summary: 'The OP wants to move NYA from Ethereum to Base.',
+      submissionAuthor: 'alice',
+      submissionPermalink: '/r/nyaonearth/comments/new123/question/',
+      matchedSubmissionId: 'old123',
+      matchedSubreddit: 'catgirlcoin',
+      matchedTitle: 'How do I bridge NYA?',
+      matchedPermalink: '/r/catgirlcoin/comments/old123/question/',
+      similarity: 0.73,
+      reviewCommentPermalink: '/r/nyaonearth/comments/new123/question/mae1/',
+      at: 400,
+    });
+
+    expect(review).toMatchObject({
+      sequence: 1,
+      key: 'repeat_review_requested:new123',
+      kind: 'repeat_review_requested',
+      submissionId: 'new123',
+      subreddit: 'nyaonearth',
+      matchedSubmissionId: 'old123',
+      matchedSubreddit: 'catgirlcoin',
+      matchedTitle: 'How do I bridge NYA?',
+      similarity: 0.73,
+      reviewCommentPermalink: '/r/nyaonearth/comments/new123/question/mae1/',
+    });
+
+    const same = await store.repeatReview({
+      submissionId: 'new123',
+      subreddit: 'nyaonearth',
+      title: 'Changed title must not replace durable event',
+      summary: '',
+      submissionAuthor: 'mallory',
+      submissionPermalink: '/different',
+      matchedSubmissionId: 'other',
+      matchedSubreddit: 'nyaonearth',
+      matchedTitle: 'Other',
+      matchedPermalink: '/other',
+      similarity: 0.99,
+      reviewCommentPermalink: '/other/comment/',
+      at: 999,
+    });
+    expect(same).toEqual(review);
+    expect((await store.after(0)).events).toEqual([review]);
+  });
 });
