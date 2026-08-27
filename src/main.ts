@@ -32,6 +32,7 @@ import {
   PostOrganisationStore,
 } from './posts/organisation.ts';
 import { QuestionEventStore } from './questions/events.ts';
+import { RepeatedQuestionStore } from './questions/repeats.ts';
 import { RedditQuestionRuntime } from './questions/runtime.ts';
 import { QuestionStateStore } from './questions/state.ts';
 import { CommunityProjectionRuntime } from './reputation/communityProjectionRuntime.ts';
@@ -105,6 +106,10 @@ const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);
 const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);
 const questionEvents = new QuestionEventStore();
 const questionState = new QuestionStateStore();
+const repeatedQuestions = new RepeatedQuestionStore(resolve(
+  process.cwd(),
+  process.env['REDDIT_REPEATED_QUESTION_STATE_FILE']?.trim() || 'data/repeatedQuestions.pb',
+));
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
 const postOrganisationStore = moderationCfg === null
   ? null
@@ -117,18 +122,29 @@ const organisingClassifier = moderationCfg === null || moderationReader === null
   : new OrganisingModerationClassifier(moderationCfg, moderationReader, postOrganisationStore);
 const postOrganisation = postOrganisationStore === null
   || reputation === null
+  || moderationReader === null
   || moderationWriter === null
   ? null
   : new PostOrganisationRuntime(
       postOrganisationStore,
       reputation,
+      moderationReader,
       moderationWriter,
       questionState,
       questionEvents,
+      repeatedQuestions,
     );
 const questions = internalCfg === null
   ? null
-  : new RedditQuestionRuntime(moderationCommunities, modmailReader, questionState, questionEvents);
+  : new RedditQuestionRuntime(
+      moderationCommunities,
+      modmailReader,
+      questionState,
+      questionEvents,
+      5 * 60_000,
+      repeatedQuestions,
+      moderationWriter,
+    );
 const postMirrorStore = singleTarget
   ? null
   : new PostMirrorStore(resolve(process.cwd(), process.env['REDDIT_MIRROR_STATE_FILE']?.trim() || 'data/postMirror.pb'));
@@ -378,11 +394,12 @@ const tick = async (): Promise<void> => {
       || questionResult.seeded > 0
       || questionResult.opened > 0
       || questionResult.resolved > 0
+      || questionResult.repeatOverrides > 0
       || questionResult.ignored > 0
       || questionResult.failed > 0
     )) {
       console.log(
-        `[Reddit questions] activated=${questionResult.activated} seeded=${questionResult.seeded} opened=${questionResult.opened} resolved=${questionResult.resolved} ignored=${questionResult.ignored} failed=${questionResult.failed}`,
+        `[Reddit questions] activated=${questionResult.activated} seeded=${questionResult.seeded} opened=${questionResult.opened} resolved=${questionResult.resolved} repeatOverrides=${questionResult.repeatOverrides} ignored=${questionResult.ignored} failed=${questionResult.failed}`,
       );
     }
     if (modmailResult !== null && (
@@ -501,7 +518,7 @@ if (directMessages === null) {
 }
 if (questions !== null) {
   console.log(
-    `Reddit-owned question best-answer reconciliation is enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')} and canonical question events are exposed through the internal API.`,
+    `Reddit-owned question best-answer and repeated-question review reconciliation is enabled for ${moderationCommunities.map(value => `r/${value}`).join(' + ')} and canonical question events are exposed through the internal API.`,
   );
 }
 console.log(
