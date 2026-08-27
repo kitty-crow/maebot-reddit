@@ -68,4 +68,3 @@ console.log(
 );
 
 await import('./syntheticQuestionPipeline.ts');
-if ((process.exitCode ?? 0) === 0) await import('./syntheticQuestionThankyou.ts');
