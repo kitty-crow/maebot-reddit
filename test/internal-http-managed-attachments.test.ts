@@ -115,7 +115,7 @@ describe('Mae-managed attachments at the Reddit boundary', () => {
       const attachment = pending[0]?.attachments[0];
       expect(attachment?.kind).toBe('file');
       expect(attachment?.url).toContain('support.example.invalid/mae/tickets/files/');
-      expect(attachment?.deliveryUrl).toBe(attachment?.url);
+      expect(attachment?.deliveryUrl).toBe(attachment?.url ?? '');
       expect(pending[0]?.bodyMarkdown).toContain('📎 diagnostic.zip');
       expect(pending[0]?.bodyMarkdown).toContain('support.example.invalid/mae/tickets/files/');
     } finally {
