@@ -25,6 +25,9 @@ type IncomingManagedAttachment = Omit<ModmailReplyAttachment, 'conversationId' |
   readonly sourceId: string | null;
 };
 
+const maxJsonBytes = 1_000_000;
+const decoder = new TextDecoder();
+
 const json = (value: object, status = 200): Response => new Response(JSON.stringify(value), {
   status,
   headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -39,9 +42,43 @@ const nonNegativeInt = (value: string | null, fallback: number): number | null =
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 };
 
+const boundedText = async (req: Request, maxBytes: number): Promise<string | null> => {
+  const declared = req.headers.get('content-length');
+  if (declared !== null) {
+    const bytes = Number(declared);
+    if (Number.isFinite(bytes) && bytes > maxBytes) return null;
+  }
+  if (req.body === null) return '';
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel('Reddit internal JSON body exceeds limit').catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return decoder.decode(bytes);
+};
+
 const bodyMap = async (req: Request): Promise<Json | null> => {
   try {
-    return parseJson(await req.text());
+    const raw = await boundedText(req, maxJsonBytes);
+    return raw === null ? null : parseJson(raw);
   } catch {
     return null;
   }
@@ -52,6 +89,9 @@ const platform = (value: Json | undefined): 'telegram' | 'discord' | null =>
 
 const simpleKey = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value) ? value : null;
+
+const nyaId = (value: Json | undefined): string | null =>
+  typeof value === 'string' && /^[A-Za-z0-9_-]{20,128}$/u.test(value) ? value : null;
 
 const conversationId = (value: Json | undefined): string | null =>
   typeof value === 'string' && /^[A-Za-z0-9]+$/u.test(value) ? value : null;
@@ -212,11 +252,14 @@ export class RedditInternalHttpServer {
     const source = platform(raw['platform']);
     const userId = nonEmptyText(raw['userId'], 128);
     const handle = nonEmptyText(raw['handle'], 128);
+    const rawAuthorNyaId = raw['authorNyaId'];
+    const authorNyaId = rawAuthorNyaId === undefined ? undefined : nyaId(rawAuthorNyaId);
     const text = optionalText(raw['text'], 10_000);
     const ids = attachmentIds(raw['attachmentIds']);
     const managed = managedAttachments(raw['attachments']);
     if (
       key === null || id === null || source === null || userId === null || handle === null
+      || (rawAuthorNyaId !== undefined && authorNyaId === null)
       || text === null || ids === null || managed === null
       || (text.length === 0 && ids.length === 0 && managed.length === 0)
     ) {
@@ -262,6 +305,7 @@ export class RedditInternalHttpServer {
       key,
       conversationId: id,
       moderator: { platform: source, userId, handle },
+      ...(authorNyaId === undefined || authorNyaId === null ? {} : { authorNyaId }),
       text,
       attachments,
     });
