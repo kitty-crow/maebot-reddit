@@ -226,6 +226,44 @@ describe('Discord repeated-question overturn API', () => {
     expect((await fixtureValue.events.after(0)).events).toHaveLength(before.events);
   });
 
+  test('serialises simultaneous moderator actions so side effects remain first-wins', async () => {
+    const fixtureValue = await fixture();
+
+    const [first, second] = await Promise.all([
+      request(fixtureValue.base, {
+        key: 'repeat_review_requested:repeat1',
+        platform: 'discord',
+        userId: '7',
+        userName: 'Kitty',
+        actionId: 'interaction-a',
+      }),
+      request(fixtureValue.base, {
+        key: 'repeat_review_requested:repeat1',
+        platform: 'discord',
+        userId: '8',
+        userName: 'SecondMod',
+        actionId: 'interaction-b',
+      }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstBody = await first.json() as { outcome: string };
+    const secondBody = await second.json() as { outcome: string };
+    expect([firstBody.outcome, secondBody.outcome].sort()).toEqual([
+      'already_overturned',
+      'overturned',
+    ]);
+
+    expect(fixtureValue.flairs).toHaveLength(1);
+    expect(fixtureValue.unlocked).toHaveLength(1);
+    expect(fixtureValue.deleted).toHaveLength(1);
+    expect(fixtureValue.messages).toHaveLength(1);
+    expect(fixtureValue.replies).toHaveLength(1);
+    expect(fixtureValue.distinguished).toHaveLength(1);
+    expect((await fixtureValue.events.after(0)).events).toHaveLength(1);
+  });
+
   test('fails closed for unauthorised, malformed and missing repeat actions', async () => {
     const fixtureValue = await fixture();
     const endpoint = `${fixtureValue.base}/v1/questions/repeats/overturn`;
