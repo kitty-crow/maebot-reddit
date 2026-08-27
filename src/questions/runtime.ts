@@ -65,6 +65,7 @@ const apology = 'Apologies, after reviewing, our Moderators found the question w
 
 export class RedditQuestionRuntime {
   private readonly moderators = new Map<string, ModeratorSnapshot>();
+  private readonly repeatActions = new Map<string, Promise<RepeatOverrideOutcome>>();
 
   public constructor(
     private readonly communities: readonly string[],
@@ -143,14 +144,33 @@ export class RedditQuestionRuntime {
       throw new Error('Repeated question override timestamp is invalid');
     }
 
-    let repeat = await this.repeats.question(id);
+    const previous = this.repeatActions.get(id) ?? Promise.resolve<RepeatOverrideOutcome>('already_overturned');
+    const current = previous
+      .catch(() => 'already_overturned' as const)
+      .then(async () => await this.overturnRepeatOnce({
+        submissionId: id,
+        actionId,
+        moderator,
+        at: input.at,
+      }));
+    this.repeatActions.set(id, current);
+    try {
+      return await current;
+    } finally {
+      if (this.repeatActions.get(id) === current) this.repeatActions.delete(id);
+    }
+  }
+
+  private async overturnRepeatOnce(input: RepeatOverrideInput): Promise<RepeatOverrideOutcome> {
+    if (this.repeats === null) throw new Error('Repeated question restoration is not configured');
+    let repeat = await this.repeats.question(input.submissionId);
     if (repeat === null) return 'not_found';
     if (repeat.status === 'pending') {
       repeat = await this.requireRepeat(
-        await this.repeats.acceptFalse(id, actionId, moderator, input.at),
-        id,
+        await this.repeats.acceptFalse(input.submissionId, input.actionId, input.moderator, input.at),
+        input.submissionId,
       );
-      const outcome: RepeatOverrideOutcome = repeat.falseCommandId === actionId
+      const outcome: RepeatOverrideOutcome = repeat.falseCommandId === input.actionId
         ? 'overturned'
         : 'already_overturned';
       await this.restoreRepeat(repeat);
