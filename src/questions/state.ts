@@ -14,6 +14,7 @@ export type QuestionStateInput = {
 export type QuestionStateRecord = Omit<QuestionStateInput, 'summary'> & {
   readonly summary: string;
   readonly openedHandled: boolean;
+  readonly acknowledgementCommentId: string | null;
   readonly bestAnswerCommentId: string | null;
   readonly updatedAt: number;
 };
@@ -49,6 +50,7 @@ const decodeQuestion = (value: Json | undefined): QuestionStateRecord | null => 
   const subreddit = text(value['subreddit']);
   if (submissionId.length === 0 || subreddit.length === 0) return null;
   const author = text(value['author']);
+  const acknowledgement = text(value['acknowledgementCommentId']);
   const bestAnswer = text(value['bestAnswerCommentId']);
   return {
     submissionId,
@@ -59,6 +61,7 @@ const decodeQuestion = (value: Json | undefined): QuestionStateRecord | null => 
     permalink: text(value['permalink']),
     createdAt: Math.max(0, integer(value['createdAt'])),
     openedHandled: value['openedHandled'] === true,
+    acknowledgementCommentId: acknowledgement.length === 0 ? null : acknowledgement,
     bestAnswerCommentId: bestAnswer.length === 0 ? null : bestAnswer,
     updatedAt: Math.max(0, integer(value['updatedAt'])),
   };
@@ -73,11 +76,12 @@ const encodeQuestion = (value: QuestionStateRecord): JsonMap => ({
   permalink: value.permalink,
   createdAt: value.createdAt,
   openedHandled: value.openedHandled,
+  acknowledgementCommentId: value.acknowledgementCommentId ?? '',
   bestAnswerCommentId: value.bestAnswerCommentId ?? '',
   updatedAt: value.updatedAt,
 });
 
-const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'updatedAt'> => {
+const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'acknowledgementCommentId' | 'bestAnswerCommentId' | 'updatedAt'> => {
   const submissionId = input.submissionId.trim();
   const subreddit = input.subreddit.trim();
   const permalink = input.permalink.trim();
@@ -108,6 +112,7 @@ const mergeQuestion = (
     return {
       ...next,
       openedHandled,
+      acknowledgementCommentId: null,
       bestAnswerCommentId: null,
       updatedAt: next.createdAt,
     };
@@ -197,6 +202,21 @@ export class QuestionStateStore {
 
   public async markOpenedHandled(submissionId: string): Promise<QuestionStateRecord | null> {
     return await this.editQuestion(submissionId, current => ({ ...current, openedHandled: true }));
+  }
+
+  public async markAcknowledgement(
+    submissionId: string,
+    commentId: string,
+    at: number,
+  ): Promise<QuestionStateRecord | null> {
+    const id = commentId.trim();
+    if (id.length === 0) throw new Error('Question acknowledgement comment ID is required');
+    if (!Number.isSafeInteger(at) || at < 0) throw new Error('Question acknowledgement timestamp is invalid');
+    return await this.editQuestion(submissionId, current => ({
+      ...current,
+      acknowledgementCommentId: current.acknowledgementCommentId ?? id,
+      updatedAt: Math.max(current.updatedAt, at),
+    }));
   }
 
   public async selectBestAnswer(
