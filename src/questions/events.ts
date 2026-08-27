@@ -1,7 +1,7 @@
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { Store } from '../store/store.ts';
 
-export type QuestionEventKind = 'question_opened' | 'best_answer_selected';
+export type QuestionEventKind = 'question_opened' | 'best_answer_selected' | 'repeat_review_requested';
 
 export type QuestionEvent = {
   readonly sequence: number;
@@ -17,6 +17,12 @@ export type QuestionEvent = {
   readonly answerCommentId: string | null;
   readonly answerAuthor: string | null;
   readonly answerPermalink: string | null;
+  readonly matchedSubmissionId: string | null;
+  readonly matchedSubreddit: string | null;
+  readonly matchedTitle: string | null;
+  readonly matchedPermalink: string | null;
+  readonly similarity: number | null;
+  readonly reviewCommentPermalink: string | null;
   readonly at: number;
 };
 
@@ -42,10 +48,21 @@ export type BestAnswerSelectedInput = QuestionOpenedInput & {
   readonly answerPermalink: string;
 };
 
+export type RepeatReviewRequestedInput = QuestionOpenedInput & {
+  readonly matchedSubmissionId: string;
+  readonly matchedSubreddit: string;
+  readonly matchedTitle: string;
+  readonly matchedPermalink: string;
+  readonly similarity: number;
+  readonly reviewCommentPermalink: string;
+};
+
 const initial = (): JsonMap => ({ schema: 1, nextSequence: 1, events: [] });
 const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
 const integer = (value: Json | undefined): number =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : 0;
+const optionalNumber = (value: Json | undefined): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported question event store');
@@ -63,7 +80,7 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
   const submissionId = text(value['submissionId']);
   if (
     sequence < 1
-    || (kind !== 'question_opened' && kind !== 'best_answer_selected')
+    || (kind !== 'question_opened' && kind !== 'best_answer_selected' && kind !== 'repeat_review_requested')
     || key.length === 0
     || submissionId.length === 0
   ) return null;
@@ -72,7 +89,26 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
   const answerCommentId = text(value['answerCommentId']);
   const answerAuthor = text(value['answerAuthor']);
   const answerPermalink = text(value['answerPermalink']);
+  const matchedSubmissionId = text(value['matchedSubmissionId']);
+  const matchedSubreddit = text(value['matchedSubreddit']);
+  const matchedTitle = text(value['matchedTitle']);
+  const matchedPermalink = text(value['matchedPermalink']);
+  const reviewCommentPermalink = text(value['reviewCommentPermalink']);
+  const similarity = optionalNumber(value['similarity']);
+
   if (kind === 'best_answer_selected' && (answerCommentId.length === 0 || answerPermalink.length === 0)) return null;
+  if (
+    kind === 'repeat_review_requested'
+    && (
+      matchedSubmissionId.length === 0
+      || matchedSubreddit.length === 0
+      || matchedPermalink.length === 0
+      || reviewCommentPermalink.length === 0
+      || similarity === null
+      || similarity < 0
+      || similarity > 1
+    )
+  ) return null;
 
   return {
     sequence,
@@ -88,6 +124,12 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
     answerCommentId: answerCommentId.length === 0 ? null : answerCommentId,
     answerAuthor: answerAuthor.length === 0 ? null : answerAuthor,
     answerPermalink: answerPermalink.length === 0 ? null : answerPermalink,
+    matchedSubmissionId: matchedSubmissionId.length === 0 ? null : matchedSubmissionId,
+    matchedSubreddit: matchedSubreddit.length === 0 ? null : matchedSubreddit,
+    matchedTitle: matchedTitle.length === 0 ? null : matchedTitle,
+    matchedPermalink: matchedPermalink.length === 0 ? null : matchedPermalink,
+    similarity,
+    reviewCommentPermalink: reviewCommentPermalink.length === 0 ? null : reviewCommentPermalink,
     at: Math.max(0, integer(value['at'])),
   };
 };
@@ -106,6 +148,12 @@ const encode = (event: QuestionEvent): JsonMap => ({
   answerCommentId: event.answerCommentId ?? '',
   answerAuthor: event.answerAuthor ?? '',
   answerPermalink: event.answerPermalink ?? '',
+  matchedSubmissionId: event.matchedSubmissionId ?? '',
+  matchedSubreddit: event.matchedSubreddit ?? '',
+  matchedTitle: event.matchedTitle ?? '',
+  matchedPermalink: event.matchedPermalink ?? '',
+  similarity: event.similarity ?? null,
+  reviewCommentPermalink: event.reviewCommentPermalink ?? '',
   at: event.at,
 });
 
@@ -121,6 +169,15 @@ const events = (value: JsonMap): Json[] => {
   if (!Array.isArray(raw)) throw new Error('Question event list is invalid');
   return raw;
 };
+
+const noRepeatFields = {
+  matchedSubmissionId: null,
+  matchedSubreddit: null,
+  matchedTitle: null,
+  matchedPermalink: null,
+  similarity: null,
+  reviewCommentPermalink: null,
+} as const;
 
 export class QuestionEventStore {
   private readonly store: Store;
@@ -140,6 +197,7 @@ export class QuestionEventStore {
       answerCommentId: null,
       answerAuthor: null,
       answerPermalink: null,
+      ...noRepeatFields,
     });
   }
 
@@ -153,6 +211,28 @@ export class QuestionEventStore {
       kind: 'best_answer_selected',
       ...input,
       summary: input.summary?.trim() ?? '',
+      ...noRepeatFields,
+    });
+  }
+
+  public async repeatReview(input: RepeatReviewRequestedInput): Promise<QuestionEvent> {
+    validateBase(input);
+    if (input.matchedSubmissionId.trim().length === 0) throw new Error('Repeat review matched submission ID is required');
+    if (input.matchedSubreddit.trim().length === 0) throw new Error('Repeat review matched subreddit is required');
+    if (input.matchedPermalink.trim().length === 0) throw new Error('Repeat review matched permalink is required');
+    if (input.reviewCommentPermalink.trim().length === 0) throw new Error('Repeat review Mae comment permalink is required');
+    if (!Number.isFinite(input.similarity) || input.similarity < 0 || input.similarity > 1) {
+      throw new Error('Repeat review similarity is invalid');
+    }
+    return await this.append({
+      key: `repeat_review_requested:${input.submissionId}`,
+      kind: 'repeat_review_requested',
+      ...input,
+      summary: input.summary?.trim() ?? '',
+      selectionCommentId: null,
+      answerCommentId: null,
+      answerAuthor: null,
+      answerPermalink: null,
     });
   }
 
