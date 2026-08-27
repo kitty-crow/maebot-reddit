@@ -418,7 +418,7 @@ export class RedditInternalHttpServer {
 
     if (req.method === 'GET' && url.pathname === '/v1/moderation/reviews/pending') {
       const reviews = await this.moderation.pending();
-      return this.record(req, url, json({ reviews }), `reviews=${reviews.length} next=${page.next}`);
+      return this.record(req, url, json({ reviews }), `reviews=${reviews.length}`);
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/v1/moderation/reviews/')) {
