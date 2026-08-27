@@ -23,7 +23,7 @@ const syntheticQuestion = (key: string, value: JsonMap): boolean => {
 };
 
 const syntheticCommand = (key: string): boolean =>
-  /^false(?:user|wrong|valid)s[a-z0-9]+c$/iu.test(key);
+  /^(?:false(?:user|wrong|valid)s[a-z0-9]+c|thankyous[a-z0-9]+b)$/iu.test(key);
 
 const cleanPreviousSyntheticState = async (): Promise<{ questions: number; commands: number }> => {
   const store = new Store(stateFile, initialState());
@@ -68,3 +68,4 @@ console.log(
 );
 
 await import('./syntheticQuestionPipeline.ts');
+if ((process.exitCode ?? 0) === 0) await import('./syntheticQuestionThankyou.ts');
