@@ -77,9 +77,9 @@ describe('Reddit question workflow mutations', () => {
     expect(requests[3]?.[1].get('how')).toBe('yes');
     expect(requests[3]?.[1].get('sticky')).toBe('true');
 
-    expect(() => client.lock('post123')).toThrow();
-    expect(() => client.unlock('t4_message')).toThrow();
-    expect(() => client.deleteContent('t3_post123')).toThrow();
-    expect(() => client.distinguish('t3_post123')).toThrow();
+    await expect(client.lock('post123')).rejects.toThrow();
+    await expect(client.unlock('t4_message')).rejects.toThrow();
+    await expect(client.deleteContent('t3_post123')).rejects.toThrow();
+    await expect(client.distinguish('t3_post123')).rejects.toThrow();
   });
 });
