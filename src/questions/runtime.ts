@@ -23,6 +23,15 @@ export type QuestionTickResult = {
   readonly failed: number;
 };
 
+export type RepeatOverrideInput = {
+  readonly submissionId: string;
+  readonly actionId: string;
+  readonly moderator: string;
+  readonly at: number;
+};
+
+export type RepeatOverrideOutcome = 'overturned' | 'already_overturned' | 'not_found';
+
 type ModeratorSnapshot = {
   readonly until: number;
   readonly users: ReadonlySet<string>;
@@ -33,14 +42,14 @@ const submissionId = (fullname: string): string | null => {
   const match = fullname.match(/^t3_([A-Za-z0-9]+)$/u);
   return match?.[1] ?? null;
 };
-const commentId = (fullname: string | null | undefined): string | null => {
+const commentId = (fullname: string | null): string | null => {
   const match = fullname?.match(/^t1_([A-Za-z0-9]+)$/u) ?? null;
   return match?.[1] ?? null;
 };
 
 const submissionPermalink = (comment: RedditComment): string => {
-  const canonical = comment.submissionPermalink?.trim();
-  if (canonical !== undefined && canonical.length > 0) return canonical;
+  const canonical = comment.submissionPermalink?.trim() ?? null;
+  if (canonical !== null && canonical.length > 0) return canonical;
   return comment.permalink.replace(new RegExp(`/${comment.id}/?$`, 'u'), '/');
 };
 
@@ -120,9 +129,41 @@ export class RedditQuestionRuntime {
     return result;
   }
 
+  public async overturnRepeat(input: RepeatOverrideInput): Promise<RepeatOverrideOutcome> {
+    if (this.repeats === null || this.writer === null) {
+      throw new Error('Repeated question restoration is not configured');
+    }
+    const id = input.submissionId.trim();
+    const actionId = input.actionId.trim();
+    const moderator = input.moderator.trim();
+    if (id.length === 0 || actionId.length === 0 || moderator.length === 0) {
+      throw new Error('Repeated question override identity is required');
+    }
+    if (!Number.isSafeInteger(input.at) || input.at < 0) {
+      throw new Error('Repeated question override timestamp is invalid');
+    }
+
+    let repeat = await this.repeats.question(id);
+    if (repeat === null) return 'not_found';
+    if (repeat.status === 'pending') {
+      repeat = await this.requireRepeat(
+        await this.repeats.acceptFalse(id, actionId, moderator, input.at),
+        id,
+      );
+      const outcome: RepeatOverrideOutcome = repeat.falseCommandId === actionId
+        ? 'overturned'
+        : 'already_overturned';
+      await this.restoreRepeat(repeat);
+      return outcome;
+    }
+
+    await this.restoreRepeat(repeat);
+    return 'already_overturned';
+  }
+
   private async resolve(comment: RedditComment): Promise<boolean> {
     const actor = comment.author;
-    const parentId = commentId(comment.parentFullname);
+    const parentId = commentId(comment.parentFullname ?? null);
     const id = submissionId(comment.submissionFullname);
     if (actor === null || parentId === null || id === null) return false;
 
@@ -153,30 +194,26 @@ export class RedditQuestionRuntime {
   private async overrideRepeat(comment: RedditComment): Promise<boolean> {
     if (this.repeats === null || this.writer === null) return false;
     const actor = comment.author;
-    const parentId = commentId(comment.parentFullname);
+    const parentId = commentId(comment.parentFullname ?? null);
     const id = submissionId(comment.submissionFullname);
     if (actor === null || parentId === null || id === null) return false;
 
-    let repeat = await this.repeats.byDuplicateComment(parentId);
+    const repeat = await this.repeats.byDuplicateComment(parentId);
     if (repeat === null || repeat.submissionId !== id || normal(repeat.subreddit) !== normal(comment.subreddit)) return false;
 
     if (repeat.status === 'pending') {
       if (!await this.isModerator(actor, repeat.subreddit)) return false;
-      repeat = await this.requireRepeat(
-        await this.repeats.acceptFalse(
-          repeat.submissionId,
-          comment.id,
-          actor,
-          Math.max(0, Math.floor(comment.createdUtc)),
-        ),
-        repeat.submissionId,
-      );
     } else if (repeat.falseCommandId !== comment.id) {
       return false;
     }
 
-    await this.restoreRepeat(repeat);
-    return true;
+    const outcome = await this.overturnRepeat({
+      submissionId: repeat.submissionId,
+      actionId: comment.id,
+      moderator: actor,
+      at: Math.max(0, Math.floor(comment.createdUtc)),
+    });
+    return outcome !== 'not_found';
   }
 
   private async restoreRepeat(input: RepeatedQuestionRecord): Promise<void> {
