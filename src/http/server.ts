@@ -5,6 +5,7 @@ import type { ModmailReplyAttachment, ModmailReplyOutbox } from '../modmail/outb
 import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
+import type { RedditQuestionRuntime } from '../questions/runtime.ts';
 import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
@@ -20,6 +21,7 @@ export type RedditInternalHttpLogger = (line: string) => void;
 
 type ModmailReputationReader = Pick<ReputationStore, 'user'>;
 type ModmailCloser = Pick<RedditMutationClient, 'archiveModmail'>;
+type QuestionRepeatOverturner = Pick<RedditQuestionRuntime, 'overturnRepeat'>;
 
 type IncomingManagedAttachment = Omit<ModmailReplyAttachment, 'conversationId' | 'deliveryUrl'> & {
   readonly sourceId: string | null;
@@ -147,6 +149,7 @@ export class RedditInternalHttpServer {
   private modmailMedia: ModmailMediaService | null = null;
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
+  private questionActions: QuestionRepeatOverturner | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -154,6 +157,11 @@ export class RedditInternalHttpServer {
     private readonly moderation: ModerationReviewStore,
     private readonly logger: RedditInternalHttpLogger = defaultLogger,
   ) {}
+
+  public useQuestions(runtime: QuestionRepeatOverturner): void {
+    if (this.server !== null) throw new Error('Question actions must be attached before the Reddit internal API starts');
+    this.questionActions = runtime;
+  }
 
   public useModmail(
     store: ModmailStore,
@@ -320,6 +328,34 @@ export class RedditInternalHttpServer {
       }
       const page = await this.questions.after(after, limit);
       return this.record(req, url, json(page), `after=${after} events=${page.events.length} next=${page.next}`);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/questions/repeats/overturn') {
+      if (this.questionActions === null) {
+        return this.record(req, url, json({ error: 'question actions unavailable' }, 503));
+      }
+      const body = await bodyMap(req);
+      if (!isMap(body)) return this.record(req, url, json({ error: 'invalid repeat overturn body' }, 400));
+      const key = simpleKey(body['key']);
+      const source = platform(body['platform']);
+      const userId = nonEmptyText(body['userId'], 128);
+      const userName = nonEmptyText(body['userName'], 128);
+      const actionId = nonEmptyText(body['actionId'], 128);
+      const match = key?.match(/^repeat_review_requested:([A-Za-z0-9]+)$/u) ?? null;
+      const id = match?.[1] ?? null;
+      if (source !== 'discord' || userId === null || userName === null || actionId === null || id === null) {
+        return this.record(req, url, json({ error: 'invalid repeat overturn body' }, 400));
+      }
+      const outcome = await this.questionActions.overturnRepeat({
+        submissionId: id,
+        actionId,
+        moderator: `discord:${userName}:${userId}`,
+        at: Math.floor(Date.now() / 1_000),
+      });
+      if (outcome === 'not_found') {
+        return this.record(req, url, json({ error: 'repeat review not found' }, 404), `review=${key}`);
+      }
+      return this.record(req, url, json({ outcome }), `review=${key} outcome=${outcome}`);
     }
 
     if (req.method === 'GET' && url.pathname === '/v1/modmail/events') {
