@@ -217,7 +217,7 @@ describe('Reddit question runtime', () => {
           permalink: '/r/nyaonearth/comments/repeat1/question/ack1/',
         };
       },
-      distinguish: async (fullname, sticky) => {
+      distinguish: async (fullname, sticky = false) => {
         distinguished.push([fullname, sticky]);
       },
     };
