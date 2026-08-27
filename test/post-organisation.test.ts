@@ -13,11 +13,13 @@ import {
   OrganisingModerationClassifier,
   PostOrganisationRuntime,
   PostOrganisationStore,
+  REPEATED_QUESTION_FLAIR_TEXT,
   type PostOrganisationReader,
   type PostOrganisationReputation,
   type PostOrganisationWriter,
 } from '../src/posts/organisation.ts';
 import { QuestionEventStore } from '../src/questions/events.ts';
+import { RepeatedQuestionStore } from '../src/questions/repeats.ts';
 import { QuestionStateStore } from '../src/questions/state.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
 
@@ -76,8 +78,60 @@ const clean = (organisation: ModerationPostOrganisation | null): ModerationClass
   postOrganisation: organisation,
 });
 
+const basicReader = (values: RedditFlairTemplate[]): PostOrganisationReader => ({
+  postFlairTemplates: async () => values,
+});
+
+type WriterTrace = {
+  readonly flairs: Array<readonly [string, string, string]>;
+  readonly messages: Array<readonly [string, string, string]>;
+  readonly replies: Array<readonly [string, string]>;
+  readonly locks: string[];
+  readonly distinguished: Array<readonly [string, boolean]>;
+  readonly createdFlairs: string[];
+};
+
+const writer = (templates: RedditFlairTemplate[], trace: WriterTrace): PostOrganisationWriter => ({
+  setPostFlairTemplate: async (subreddit, submissionId, templateId) => {
+    trace.flairs.push([subreddit, submissionId, templateId]);
+  },
+  sendPrivateMessage: async (username, subject, body) => {
+    trace.messages.push([username, subject, body]);
+  },
+  reply: async (fullname, body) => {
+    trace.replies.push([fullname, body]);
+    const id = `mae${trace.replies.length}`;
+    const submission = fullname.replace(/^t3_/u, '');
+    return {
+      id,
+      fullname: `t1_${id}`,
+      permalink: `/r/nyaonearth/comments/${submission}/question/${id}/`,
+    };
+  },
+  lock: async fullname => {
+    trace.locks.push(fullname);
+  },
+  distinguish: async (fullname, sticky) => {
+    trace.distinguished.push([fullname, sticky]);
+  },
+  createFlairTemplate: async (_subreddit, kind, template) => {
+    expect(kind).toBe('post');
+    trace.createdFlairs.push(template.text);
+    templates.push({ ...template, id: 'repeat-flair' });
+  },
+});
+
+const emptyTrace = (): WriterTrace => ({
+  flairs: [],
+  messages: [],
+  replies: [],
+  locks: [],
+  distinguished: [],
+  createdFlairs: [],
+});
+
 describe('moderation-owned Reddit post organisation', () => {
-  test('uses one classification call, exposes live flairs, and never plans removed posts', async () => {
+  test('uses one classification call, exposes live semantic flairs, and never plans removed posts', async () => {
     const dir = await temp();
     const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
     const inventories: string[] = [];
@@ -88,6 +142,7 @@ describe('moderation-owned Reddit post organisation', () => {
           flair('question', 'Question :hana:'),
           flair('discussion', 'Discussion'),
           flair('news', 'News'),
+          flair('repeat', REPEATED_QUESTION_FLAIR_TEXT, true),
           flair('mod-announcement', 'Announcement :catgirl-moon:', true),
         ];
       },
@@ -140,11 +195,19 @@ describe('moderation-owned Reddit post organisation', () => {
     expect(await plans.pending()).toHaveLength(1);
   });
 
-  test('cosine duplicate detection is shared across both communities and links to the earlier community', async () => {
+  test('cross-community cosine repeats are flaired, commented, locked, PMed and emitted for moderator review', async () => {
     const dir = await temp();
     const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
     const questions = new QuestionStateStore(join(dir, 'questions.pb'));
     const events = new QuestionEventStore(join(dir, 'events.pb'));
+    const repeats = new RepeatedQuestionStore(join(dir, 'repeats.pb'));
+    const templates = [
+      flair('question', 'Question :hana:'),
+      flair('discussion', 'Discussion'),
+    ];
+    const reader = basicReader(templates);
+    const trace = emptyTrace();
+    const mutation = writer(templates, trace);
 
     await questions.ensureQuestion({
       submissionId: 'catold',
@@ -170,35 +233,69 @@ describe('moderation-owned Reddit post organisation', () => {
       createdAt: 200,
     });
 
-    const flairs: Array<readonly [string, string, string]> = [];
-    const messages: Array<readonly [string, string, string]> = [];
-    const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async (subreddit, submissionId, templateId) => {
-        flairs.push([subreddit, submissionId, templateId]);
-      },
-      sendPrivateMessage: async (username, subject, body) => {
-        messages.push([username, subject, body]);
-      },
-    };
     const reputation: PostOrganisationReputation = { hasContribution: async () => true };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
+    const runtime = new PostOrganisationRuntime(
+      plans,
+      reputation,
+      reader,
+      mutation,
+      questions,
+      events,
+      repeats,
+    );
 
     const result = await runtime.tick();
     expect(result).toMatchObject({ organised: 1, questions: 0, duplicates: 1, failed: 0 });
-    expect(flairs).toEqual([['nyaonearth', 'nyanew', 'question']]);
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.[0]).toBe('Alice');
-    expect(messages[0]?.[2]).toContain('r/catgirlcoin');
-    expect(messages[0]?.[2]).toContain('https://reddit.com/r/catgirlcoin/comments/catold/how_can_i_bridge_nya_to_base/');
-    expect((await events.after(0)).events).toEqual([]);
+    expect(trace.createdFlairs).toEqual([REPEATED_QUESTION_FLAIR_TEXT]);
+    expect(trace.flairs).toEqual([['nyaonearth', 'nyanew', 'repeat-flair']]);
+    expect(trace.replies).toHaveLength(1);
+    expect(trace.replies[0]?.[0]).toBe('t3_nyanew');
+    expect(trace.replies[0]?.[1]).toContain('r/catgirlcoin');
+    expect(trace.replies[0]?.[1]).toContain('`!false`');
+    expect(trace.locks).toEqual(['t3_nyanew']);
+    expect(trace.messages).toHaveLength(1);
+    expect(trace.messages[0]?.[0]).toBe('Alice');
+    expect(trace.messages[0]?.[2]).toContain('r/catgirlcoin');
+
+    const review = await repeats.question('nyanew');
+    expect(review).toMatchObject({
+      status: 'pending',
+      matchedSubmissionId: 'catold',
+      matchedSubreddit: 'catgirlcoin',
+      duplicateCommentId: 'mae1',
+      flairApplied: true,
+      locked: true,
+      pmSent: true,
+      reviewEventSent: true,
+    });
+    expect(review?.similarity ?? 0).toBeGreaterThan(0.49);
+
+    const page = await events.after(0);
+    expect(page.events).toHaveLength(1);
+    expect(page.events[0]).toMatchObject({
+      kind: 'repeat_review_requested',
+      submissionId: 'nyanew',
+      subreddit: 'nyaonearth',
+      matchedSubmissionId: 'catold',
+      matchedSubreddit: 'catgirlcoin',
+    });
     expect(await questions.question('nyanew')).toBeNull();
   });
 
-  test('unique questions emit canonical title and concise summary while ordinary posts only get organised', async () => {
+  test('unique questions get the canonical acknowledgement and event while ordinary posts only get organised', async () => {
     const dir = await temp();
     const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
     const questions = new QuestionStateStore(join(dir, 'questions.pb'));
     const events = new QuestionEventStore(join(dir, 'events.pb'));
+    const repeats = new RepeatedQuestionStore(join(dir, 'repeats.pb'));
+    const templates = [
+      flair('question', 'Question :hana:'),
+      flair('news', 'News'),
+      flair('repeat', REPEATED_QUESTION_FLAIR_TEXT, true),
+    ];
+    const reader = basicReader(templates);
+    const trace = emptyTrace();
+    const mutation = writer(templates, trace);
 
     await plans.plan({
       fullname: 't3_unique1',
@@ -227,22 +324,27 @@ describe('moderation-owned Reddit post organisation', () => {
       createdAt: 301,
     });
 
-    const flairs: Array<readonly [string, string, string]> = [];
-    const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async (subreddit, submissionId, templateId) => {
-        flairs.push([subreddit, submissionId, templateId]);
-      },
-      sendPrivateMessage: async () => undefined,
-    };
     const reputation: PostOrganisationReputation = { hasContribution: async () => true };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
+    const runtime = new PostOrganisationRuntime(
+      plans,
+      reputation,
+      reader,
+      mutation,
+      questions,
+      events,
+      repeats,
+    );
 
     const result = await runtime.tick();
     expect(result).toMatchObject({ organised: 2, questions: 1, duplicates: 0, failed: 0 });
-    expect(flairs).toEqual([
+    expect(trace.flairs).toEqual([
       ['nyaonearth', 'unique1', 'question'],
       ['catgirlcoin', 'news1', 'news'],
     ]);
+    expect(trace.replies).toHaveLength(1);
+    expect(trace.replies[0]?.[0]).toBe('t3_unique1');
+    expect(trace.replies[0]?.[1]).toContain('Please be patient');
+    expect(trace.distinguished).toEqual([['t1_mae1', true]]);
 
     const page = await events.after(0);
     expect(page.events).toHaveLength(1);
@@ -253,9 +355,7 @@ describe('moderation-owned Reddit post organisation', () => {
       title: 'Where can I find the official NYA contract address on Avalanche?',
       summary: 'The OP wants to verify the official Avalanche contract before adding the token to a wallet.',
     });
-    expect((await questions.question('unique1'))?.summary).toBe(
-      'The OP wants to verify the official Avalanche contract before adding the token to a wallet.',
-    );
+    expect((await questions.question('unique1'))?.acknowledgementCommentId).toBe('mae1');
     expect(await questions.question('news1')).toBeNull();
   });
 
@@ -264,6 +364,12 @@ describe('moderation-owned Reddit post organisation', () => {
     const plans = new PostOrganisationStore(join(dir, 'plans.pb'));
     const questions = new QuestionStateStore(join(dir, 'questions.pb'));
     const events = new QuestionEventStore(join(dir, 'events.pb'));
+    const repeats = new RepeatedQuestionStore(join(dir, 'repeats.pb'));
+    const templates = [flair('discussion', 'Discussion')];
+    const reader = basicReader(templates);
+    const trace = emptyTrace();
+    const mutation = writer(templates, trace);
+
     await plans.plan({
       fullname: 't3_wait1',
       submissionId: 'wait1',
@@ -280,17 +386,20 @@ describe('moderation-owned Reddit post organisation', () => {
 
     let persisted = false;
     const reputation: PostOrganisationReputation = { hasContribution: async () => persisted };
-    let writes = 0;
-    const writer: PostOrganisationWriter = {
-      setPostFlairTemplate: async () => { writes += 1; },
-      sendPrivateMessage: async () => undefined,
-    };
-    const runtime = new PostOrganisationRuntime(plans, reputation, writer, questions, events);
+    const runtime = new PostOrganisationRuntime(
+      plans,
+      reputation,
+      reader,
+      mutation,
+      questions,
+      events,
+      repeats,
+    );
 
     expect(await runtime.tick()).toMatchObject({ deferred: 1, organised: 0 });
-    expect(writes).toBe(0);
+    expect(trace.flairs).toHaveLength(0);
     persisted = true;
     expect(await runtime.tick()).toMatchObject({ deferred: 0, organised: 1, failed: 0 });
-    expect(writes).toBe(1);
+    expect(trace.flairs).toHaveLength(1);
   });
 });
