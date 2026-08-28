@@ -76,7 +76,19 @@ const fixture = async () => {
   return { server, base: server.address(), modmail, outbox };
 };
 
-const managed = (overrides: Record<string, unknown> = {}) => ({
+type ManagedAttachmentFixture = {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly kind: 'image' | 'video' | 'file';
+  readonly url: string;
+  readonly size: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly sourceId: string | null;
+};
+
+const managed = (overrides: Partial<ManagedAttachmentFixture> = {}): ManagedAttachmentFixture => ({
   id: 'mae-managed-file-0001',
   name: 'diagnostic.zip',
   mimeType: 'application/zip',
@@ -89,7 +101,7 @@ const managed = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const reply = async (base: string, attachment: object) => await fetch(`${base}/v1/modmail/replies`, {
+const reply = async (base: string, attachment: ManagedAttachmentFixture) => await fetch(`${base}/v1/modmail/replies`, {
   method: 'POST',
   headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
   body: JSON.stringify({
