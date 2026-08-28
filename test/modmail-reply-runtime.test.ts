@@ -42,13 +42,17 @@ const baseMessage: ModmailMessage = {
   participatingAs: 'participant_user',
 };
 
-const conversation = (messages: readonly ModmailMessage[], updated = 100): ModmailConversation => ({
+const conversation = (
+  messages: readonly ModmailMessage[],
+  updated = 100,
+  state: ModmailConversation['state'] = 'inprogress',
+): ModmailConversation => ({
   id: 'abc123',
   subreddit: 'catgirlcoin',
   subject: 'Appeal',
   participant,
   kind: 'sr_user',
-  state: 'inprogress',
+  state,
   isInternal: false,
   isAuto: false,
   lastUpdatedAt: updated,
@@ -176,5 +180,39 @@ describe('cross-platform Reddit Modmail reply runtime', () => {
     expect(second.repliesApplied).toBe(0);
     expect(writer.calls).toBe(0);
     expect((await relay.eventsAfter(0)).events).toHaveLength(1);
+  });
+
+  test('a queued predecessor reply is terminally cancelled on archive and never posts after participant revival', async () => {
+    const { outbox, reader, writer, runtime } = await fixture();
+    await outbox.queue({
+      key: 'discord:before-close',
+      conversationId: 'abc123',
+      moderator: { platform: 'discord', userId: '42', handle: 'AliceMod' },
+      text: 'This reply belongs only to the predecessor.',
+      createdAt: 150,
+    });
+
+    reader.current = conversation([baseMessage], 160, 'archived');
+    const archived = await runtime.tick();
+    expect(archived.repliesApplied).toBe(0);
+    expect(writer.calls).toBe(0);
+    expect(await outbox.pending()).toEqual([]);
+    expect(await outbox.appliedForConversation('abc123')).toEqual([]);
+
+    const revival: ModmailMessage = {
+      id: 'm2',
+      conversationId: 'abc123',
+      author: participant,
+      bodyMarkdown: 'I still need help.',
+      createdAt: 200,
+      isInternal: false,
+      participatingAs: 'participant_user',
+    };
+    reader.current = conversation([baseMessage, revival], 200, 'inprogress');
+
+    const revived = await runtime.tick();
+    expect(revived.repliesApplied).toBe(0);
+    expect(writer.calls).toBe(0);
+    expect(await outbox.pending()).toEqual([]);
   });
 });
