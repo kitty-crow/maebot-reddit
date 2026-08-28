@@ -113,9 +113,10 @@ describe('Mae-managed attachments at the Reddit boundary', () => {
       const pending = await outbox.pending();
       expect(pending).toHaveLength(1);
       const attachment = pending[0]?.attachments[0];
-      expect(attachment?.kind).toBe('file');
-      expect(attachment?.url).toContain('support.example.invalid/mae/tickets/files/');
-      expect(attachment?.deliveryUrl).toBe(attachment?.url);
+      if (attachment === undefined) throw new Error('Managed attachment was not queued');
+      expect(attachment.kind).toBe('file');
+      expect(attachment.url).toContain('support.example.invalid/mae/tickets/files/');
+      expect(attachment.deliveryUrl).toBe(attachment.url);
       expect(pending[0]?.bodyMarkdown).toContain('📎 diagnostic.zip');
       expect(pending[0]?.bodyMarkdown).toContain('support.example.invalid/mae/tickets/files/');
     } finally {
