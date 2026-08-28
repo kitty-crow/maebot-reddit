@@ -254,13 +254,9 @@ export class ModmailStore {
     return () => this.listeners.delete(listener);
   }
 
-  private publish(conversationIds: readonly string[]): void {
+  private async publish(conversationIds: readonly string[]): Promise<void> {
     if (conversationIds.length === 0) return;
-    for (const listener of this.listeners) {
-      void Promise.resolve(listener(conversationIds)).catch(error => {
-        console.error('[Reddit modmail] store listener failed:', error);
-      });
-    }
+    for (const listener of this.listeners) await listener(conversationIds);
   }
 
   public async sync(
@@ -320,7 +316,7 @@ export class ModmailStore {
       return value;
     });
     created = created.sort((a, b) => a.sequence - b.sequence);
-    this.publish([...changed]);
+    await this.publish([...changed]);
     return created;
   }
 
