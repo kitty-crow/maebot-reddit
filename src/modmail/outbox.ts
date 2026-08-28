@@ -28,11 +28,11 @@ export type ModmailReplyIntent = {
   readonly bodyMarkdown: string;
   readonly createdAt: number;
   readonly appliedAt: number | null;
+  readonly cancelledAt: number | null;
   readonly lastError: string | null;
 };
 
 const initial = (): JsonMap => ({ schema: 1, replies: {} });
-const cancelledPrefix = 'cancelled:';
 
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail outbox store');
@@ -46,7 +46,7 @@ const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const nyaId = (value: Json | undefined): string | undefined =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{20,128}$/u.test(value) ? value : undefined;
-const cancelled = (value: ModmailReplyIntent): boolean => value.lastError?.startsWith(cancelledPrefix) === true;
+const cancelled = (value: ModmailReplyIntent): boolean => value.cancelledAt !== null;
 
 const attachmentFrom = (value: Json | undefined): ModmailReplyAttachment | null => {
   if (!isMap(value)) return null;
@@ -108,6 +108,7 @@ const replyFrom = (value: Json | undefined): ModmailReplyIntent | null => {
     bodyMarkdown,
     createdAt: integerOrNull(value['createdAt']) ?? 0,
     appliedAt: integerOrNull(value['appliedAt']),
+    cancelledAt: integerOrNull(value['cancelledAt']),
     lastError: text(value['lastError']),
   };
 };
@@ -126,6 +127,7 @@ const replyJson = (value: ModmailReplyIntent): JsonMap => ({
   bodyMarkdown: value.bodyMarkdown,
   createdAt: value.createdAt,
   appliedAt: value.appliedAt,
+  cancelledAt: value.cancelledAt,
   lastError: value.lastError,
 });
 
@@ -208,6 +210,7 @@ export class ModmailReplyOutbox {
         bodyMarkdown,
         createdAt: input.createdAt ?? Math.floor(Date.now() / 1_000),
         appliedAt: null,
+        cancelledAt: null,
         lastError: null,
       };
       replies[key] = replyJson(next);
@@ -250,7 +253,11 @@ export class ModmailReplyOutbox {
     });
   }
 
-  public async cancel(key: string, reason: string): Promise<boolean> {
+  public async cancel(
+    key: string,
+    reason: string,
+    at = Math.floor(Date.now() / 1_000),
+  ): Promise<boolean> {
     let changed = false;
     await this.store.edit(current => {
       const value = root(current);
@@ -258,21 +265,25 @@ export class ModmailReplyOutbox {
       if (!isMap(replies)) throw new Error('Modmail reply map is missing');
       const existing = replyFrom(replies[key]);
       if (existing === null || existing.appliedAt !== null || cancelled(existing)) return value;
-      const detail = reason.trim().slice(0, 450) || 'reply cancelled';
-      replies[key] = replyJson({ ...existing, lastError: `${cancelledPrefix} ${detail}` });
+      const detail = reason.trim().slice(0, 500) || 'reply cancelled';
+      replies[key] = replyJson({ ...existing, cancelledAt: at, lastError: detail });
       changed = true;
       return value;
     });
     return changed;
   }
 
-  public async cancelPendingForConversation(conversationId: string, reason: string): Promise<number> {
+  public async cancelPendingForConversation(
+    conversationId: string,
+    reason: string,
+    at = Math.floor(Date.now() / 1_000),
+  ): Promise<number> {
     let changed = 0;
     await this.store.edit(current => {
       const value = root(current);
       const replies = value['replies'];
       if (!isMap(replies)) throw new Error('Modmail reply map is missing');
-      const detail = reason.trim().slice(0, 450) || 'conversation unavailable';
+      const detail = reason.trim().slice(0, 500) || 'conversation unavailable';
       for (const [key, raw] of Object.entries(replies)) {
         const existing = replyFrom(raw);
         if (
@@ -281,7 +292,7 @@ export class ModmailReplyOutbox {
           || existing.appliedAt !== null
           || cancelled(existing)
         ) continue;
-        replies[key] = replyJson({ ...existing, lastError: `${cancelledPrefix} ${detail}` });
+        replies[key] = replyJson({ ...existing, cancelledAt: at, lastError: detail });
         changed += 1;
       }
       return value;
