@@ -32,6 +32,7 @@ export type ModmailReplyIntent = {
 };
 
 const initial = (): JsonMap => ({ schema: 1, replies: {} });
+const cancelledPrefix = 'cancelled:';
 
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported modmail outbox store');
@@ -45,6 +46,7 @@ const integerOrNull = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const nyaId = (value: Json | undefined): string | undefined =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{20,128}$/u.test(value) ? value : undefined;
+const cancelled = (value: ModmailReplyIntent): boolean => value.lastError?.startsWith(cancelledPrefix) === true;
 
 const attachmentFrom = (value: Json | undefined): ModmailReplyAttachment | null => {
   if (!isMap(value)) return null;
@@ -227,7 +229,7 @@ export class ModmailReplyOutbox {
   }
 
   public async pending(): Promise<readonly ModmailReplyIntent[]> {
-    return (await this.replies()).filter(reply => reply.appliedAt === null);
+    return (await this.replies()).filter(reply => reply.appliedAt === null && !cancelled(reply));
   }
 
   public async appliedForConversation(conversationId: string): Promise<readonly ModmailReplyIntent[]> {
@@ -241,9 +243,50 @@ export class ModmailReplyOutbox {
       const replies = value['replies'];
       if (!isMap(replies)) throw new Error('Modmail reply map is missing');
       const existing = replyFrom(replies[key]);
-      if (existing !== null) replies[key] = replyJson({ ...existing, appliedAt: at, lastError: null });
+      if (existing !== null && !cancelled(existing)) {
+        replies[key] = replyJson({ ...existing, appliedAt: at, lastError: null });
+      }
       return value;
     });
+  }
+
+  public async cancel(key: string, reason: string): Promise<boolean> {
+    let changed = false;
+    await this.store.edit(current => {
+      const value = root(current);
+      const replies = value['replies'];
+      if (!isMap(replies)) throw new Error('Modmail reply map is missing');
+      const existing = replyFrom(replies[key]);
+      if (existing === null || existing.appliedAt !== null || cancelled(existing)) return value;
+      const detail = reason.trim().slice(0, 450) || 'reply cancelled';
+      replies[key] = replyJson({ ...existing, lastError: `${cancelledPrefix} ${detail}` });
+      changed = true;
+      return value;
+    });
+    return changed;
+  }
+
+  public async cancelPendingForConversation(conversationId: string, reason: string): Promise<number> {
+    let changed = 0;
+    await this.store.edit(current => {
+      const value = root(current);
+      const replies = value['replies'];
+      if (!isMap(replies)) throw new Error('Modmail reply map is missing');
+      const detail = reason.trim().slice(0, 450) || 'conversation unavailable';
+      for (const [key, raw] of Object.entries(replies)) {
+        const existing = replyFrom(raw);
+        if (
+          existing === null
+          || existing.conversationId !== conversationId
+          || existing.appliedAt !== null
+          || cancelled(existing)
+        ) continue;
+        replies[key] = replyJson({ ...existing, lastError: `${cancelledPrefix} ${detail}` });
+        changed += 1;
+      }
+      return value;
+    });
+    return changed;
   }
 
   public async markFailed(key: string, error: string): Promise<void> {
@@ -252,7 +295,9 @@ export class ModmailReplyOutbox {
       const replies = value['replies'];
       if (!isMap(replies)) throw new Error('Modmail reply map is missing');
       const existing = replyFrom(replies[key]);
-      if (existing !== null) replies[key] = replyJson({ ...existing, lastError: error.slice(0, 500) });
+      if (existing !== null && !cancelled(existing)) {
+        replies[key] = replyJson({ ...existing, lastError: error.slice(0, 500) });
+      }
       return value;
     });
   }
