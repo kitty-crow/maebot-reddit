@@ -63,6 +63,7 @@ test('Reddit ticket presentation emits stable actor provenance for native and re
     bodyMarkdown: relayBody,
     createdAt: 200,
     appliedAt: 210,
+    cancelledAt: null,
     lastError: null,
   };
 
