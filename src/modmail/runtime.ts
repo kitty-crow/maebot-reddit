@@ -40,6 +40,18 @@ export class ModmailRuntime {
     private readonly outbox: ModmailReplyOutbox | null = null,
   ) {
     this.subreddits = communities(subreddits);
+    if (this.outbox !== null) {
+      this.store.subscribe(async conversationIds => {
+        for (const id of conversationIds) {
+          const conversation = await this.store.conversation(id);
+          if (conversation?.state !== 'archived') continue;
+          const count = await this.outbox?.cancelPendingForConversation(id, 'conversation archived before delivery') ?? 0;
+          if (count > 0) {
+            console.warn(`[Reddit modmail] cancelled ${count} queued repl${count === 1 ? 'y' : 'ies'} for archived conversation ${id}.`);
+          }
+        }
+      });
+    }
   }
 
   private async applyReplies(): Promise<{ readonly applied: number; readonly failed: number }> {
@@ -49,6 +61,13 @@ export class ModmailRuntime {
     for (const reply of await this.outbox.pending()) {
       try {
         const before = await this.reader.modmailConversation(reply.conversationId, false);
+        if (before.state === 'archived') {
+          if (await this.outbox.cancel(reply.key, 'conversation archived before delivery')) {
+            console.warn(`[Reddit modmail] outbound reply ${reply.key} cancelled because conversation ${reply.conversationId} is archived.`);
+          }
+          failed += 1;
+          continue;
+        }
         const alreadyPresent = before.messages.some(message =>
           message.bodyMarkdown.trim() === reply.bodyMarkdown
           && message.createdAt >= Math.max(0, reply.createdAt - 60)
