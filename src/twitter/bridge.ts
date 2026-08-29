@@ -72,18 +72,12 @@ export class TwitterRedditBridge {
     for (const candidate of await this.state.twitterReviewCandidates()) {
       inspected += 1;
       try {
-        if (candidate.reviewDecision === 'approve') {
-          const pins = await this.applyPins(candidate);
-          failed += pins.failed;
-          if (pins.complete) completed += 1;
-          continue;
-        }
-
         const canonical = await this.twitter.item(candidate.tweetId);
         if (canonical === null) {
           failed += 1;
           continue;
         }
+
         const synced = await this.state.syncTwitterCanonical(
           candidate.tweetId,
           canonical.tweet.author.handle,
@@ -92,12 +86,27 @@ export class TwitterRedditBridge {
         );
         if (synced === null || canonical.worthy !== true) continue;
 
-        const review = await this.reviews.twitter(canonical.tweet.author.handle, canonical.tweet.id);
-        if (review === null || review.decision === null) continue;
-        await this.state.attachTwitterReview(candidate.tweetId, review.key);
-        const decided = await this.state.decideTwitterReview(candidate.tweetId, review.decision.choice);
-        if (decided === null) continue;
-        if (review.decision.choice === 'reject') {
+        let decided = synced;
+        if (decided.reviewDecision === null) {
+          const review = await this.reviews.twitter(canonical.tweet.author.handle, canonical.tweet.id);
+          if (review === null || review.decision === null) continue;
+          await this.state.attachTwitterReview(candidate.tweetId, review.key);
+          const saved = await this.state.decideTwitterReview(candidate.tweetId, review.decision.choice);
+          if (saved === null) continue;
+          decided = saved;
+        }
+
+        if (decided.lifecycle !== 'complete') {
+          await this.deliver(canonical);
+          const delivered = await this.state.twitter(candidate.tweetId);
+          if (delivered === null || delivered.lifecycle !== 'complete') {
+            failed += 1;
+            continue;
+          }
+          decided = delivered;
+        }
+
+        if (decided.reviewDecision === 'reject') {
           completed += 1;
           continue;
         }
