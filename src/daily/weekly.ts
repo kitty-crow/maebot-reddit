@@ -3,7 +3,7 @@ import { RedditReadClient } from '../reddit/client.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { DailyReviewApi, CanonicalWeeklyReview } from '../review/client.ts';
 import { RedditStateStore } from '../store/state.ts';
-import { MAJOR_ANNOUNCEMENT_FLAIR } from '../twitter/flair.ts';
+import { MINOR_ANNOUNCEMENT_FLAIR } from '../twitter/flair.ts';
 
 export type WeeklyRedditPost = {
   readonly postId: string;
@@ -33,7 +33,7 @@ const actionKey = (review: CanonicalWeeklyReview, target: 'primary' | 'legacy'):
 
 const marker = (review: CanonicalWeeklyReview): string => `<!-- mae-weekly-daily:${review.key} -->`;
 const title = (review: CanonicalWeeklyReview): string =>
-  `Nya Community Weekly Daily Task · ${review.weekStart.replaceAll('-', '.')}`;
+  `${review.weekStart.replaceAll('-', '.')} weekly update`;
 
 const body = (review: CanonicalWeeklyReview): string => `${review.markdown}\n\n${marker(review)}`;
 
@@ -206,12 +206,12 @@ export class LiveWeeklyRedditPublisher implements WeeklyRedditPublisher {
     if (cached !== undefined) return cached;
 
     const matches = (await this.read.postFlairTemplates(subreddit))
-      .filter(template => template.text === MAJOR_ANNOUNCEMENT_FLAIR);
+      .filter(template => template.text === MINOR_ANNOUNCEMENT_FLAIR);
     if (matches.length !== 1) {
-      throw new Error(`Expected exactly one post flair ${JSON.stringify(MAJOR_ANNOUNCEMENT_FLAIR)} in r/${subreddit}, found ${matches.length}`);
+      throw new Error(`Expected exactly one post flair ${JSON.stringify(MINOR_ANNOUNCEMENT_FLAIR)} in r/${subreddit}, found ${matches.length}`);
     }
     const match = matches[0];
-    if (match === undefined) throw new Error(`Resolved post flair ${JSON.stringify(MAJOR_ANNOUNCEMENT_FLAIR)} disappeared in r/${subreddit}`);
+    if (match === undefined) throw new Error(`Resolved post flair ${JSON.stringify(MINOR_ANNOUNCEMENT_FLAIR)} disappeared in r/${subreddit}`);
     this.flairIds.set(key, match.id);
     return match.id;
   }
