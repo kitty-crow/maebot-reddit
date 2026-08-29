@@ -367,11 +367,14 @@ export class RedditStateStore {
 
   public async twitterReviewCandidates(): Promise<readonly TwitterFanout[]> {
     return await this.twitterWhere(item =>
-      item.lifecycle === 'complete'
-      && item.worthy !== false
+      item.worthy !== false
       && (
         item.reviewDecision === null
-        || (item.reviewDecision === 'approve' && (!item.primaryPinApplied || !item.legacyPinApplied))
+        || (
+          item.lifecycle === 'complete'
+          && item.reviewDecision === 'approve'
+          && (!item.primaryPinApplied || !item.legacyPinApplied)
+        )
       ));
   }
 
@@ -436,50 +439,83 @@ export class RedditStateStore {
     return await this.editTwitter(tweetId, current => ({ ...current, reviewKey }));
   }
 
-  public async decideTwitterReview(tweetId: string, decision: 'approve' | 'reject'): Promise<TwitterFanout | null> {
-    return await this.editTwitter(tweetId, current => current.reviewDecision === null
-      ? { ...current, reviewDecision: decision }
-      : current);
-  }
-
-  public async markTwitterPin(tweetId: string, target: 'primary' | 'legacy'): Promise<TwitterFanout | null> {
-    return await this.editTwitter(tweetId, current => target === 'primary'
-      ? { ...current, primaryPinApplied: true }
-      : { ...current, legacyPinApplied: true });
-  }
-
-  public async acknowledgeTwitter(tweetId: string): Promise<TwitterFanout | null> {
-    return await this.editTwitter(tweetId, current => current.lifecycle === 'complete'
-      ? { ...current, acknowledged: true }
-      : current);
-  }
-
-  public async setQuestion(record: QuestionRecord): Promise<void> {
-    await this.store.edit(current => {
-      const value = root(current);
-      child(value, 'questions')[record.submissionId] = {
-        submissionId: record.submissionId,
-        title: record.title,
-        markerCommentId: record.markerCommentId ?? '',
-        bestAnswerCommentId: record.bestAnswerCommentId ?? '',
-        createdAt: record.createdAt,
-        updatedAt: record.updatedAt,
-      };
-      return value;
+  public async decideTwitterReview(
+    tweetId: string,
+    decision: 'approve' | 'reject',
+  ): Promise<TwitterFanout | null> {
+    return await this.editTwitter(tweetId, current => {
+      if (current.reviewDecision !== null) return current;
+      return { ...current, reviewDecision: decision };
     });
   }
 
-  private async twitterWhere(predicate: (item: TwitterFanout) => boolean): Promise<readonly TwitterFanout[]> {
+  public async markTwitterPin(tweetId: string, target: 'primary' | 'legacy'): Promise<TwitterFanout | null> {
+    return await this.editTwitter(tweetId, current =>
+      target === 'primary'
+        ? { ...current, primaryPinApplied: true }
+        : { ...current, legacyPinApplied: true });
+  }
+
+  public async acknowledgeTwitter(tweetId: string): Promise<TwitterFanout | null> {
+    return await this.editTwitter(tweetId, current => ({ ...current, acknowledged: true }));
+  }
+
+  public async question(submissionId: string): Promise<QuestionRecord | null> {
+    const value = root(await this.store.read());
+    return this.questionRecord(child(value, 'questions')[submissionId]);
+  }
+
+  public async saveQuestion(input: QuestionRecord): Promise<QuestionRecord> {
+    await this.store.edit(current => {
+      const value = root(current);
+      child(value, 'questions')[input.submissionId] = {
+        submissionId: input.submissionId,
+        title: input.title,
+        markerCommentId: input.markerCommentId ?? '',
+        bestAnswerCommentId: input.bestAnswerCommentId ?? '',
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      };
+      return value;
+    });
+    return input;
+  }
+
+  public async questionRecords(): Promise<readonly QuestionRecord[]> {
+    const value = root(await this.store.read());
+    return Object.values(child(value, 'questions'))
+      .map(item => this.questionRecord(item))
+      .filter((item): item is QuestionRecord => item !== null)
+      .sort((a, b) => a.createdAt - b.createdAt || a.submissionId.localeCompare(b.submissionId));
+  }
+
+  private questionRecord(value: Json | undefined): QuestionRecord | null {
+    if (!isMap(value)) return null;
+    const submissionId = text(value['submissionId']);
+    if (submissionId.length === 0) return null;
+    const markerCommentId = text(value['markerCommentId']);
+    const bestAnswerCommentId = text(value['bestAnswerCommentId']);
+    return {
+      submissionId,
+      title: text(value['title']),
+      markerCommentId: markerCommentId.length === 0 ? null : markerCommentId,
+      bestAnswerCommentId: bestAnswerCommentId.length === 0 ? null : bestAnswerCommentId,
+      createdAt: number(value['createdAt']),
+      updatedAt: number(value['updatedAt']),
+    };
+  }
+
+  private async twitterWhere(predicate: (value: TwitterFanout) => boolean): Promise<readonly TwitterFanout[]> {
     const value = root(await this.store.read());
     return Object.values(child(value, 'twitter'))
-      .map(fanout)
+      .map(item => fanout(item))
       .filter((item): item is TwitterFanout => item !== null && predicate(item))
       .sort((a, b) => a.createdAt - b.createdAt || a.tweetId.localeCompare(b.tweetId));
   }
 
   private async editTwitter(
     tweetId: string,
-    update: (current: TwitterFanout) => TwitterFanout,
+    edit: (current: TwitterFanout) => TwitterFanout,
   ): Promise<TwitterFanout | null> {
     let out: TwitterFanout | null = null;
     await this.store.edit(current => {
@@ -487,7 +523,7 @@ export class RedditStateStore {
       const twitter = child(value, 'twitter');
       const existing = fanout(twitter[tweetId]);
       if (existing === null) return value;
-      const next = update(existing);
+      const next = edit(existing);
       twitter[tweetId] = fanoutJson(next);
       out = next;
       return value;
