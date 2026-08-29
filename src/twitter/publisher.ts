@@ -31,7 +31,7 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
   }
 
   public async publishPrimary(tweet: Tweet, worthy: boolean | null): Promise<RedditPrimaryPost> {
-    const rendered = renderTweetForReddit(tweet);
+    const rendered = renderTweetForReddit(tweet, worthy === true);
     const flairId = await this.flairId(this.cfg.primarySubreddit, worthy);
     const created = await this.writer(worthy).submitSelf(
       this.cfg.primarySubreddit,
@@ -62,14 +62,14 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
     }
 
     const flairId = await this.flairId(this.cfg.sourceSubreddit, worthy);
-    const title = renderTweetForReddit(tweet).title;
+    const title = renderTweetForReddit(tweet, worthy === true).title;
     const writer = this.writer(worthy);
     try {
       const created = await writer.crosspost(this.cfg.sourceSubreddit, primaryPostId, title, flairId);
       return { postId: created.id, mode: 'crosspost' };
     } catch (crosspostError) {
       console.error(`[Reddit Twitter publisher] native crosspost failed; using self-post fallback: ${String(crosspostError)}`);
-      const fallback = renderLegacyFallback(tweet, primaryUrl);
+      const fallback = renderLegacyFallback(tweet, primaryUrl, worthy === true);
       const created = await writer.submitSelf(this.cfg.sourceSubreddit, fallback.title, fallback.body, flairId);
       return { postId: created.id, mode: 'fallback' };
     }
