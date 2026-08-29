@@ -29,7 +29,12 @@ export const redditTweetTitle = (tweet: Tweet, maxChars = 280): string => {
   return clip(text.length === 0 ? fallback : text, Math.max(20, maxChars));
 };
 
-export const renderTweetForReddit = (tweet: Tweet): RedditTweetRender => {
+export const redditMajorUpdateTitle = (tweet: Tweet): string => {
+  const stamp = new Date(tweet.at * 1_000).toISOString().slice(0, 10).replaceAll('-', '.');
+  return `${stamp} Major update`;
+};
+
+export const renderTweetForReddit = (tweet: Tweet, majorUpdate = false): RedditTweetRender => {
   const sections: string[] = [];
   const text = tweet.text.trim();
   if (text.length > 0) sections.push(text);
@@ -57,13 +62,17 @@ export const renderTweetForReddit = (tweet: Tweet): RedditTweetRender => {
 
   sections.push(`Original tweet: ${tweet.url}`);
   return {
-    title: redditTweetTitle(tweet),
+    title: majorUpdate ? redditMajorUpdateTitle(tweet) : redditTweetTitle(tweet),
     body: sections.join('\n\n'),
   };
 };
 
-export const renderLegacyFallback = (tweet: Tweet, primaryRedditUrl: string): RedditTweetRender => {
-  const rendered = renderTweetForReddit(tweet);
+export const renderLegacyFallback = (
+  tweet: Tweet,
+  primaryRedditUrl: string,
+  majorUpdate = false,
+): RedditTweetRender => {
+  const rendered = renderTweetForReddit(tweet, majorUpdate);
   return {
     title: rendered.title,
     body: `${rendered.body}\n\nPrimary Reddit post: ${primaryRedditUrl}`,
