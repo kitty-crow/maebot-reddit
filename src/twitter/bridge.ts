@@ -130,9 +130,12 @@ export class TwitterRedditBridge {
       item.reviewKey,
     )) ?? fanout;
 
+    if (item.worthy === true && fanout.reviewDecision === null) return false;
+    const publishAsMajor = item.worthy === true && fanout.reviewDecision === 'approve';
+
     if (fanout.primary.state !== 'applied') {
       try {
-        const primary = await this.publisher.publishPrimary(item.tweet, item.worthy);
+        const primary = await this.publisher.publishPrimary(item.tweet, publishAsMajor);
         if (primary.postId.length === 0) throw new Error('Primary Reddit publisher returned an empty post ID');
         fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'primary', primary.postId, 'primary', this.now())) ?? fanout;
       } catch (error) {
@@ -149,7 +152,7 @@ export class TwitterRedditBridge {
         fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', primaryPostId, 'primary', this.now())) ?? fanout;
       } else {
         try {
-          const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId, item.worthy);
+          const legacy = await this.publisher.publishLegacy(item.tweet, primaryPostId, publishAsMajor);
           if (legacy.postId.length === 0) throw new Error('Legacy Reddit publisher returned an empty post ID');
           fanout = (await this.state.markTwitterDelivery(item.tweet.id, 'legacy', legacy.postId, legacy.mode, this.now())) ?? fanout;
         } catch (error) {
