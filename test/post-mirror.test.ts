@@ -11,7 +11,7 @@ import {
 } from '../src/mirror/service.ts';
 import { PostMirrorStore } from '../src/mirror/store.ts';
 import type { RedditCreatedPost } from '../src/reddit/mutate.ts';
-import type { RedditPost } from '../src/reddit/types.ts';
+import type { RedditFlairTemplate, RedditPost } from '../src/reddit/types.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -27,6 +27,8 @@ const post = (
   createdUtc: number,
   crosspostParent: string | null = null,
   selfText = '',
+  flairTemplateId: string | null = null,
+  flairText: string | null = null,
 ): RedditPost => ({
   id,
   fullname: `t3_${id}`,
@@ -37,8 +39,8 @@ const post = (
   createdUtc,
   selfText,
   url: `https://www.reddit.com/r/${subreddit}/comments/${id}/post_${id}/`,
-  flairTemplateId: null,
-  flairText: null,
+  flairTemplateId,
+  flairText,
   stickied: false,
   locked: false,
   over18: false,
@@ -47,31 +49,65 @@ const post = (
   mediaUrls: [],
 });
 
+const flair = (id: string, text: string): RedditFlairTemplate => ({
+  id,
+  text,
+  cssClass: null,
+  textColour: null,
+  backgroundColour: null,
+  modOnly: false,
+  textEditable: false,
+  allowableContent: null,
+  maxEmojis: null,
+});
+
 class Reader implements MirrorReader {
   public nya: readonly RedditPost[] = [];
   public catgirl: readonly RedditPost[] = [];
+  public nyaFlairs: readonly RedditFlairTemplate[] = [];
+  public catgirlFlairs: readonly RedditFlairTemplate[] = [];
 
   public async newPosts(subreddit: string): Promise<readonly RedditPost[]> {
     return subreddit === 'nyaonearth' ? this.nya : this.catgirl;
   }
+
+  public async postFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]> {
+    return subreddit === 'nyaonearth' ? this.nyaFlairs : this.catgirlFlairs;
+  }
 }
 
-type CrosspostCall = { target: string; source: string; title: string; created: RedditCreatedPost };
+type CrosspostCall = {
+  target: string;
+  source: string;
+  title: string;
+  flairTemplateId: string | null;
+  created: RedditCreatedPost;
+};
 
 class Writer implements MirrorWriter {
   public readonly crossposts: CrosspostCall[] = [];
-  public readonly fallbacks: { target: string; title: string; body: string }[] = [];
+  public readonly fallbacks: { target: string; title: string; body: string; flairTemplateId: string | null }[] = [];
 
-  public async crosspost(target: string, source: string, title: string): Promise<RedditCreatedPost> {
+  public async crosspost(
+    target: string,
+    source: string,
+    title: string,
+    flairTemplateId: string | null,
+  ): Promise<RedditCreatedPost> {
     const n = this.crossposts.length + 1;
     const created = { id: `mirror${n}`, fullname: `t3_mirror${n}`, url: '' };
-    this.crossposts.push({ target, source, title, created });
+    this.crossposts.push({ target, source, title, flairTemplateId, created });
     return created;
   }
 
-  public async submitSelf(target: string, title: string, body: string): Promise<RedditCreatedPost> {
+  public async submitSelf(
+    target: string,
+    title: string,
+    body: string,
+    flairTemplateId: string | null,
+  ): Promise<RedditCreatedPost> {
     const n = this.fallbacks.length + 1;
-    this.fallbacks.push({ target, title, body });
+    this.fallbacks.push({ target, title, body, flairTemplateId });
     return { id: `fallback${n}`, fullname: `t3_fallback${n}`, url: '' };
   }
 }
@@ -201,5 +237,32 @@ describe('bidirectional subreddit post mirror', () => {
     gate.states.set(rejected.fullname, 'deny');
     expect((await fixture.service.tick(4_000)).discovered).toBe(0);
     expect(fixture.writer.crossposts.map(call => call.source)).toEqual(['t3_accepted']);
+  });
+
+  test('mirrors semantic post flair with the target subreddit UUID rather than the source UUID', async () => {
+    const fixture = await mirror();
+    fixture.reader.nya = [post('nyaonearth', 'old-nya', 100)];
+    fixture.reader.catgirl = [post('catgirlcoin', 'old-cat', 100)];
+    fixture.reader.nyaFlairs = [flair('nya-announcement', 'Announcement :catgirl-moon:')];
+    fixture.reader.catgirlFlairs = [flair('cat-announcement', 'Announcement :catgirl-moon:')];
+    await fixture.service.tick(1_000);
+
+    fixture.reader.catgirl = [
+      post(
+        'catgirlcoin',
+        'flair-source',
+        200,
+        null,
+        '',
+        'cat-announcement',
+        'Announcement :catgirl-moon:',
+      ),
+      ...fixture.reader.catgirl,
+    ];
+
+    expect((await fixture.service.tick(2_000)).completed).toBe(1);
+    expect(fixture.writer.crossposts).toHaveLength(1);
+    expect(fixture.writer.crossposts[0]?.flairTemplateId).toBe('nya-announcement');
+    expect(fixture.writer.crossposts[0]?.flairTemplateId).not.toBe('cat-announcement');
   });
 });
