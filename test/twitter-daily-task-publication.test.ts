@@ -150,8 +150,8 @@ test('approved worthy tweet publishes once as a major Reddit update', async () =
   const bridge = new TwitterRedditBridge(twitter, await state(), reviews, publisher, () => 200);
 
   await bridge.deliverPending();
-  await bridge.syncReviews();
-  expect(await bridge.deliverPending()).toEqual({ inspected: 1, completed: 1, failed: 0 });
+  expect(await bridge.syncReviews()).toEqual({ inspected: 1, completed: 1, failed: 0 });
+  expect(await bridge.deliverPending()).toEqual({ inspected: 0, completed: 0, failed: 0 });
   expect(publisher.primaryMajor).toEqual([true]);
   expect(publisher.legacyMajor).toEqual([true]);
   expect(twitter.current.redditDone).toBe(true);
@@ -165,8 +165,8 @@ test('rejected worthy tweet still publishes normally without major announcement 
   const bridge = new TwitterRedditBridge(twitter, await state(), reviews, publisher, () => 200);
 
   await bridge.deliverPending();
-  await bridge.syncReviews();
-  expect(await bridge.deliverPending()).toEqual({ inspected: 1, completed: 1, failed: 0 });
+  expect(await bridge.syncReviews()).toEqual({ inspected: 1, completed: 1, failed: 0 });
+  expect(await bridge.deliverPending()).toEqual({ inspected: 0, completed: 0, failed: 0 });
   expect(publisher.primaryMajor).toEqual([false]);
   expect(publisher.legacyMajor).toEqual([false]);
   expect(twitter.current.redditDone).toBe(true);
