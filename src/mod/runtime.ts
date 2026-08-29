@@ -376,11 +376,18 @@ export class RedditModerationRuntime {
       throw new Error(`Reddit moderation requires a bootstrapped reputation store at ${this.cfg.stateFile}`);
     }
     const items = await this.items();
+    const latestRecordedPost = new Map<string, number>();
+    for (const item of items) {
+      if (item.kind !== 'post' || !await this.reputation.hasContribution(item.fullname)) continue;
+      const subreddit = item.moderation.subreddit.toLowerCase();
+      latestRecordedPost.set(subreddit, Math.max(latestRecordedPost.get(subreddit) ?? 0, item.createdAt));
+    }
 
     let audited = 0;
     let exempt = 0;
     let failed = 0;
     for (const item of items) {
+      if (item.kind === 'post' && item.createdAt < (latestRecordedPost.get(item.moderation.subreddit.toLowerCase()) ?? 0)) continue;
       try {
         const result = await this.process(item);
         if (result === 'audited') audited += 1;
