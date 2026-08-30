@@ -116,7 +116,11 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
       const downloaded = await downloadTwitterMedia(urls[0] ?? '');
       let videoPosterUrl: string | null = null;
       if (downloaded.contentType === 'video/mp4') {
-        const poster = await downloadTwitterMedia(tweet.author.avatar);
+        const avatar = tweet.author.avatar;
+        if (avatar === null || avatar.length === 0) {
+          throw new Error(`Tweet ${tweet.id} author avatar is unavailable for Reddit video poster upload`);
+        }
+        const poster = await downloadTwitterMedia(avatar);
         if (!poster.contentType.startsWith('image/')) {
           throw new Error(`Tweet ${tweet.id} author avatar is not an image`);
         }
