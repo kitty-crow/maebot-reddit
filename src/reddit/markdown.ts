@@ -1,4 +1,4 @@
-const markdownMeta = new Set(['*', '_', '~', '|', '[', ']', '#', '>', '+', '-']);
+const markdownMeta = new Set(['*', '_', '~', '|', '[', ']', '#', '>', '<', '+', '-', '^']);
 
 const faceChars = /[ωΩツノへ▽∀Дд◕｡╥﹏‿ᵔᵕづಠಥ益눈ᕙᗒᗕﾉﾟ∇✧☆♥•￣³]/u;
 const asciiFace = /(?:[:;=xX8][\-^']?[)(/\\DPpOo]|[)(/\\DPpOo][\-^']?[:;=xX8])/u;
