@@ -13,12 +13,9 @@ import {
   redditAnnouncementAuth,
   twitterRedditPublishingIdentity,
 } from './publishingAuth.ts';
-import { renderLegacyFallback, renderTweetForReddit } from './render.ts';
+import { renderTweetForReddit } from './render.ts';
 import { planSticky } from './sticky.ts';
 import type { RedditLegacyPost, RedditPrimaryPost, TwitterRedditPublisher } from './bridge.ts';
-
-const redditPostUrl = (subreddit: string, postId: string): string =>
-  `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
 
 export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
   private readonly read: RedditReadClient;
@@ -50,7 +47,6 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
     worthy: boolean | null,
   ): Promise<RedditLegacyPost> {
     const primaryFullname = primaryPostId.startsWith('t3_') ? primaryPostId : `t3_${primaryPostId}`;
-    const primaryUrl = redditPostUrl(this.cfg.primarySubreddit, primaryPostId);
     const expectedTitle = renderTweetForReddit(tweet, worthy === true).title;
     const existing = (await this.read.newPosts(this.cfg.sourceSubreddit, 100)).find(post =>
       post.crosspostParent === primaryFullname
@@ -65,23 +61,8 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
     }
 
     const flairId = await this.flairId(this.cfg.sourceSubreddit, worthy);
-    const writer = this.writer(worthy);
-    try {
-      const created = await writer.crosspost(this.cfg.sourceSubreddit, primaryPostId, expectedTitle, flairId);
-      return { postId: created.id, mode: 'crosspost' };
-    } catch (crosspostError) {
-      console.error(`[Reddit Twitter publisher] native crosspost failed; using native fallback: ${String(crosspostError)}`);
-      const fallback = renderLegacyFallback(tweet, primaryUrl, worthy === true);
-      const postId = await this.publishTweet(
-        this.cfg.sourceSubreddit,
-        tweet,
-        worthy,
-        flairId,
-        fallback.title,
-        fallback.body,
-      );
-      return { postId, mode: 'fallback' };
-    }
+    const postId = await this.publishTweet(this.cfg.sourceSubreddit, tweet, worthy, flairId);
+    return { postId, mode: 'fallback' };
   }
 
   public async pin(target: 'primary' | 'legacy', postId: string): Promise<void> {
