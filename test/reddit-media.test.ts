@@ -15,13 +15,25 @@ const token = (value = 'token'): Response => new Response(JSON.stringify({ acces
   headers: { 'content-type': 'application/json' },
 });
 
-const lease = (): Response => new Response(JSON.stringify({
+const lease = (assetId: string | null = null, key = 'test/media.png'): Response => new Response(JSON.stringify({
   args: {
     action: '//reddit-uploaded-media.s3-accelerate.amazonaws.com',
     fields: [
-      { name: 'key', value: 'test/media.png' },
+      { name: 'key', value: key },
       { name: 'acl', value: 'public-read' },
     ],
+  },
+  ...(assetId === null ? {} : { asset: { asset_id: assetId } }),
+}), { status: 200, headers: { 'content-type': 'application/json' } });
+
+const created = (id = 'abc123'): Response => new Response(JSON.stringify({
+  json: {
+    errors: [],
+    data: {
+      id,
+      name: `t3_${id}`,
+      url: `https://reddit.com/comments/${id}`,
+    },
   },
 }), { status: 200, headers: { 'content-type': 'application/json' } });
 
@@ -55,6 +67,66 @@ test('Reddit media client obtains a lease and uploads bytes to the returned HTTP
   expect(await client.uploadMedia('media.png', 'image/png', new Uint8Array([1, 2, 3])))
     .toBe('https://reddit-uploaded-media.s3-accelerate.amazonaws.com/test/media.png');
   expect(calls).toHaveLength(3);
+});
+
+test('Reddit media client submits uploaded video as a native Reddit video post', async () => {
+  const fetcher: RedditMediaFetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/api/v1/access_token')) return token();
+    if (url.includes('/api/media/asset.json')) return lease(null, 'test/video.mp4');
+    if (url === 'https://reddit-uploaded-media.s3-accelerate.amazonaws.com') return new Response('', { status: 204 });
+    expect(url).toBe('https://oauth.reddit.com/api/submit');
+    expect(init?.body).toBeInstanceOf(URLSearchParams);
+    const form = init?.body as URLSearchParams;
+    expect(form.get('kind')).toBe('video');
+    expect(form.get('url')).toBe('https://reddit-uploaded-media.s3-accelerate.amazonaws.com/test/video.mp4');
+    expect(form.get('text')).toBe('GM! What are you up to today?');
+    expect(form.get('flair_id')).toBe('flair');
+    return created('video1');
+  };
+
+  const client = new RedditMediaClient(cfg, fetcher);
+  const post = await client.submitMedia(
+    'nyaonearth',
+    'GM! What are you up to today?',
+    'GM! What are you up to today?',
+    'flair',
+    'video.mp4',
+    'video/mp4',
+    new Uint8Array([1, 2, 3]),
+  );
+  expect(post.id).toBe('video1');
+});
+
+test('Reddit media client submits multiple uploaded images as a native Reddit gallery', async () => {
+  let leases = 0;
+  const fetcher: RedditMediaFetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/api/v1/access_token')) return token();
+    if (url.includes('/api/media/asset.json')) {
+      leases += 1;
+      return lease(`asset-${leases}`, `test/image-${leases}.png`);
+    }
+    if (url === 'https://reddit-uploaded-media.s3-accelerate.amazonaws.com') return new Response('', { status: 204 });
+    expect(url).toBe('https://oauth.reddit.com/api/submit_gallery_post.json');
+    expect(typeof init?.body).toBe('string');
+    const payload = JSON.parse(String(init?.body)) as {
+      readonly items: readonly { readonly media_id: string }[];
+      readonly sr: string;
+      readonly title: string;
+    };
+    expect(payload.items).toEqual([{ media_id: 'asset-1' }, { media_id: 'asset-2' }]);
+    expect(payload.sr).toBe('nyaonearth');
+    expect(payload.title).toBe('Gallery tweet');
+    return created('gallery1');
+  };
+
+  const client = new RedditMediaClient(cfg, fetcher);
+  const post = await client.submitGallery('nyaonearth', 'Gallery tweet', 'flair', [
+    { name: 'one.png', mimeType: 'image/png', bytes: new Uint8Array([1]) },
+    { name: 'two.png', mimeType: 'image/png', bytes: new Uint8Array([2]) },
+  ]);
+  expect(post.id).toBe('gallery1');
 });
 
 test('Reddit media client refreshes OAuth exactly once after a lease 401', async () => {
