@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { RedditFlairTemplate } from '../reddit/types.ts';
-import { isMap, parseMap, type JsonMap } from '../types/json.ts';
+import { parseMap, type JsonMap } from '../types/json.ts';
 
 export type FlairKind = 'user' | 'post';
 
@@ -151,7 +151,7 @@ export const reconcileFlairCatalogue = async (
   const userMappings = completeMappings('user', sourceUsers, targetUsers);
   const postMappings = completeMappings('post', sourcePosts, targetPosts);
   const existing = await existingCatalogue(file);
-  const catalogue: JsonMap = {
+  const catalogue = parseMap(JSON.stringify({
     ...existing,
     schema: 2,
     generatedAt: new Date().toISOString(),
@@ -167,11 +167,7 @@ export const reconcileFlairCatalogue = async (
       target: targetPosts,
       mapping: postMappings,
     },
-  };
-
-  if (!isMap(catalogue['userTemplates']) || !isMap(catalogue['postTemplates'])) {
-    throw new Error('Persisted flair catalogue construction failed');
-  }
+  }));
 
   await mkdir(dirname(file), { recursive: true });
   const temp = `${file}.tmp.${process.pid}`;
