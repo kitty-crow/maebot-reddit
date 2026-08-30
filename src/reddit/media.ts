@@ -5,6 +5,17 @@ import { rateLimitedRedditFetch } from './rateBudget.ts';
 
 export type RedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export type RedditMediaSocket = {
+  listen(
+    onMessage: (data: string) => void,
+    onError: () => void,
+    onClose: () => void,
+  ): void;
+  close(): void;
+};
+
+export type RedditMediaSocketFactory = (url: string) => RedditMediaSocket;
+
 export type RedditMediaCreatedPost = {
   readonly id: string;
   readonly fullname: string;
@@ -20,6 +31,7 @@ export type RedditGalleryMedia = {
 const api = 'https://oauth.reddit.com';
 const tokenApi = 'https://www.reddit.com/api/v1/access_token';
 const maxBytes = 20 * 1024 * 1024;
+const mediaSocketTimeoutMs = 60_000;
 
 type Token = { readonly value: string; readonly until: number };
 
@@ -57,12 +69,17 @@ const firstApiError = (value: Json): string | null => {
   return parts.length === 0 ? 'Reddit API returned an application error' : parts.join(': ');
 };
 
-const createdPost = (value: Json): RedditMediaCreatedPost => {
+const submitData = (value: Json): Readonly<Record<string, Json>> => {
   if (!isMap(value)) throw new RedditError('Reddit media submit response was not an object', 'invalid_response');
   const envelope = value['json'];
   if (!isMap(envelope)) throw new RedditError('Reddit media submit response did not contain json', 'invalid_response');
   const data = envelope['data'];
   if (!isMap(data)) throw new RedditError('Reddit media submit response did not contain data', 'invalid_response');
+  return data;
+};
+
+const createdPost = (value: Json): RedditMediaCreatedPost => {
+  const data = submitData(value);
   const id = text(data['id']);
   if (id === null) throw new RedditError('Reddit media submit response did not contain a post id', 'invalid_response');
   return {
@@ -71,6 +88,134 @@ const createdPost = (value: Json): RedditMediaCreatedPost => {
     url: text(data['url']) ?? '',
   };
 };
+
+const immediateCreatedPost = (value: Json): RedditMediaCreatedPost | null => {
+  const data = submitData(value);
+  const id = text(data['id']);
+  if (id === null) return null;
+  return {
+    id,
+    fullname: text(data['name']) ?? `t3_${id}`,
+    url: text(data['url']) ?? '',
+  };
+};
+
+const mediaSocketUrl = (value: Json): string | null => {
+  const raw = text(submitData(value)['websocket_url']);
+  if (raw === null) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new RedditError('Reddit media submit websocket URL was invalid', 'invalid_response');
+  }
+  if (
+    parsed.protocol !== 'wss:'
+    || (parsed.hostname !== 'wss.redditmedia.com' && !parsed.hostname.endsWith('.wss.redditmedia.com'))
+  ) {
+    throw new RedditError('Reddit media submit websocket URL was not trusted', 'invalid_response');
+  }
+  return parsed.toString();
+};
+
+const postFromRedirect = (raw: string): RedditMediaCreatedPost => {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new RedditError('Reddit media websocket redirect was invalid', 'invalid_response');
+  }
+  if (parsed.protocol !== 'https:' || (parsed.hostname !== 'reddit.com' && !parsed.hostname.endsWith('.reddit.com'))) {
+    throw new RedditError('Reddit media websocket redirect was not a Reddit URL', 'invalid_response');
+  }
+  const match = /^\/r\/[^/]+\/comments\/([a-z0-9]+)(?:\/|$)/iu.exec(parsed.pathname)
+    ?? /^\/comments\/([a-z0-9]+)(?:\/|$)/iu.exec(parsed.pathname);
+  const id = match?.[1] ?? null;
+  if (id === null) throw new RedditError('Reddit media websocket redirect did not contain a post id', 'invalid_response');
+  return { id, fullname: `t3_${id}`, url: parsed.toString() };
+};
+
+const defaultSocketFactory: RedditMediaSocketFactory = url => {
+  const socket = new WebSocket(url);
+  return {
+    listen(onMessage, onError, onClose): void {
+      socket.addEventListener('message', event => {
+        if (typeof event.data === 'string') onMessage(event.data);
+        else onError();
+      });
+      socket.addEventListener('error', onError);
+      socket.addEventListener('close', onClose);
+    },
+    close(): void {
+      socket.close();
+    },
+  };
+};
+
+const awaitMediaPost = async (
+  url: string,
+  socketFactory: RedditMediaSocketFactory,
+): Promise<RedditMediaCreatedPost> => await new Promise((resolve, reject) => {
+  let settled = false;
+  let socket: RedditMediaSocket;
+  const finish = (post: RedditMediaCreatedPost | null, error: RedditError | null): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    socket.close();
+    if (post !== null) resolve(post);
+    else reject(error ?? new RedditError('Reddit media websocket failed', 'network'));
+  };
+  const timeout = setTimeout(() => {
+    finish(null, new RedditError('Reddit media websocket timed out', 'network'));
+  }, mediaSocketTimeoutMs);
+  try {
+    socket = socketFactory(url);
+    socket.listen(
+      data => {
+        let payload: Json;
+        try {
+          payload = jsonPayload(data, 'Reddit media websocket');
+        } catch (error) {
+          finish(null, error instanceof RedditError
+            ? error
+            : new RedditError('Reddit media websocket returned invalid JSON', 'invalid_response'));
+          return;
+        }
+        if (!isMap(payload)) {
+          finish(null, new RedditError('Reddit media websocket response was not an object', 'invalid_response'));
+          return;
+        }
+        const type = text(payload['type']);
+        if (type === 'success') {
+          const body = payload['payload'];
+          const redirect = isMap(body) ? text(body['redirect']) : null;
+          if (redirect === null) {
+            finish(null, new RedditError('Reddit media websocket success did not contain a redirect', 'invalid_response'));
+            return;
+          }
+          try {
+            finish(postFromRedirect(redirect), null);
+          } catch (error) {
+            finish(null, error instanceof RedditError
+              ? error
+              : new RedditError('Reddit media websocket redirect was invalid', 'invalid_response'));
+          }
+          return;
+        }
+        if (type === 'error' || type === 'failure') {
+          finish(null, new RedditError('Reddit media processing failed', 'invalid_response'));
+        }
+      },
+      () => finish(null, new RedditError('Reddit media websocket failed at the network boundary', 'network')),
+      () => finish(null, new RedditError('Reddit media websocket closed before completion', 'network')),
+    );
+  } catch {
+    clearTimeout(timeout);
+    settled = true;
+    reject(new RedditError('Reddit media websocket failed at the network boundary', 'network'));
+  }
+});
 
 const leaseFrom = (value: Json): Lease => {
   if (!isMap(value)) throw new RedditError('Reddit media lease response was not an object', 'invalid_response');
@@ -103,16 +248,19 @@ const leaseFrom = (value: Json): Lease => {
 export class RedditMediaClient {
   private tokenCache: Token | null = null;
   private readonly fetcher: RedditMediaFetch;
+  private readonly socketFactory: RedditMediaSocketFactory;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
     fetcher?: RedditMediaFetch,
     rateReserve = 10,
+    socketFactory: RedditMediaSocketFactory = defaultSocketFactory,
   ) {
     const rawFetcher = fetcher ?? fetch;
     this.fetcher = fetcher === undefined
       ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, { reserve: rateReserve })
       : rawFetcher;
+    this.socketFactory = socketFactory;
   }
 
   private async token(force = false): Promise<string> {
@@ -250,7 +398,11 @@ export class RedditMediaClient {
     const payload = jsonPayload(await response.text(), 'Reddit native media submission');
     const apiError = firstApiError(payload);
     if (apiError !== null) throw new RedditError(apiError, 'invalid_response', response.status);
-    return createdPost(payload);
+    const immediate = immediateCreatedPost(payload);
+    if (immediate !== null) return immediate;
+    const socketUrl = mediaSocketUrl(payload);
+    if (socketUrl === null) throw new RedditError('Reddit media submit response did not contain a post id or websocket URL', 'invalid_response');
+    return await awaitMediaPost(socketUrl, this.socketFactory);
   }
 
   public async submitGallery(
