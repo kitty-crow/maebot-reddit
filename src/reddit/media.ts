@@ -5,6 +5,12 @@ import { rateLimitedRedditFetch } from './rateBudget.ts';
 
 export type RedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export type RedditMediaCreatedPost = {
+  readonly id: string;
+  readonly fullname: string;
+  readonly url: string;
+};
+
 const api = 'https://oauth.reddit.com';
 const tokenApi = 'https://www.reddit.com/api/v1/access_token';
 const maxBytes = 20 * 1024 * 1024;
@@ -26,6 +32,28 @@ const jsonPayload = (raw: string, context: string): Json => {
 
 const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
+
+const firstApiError = (value: Json): string | null => {
+  if (!isMap(value) || !isMap(value['json']) || !Array.isArray(value['json']['errors'])) return null;
+  const first = value['json']['errors'][0];
+  if (!Array.isArray(first)) return value['json']['errors'].length === 0 ? null : 'Reddit API returned an application error';
+  const parts = first.filter(part => typeof part === 'string').map(part => String(part));
+  return parts.length === 0 ? 'Reddit API returned an application error' : parts.join(': ');
+};
+
+const createdPost = (value: Json): RedditMediaCreatedPost => {
+  if (!isMap(value) || !isMap(value['json']) || !isMap(value['json']['data'])) {
+    throw new RedditError('Reddit media submit response was incomplete', 'invalid_response');
+  }
+  const data = value['json']['data'];
+  const id = text(data['id']);
+  if (id === null) throw new RedditError('Reddit media submit response did not contain a post id', 'invalid_response');
+  return {
+    id,
+    fullname: text(data['name']) ?? `t3_${id}`,
+    url: text(data['url']) ?? '',
+  };
+};
 
 const leaseFrom = (value: Json): Lease => {
   if (!isMap(value) || !isMap(value['args']) || !Array.isArray(value['args']['fields'])) {
@@ -138,5 +166,53 @@ export class RedditMediaClient {
     const key = lease.fields.get('key');
     if (key === undefined || key.length === 0) throw new RedditError('Reddit media upload key was missing', 'invalid_response');
     return `${lease.uploadUrl}/${key.replace(/^\//u, '')}`;
+  }
+
+  public async submitMedia(
+    subreddit: string,
+    title: string,
+    body: string,
+    flairTemplateId: string | null,
+    name: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<RedditMediaCreatedPost> {
+    const kind = mimeType.startsWith('image/') ? 'image' : mimeType === 'video/mp4' ? 'video' : null;
+    if (kind === null) throw new Error(`Unsupported Reddit post media type ${mimeType}`);
+    const mediaUrl = await this.uploadMedia(name, mimeType, bytes);
+    const token = await this.token();
+    const form = new URLSearchParams({
+      api_type: 'json',
+      kind,
+      resubmit: 'true',
+      sendreplies: 'true',
+      sr: subreddit,
+      text: body,
+      title,
+      url: mediaUrl,
+    });
+    if (flairTemplateId !== null && flairTemplateId.length > 0) form.set('flair_id', flairTemplateId);
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${api}/api/submit`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/x-www-form-urlencoded',
+          'user-agent': this.cfg.userAgent,
+        },
+        body: form,
+      });
+    } catch {
+      throw new RedditError('Reddit native media submission failed at the network boundary', 'network');
+    }
+    if (!response.ok) {
+      throw new RedditError('Reddit native media submission was rejected', statusKind(response.status), response.status);
+    }
+    const payload = jsonPayload(await response.text(), 'Reddit native media submission');
+    const apiError = firstApiError(payload);
+    if (apiError !== null) throw new RedditError(apiError, 'invalid_response', response.status);
+    return createdPost(payload);
   }
 }
