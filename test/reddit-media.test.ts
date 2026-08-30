@@ -70,6 +70,7 @@ test('Reddit media client obtains a lease and uploads bytes to the returned HTTP
 });
 
 test('Reddit media client submits uploaded video as a native Reddit video post', async () => {
+  const poster = 'https://pbs.twimg.com/profile_images/example/avatar.jpg';
   const fetcher: RedditMediaFetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith('/api/v1/access_token')) return token();
@@ -80,6 +81,7 @@ test('Reddit media client submits uploaded video as a native Reddit video post',
     const form = init?.body as URLSearchParams;
     expect(form.get('kind')).toBe('video');
     expect(form.get('url')).toBe('https://reddit-uploaded-media.s3-accelerate.amazonaws.com/test/video.mp4');
+    expect(form.get('video_poster_url')).toBe(poster);
     expect(form.get('text')).toBe('GM! What are you up to today?');
     expect(form.get('flair_id')).toBe('flair');
     return created('video1');
@@ -94,8 +96,27 @@ test('Reddit media client submits uploaded video as a native Reddit video post',
     'video.mp4',
     'video/mp4',
     new Uint8Array([1, 2, 3]),
+    poster,
   );
   expect(post.id).toBe('video1');
+});
+
+test('Reddit media client refuses native video submission without a poster URL', async () => {
+  let called = false;
+  const client = new RedditMediaClient(cfg, async () => {
+    called = true;
+    return new Response('', { status: 500 });
+  });
+  await expect(client.submitMedia(
+    'nyaonearth',
+    'Video',
+    'Video body',
+    'flair',
+    'video.mp4',
+    'video/mp4',
+    new Uint8Array([1]),
+  )).rejects.toThrow('requires a poster URL');
+  expect(called).toBe(false);
 });
 
 test('Reddit media client submits multiple uploaded images as a native Reddit gallery', async () => {
