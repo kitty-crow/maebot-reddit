@@ -208,9 +208,13 @@ export class RedditMediaClient {
     name: string,
     mimeType: string,
     bytes: Uint8Array,
+    videoPosterUrl: string | null = null,
   ): Promise<RedditMediaCreatedPost> {
     const kind = mimeType.startsWith('image/') ? 'image' : mimeType === 'video/mp4' ? 'video' : null;
     if (kind === null) throw new Error(`Unsupported Reddit post media type ${mimeType}`);
+    if (kind === 'video' && (videoPosterUrl === null || videoPosterUrl.length === 0)) {
+      throw new Error('Reddit native video submission requires a poster URL');
+    }
     const mediaUrl = (await this.upload(name, mimeType, bytes)).url;
     const token = await this.token();
     const form = new URLSearchParams({
@@ -223,6 +227,7 @@ export class RedditMediaClient {
       title,
       url: mediaUrl,
     });
+    if (kind === 'video' && videoPosterUrl !== null) form.set('video_poster_url', videoPosterUrl);
     if (flairTemplateId !== null && flairTemplateId.length > 0) form.set('flair_id', flairTemplateId);
 
     let response: Response;
