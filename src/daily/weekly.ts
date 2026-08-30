@@ -1,5 +1,6 @@
 import type { RedditCfg } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
+import { preserveKaomojiForReddit } from '../reddit/markdown.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { DailyReviewApi, CanonicalWeeklyReview } from '../review/client.ts';
 import { RedditStateStore } from '../store/state.ts';
@@ -34,13 +35,7 @@ const actionKey = (review: CanonicalWeeklyReview, target: 'primary' | 'legacy'):
 const title = (review: CanonicalWeeklyReview): string =>
   `${review.weekStart.replaceAll('-', '.')} weekly update`;
 
-const kaomojiChars = /[<>()[\]{}ωΩ^=・▽∀Ддツノへ]/u;
-const escapeKaomoji = (markdown: string): string => markdown.replace(
-  /_([^_\n]{1,40})_/gu,
-  (whole, inside: string) => kaomojiChars.test(inside) ? `\\_${inside}\\_` : whole,
-);
-
-const body = (review: CanonicalWeeklyReview): string => escapeKaomoji(review.markdown).trim();
+const body = (review: CanonicalWeeklyReview): string => preserveKaomojiForReddit(review.markdown).trim();
 
 export class WeeklyRedditRelay {
   public constructor(
