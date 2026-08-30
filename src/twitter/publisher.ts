@@ -122,6 +122,7 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
         `tweet-${tweet.id}.${downloaded.extension}`,
         downloaded.contentType,
         downloaded.bytes,
+        downloaded.contentType === 'video/mp4' ? tweet.author.avatar : null,
       );
       return created.id;
     }
