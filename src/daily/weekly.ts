@@ -31,14 +31,16 @@ const safeMessage = (error: Parameters<Console['error']>[number]): string =>
 const actionKey = (review: CanonicalWeeklyReview, target: 'primary' | 'legacy'): string =>
   `weekly-daily:${review.weekStart}:${target}`;
 
-const marker = (review: CanonicalWeeklyReview): string => `<!-- mae-weekly-daily:${review.key} -->`;
 const title = (review: CanonicalWeeklyReview): string =>
   `${review.weekStart.replaceAll('-', '.')} weekly update`;
 
-const body = (review: CanonicalWeeklyReview): string => `${review.markdown}\n\n${marker(review)}`;
+const kaomojiChars = /[<>()[\]{}ωΩ^=・▽∀Ддツノへ]/u;
+const escapeKaomoji = (markdown: string): string => markdown.replace(
+  /_([^_\n]{1,40})_/gu,
+  (whole, inside: string) => kaomojiChars.test(inside) ? `\\_${inside}\\_` : whole,
+);
 
-const redditPostUrl = (subreddit: string, postId: string): string =>
-  `https://www.reddit.com/r/${subreddit}/comments/${postId}`;
+const body = (review: CanonicalWeeklyReview): string => escapeKaomoji(review.markdown).trim();
 
 export class WeeklyRedditRelay {
   public constructor(
@@ -160,13 +162,13 @@ export class LiveWeeklyRedditPublisher implements WeeklyRedditPublisher {
   }
 
   public async publishPrimary(review: CanonicalWeeklyReview): Promise<WeeklyRedditPost> {
-    const stamp = marker(review);
+    const expectedTitle = title(review);
     const existing = (await this.read.newPosts(this.cfg.primarySubreddit, 100))
-      .find(post => post.selfText.includes(stamp));
+      .find(post => post.title === expectedTitle);
     if (existing !== undefined) return { postId: existing.id };
 
     const flairId = await this.flairId(this.cfg.primarySubreddit);
-    const created = await this.write.submitSelf(this.cfg.primarySubreddit, title(review), body(review), flairId);
+    const created = await this.write.submitSelf(this.cfg.primarySubreddit, expectedTitle, body(review), flairId);
     return { postId: created.id };
   }
 
@@ -175,12 +177,9 @@ export class LiveWeeklyRedditPublisher implements WeeklyRedditPublisher {
     primaryPostId: string,
   ): Promise<WeeklyRedditLegacyPost> {
     const primaryFullname = primaryPostId.startsWith('t3_') ? primaryPostId : `t3_${primaryPostId}`;
-    const primaryUrl = redditPostUrl(this.cfg.primarySubreddit, primaryPostId);
-    const stamp = marker(review);
+    const expectedTitle = title(review);
     const existing = (await this.read.newPosts(this.cfg.sourceSubreddit, 100)).find(post =>
-      post.crosspostParent === primaryFullname
-      || post.selfText.includes(stamp)
-      || post.selfText.includes(`Primary Reddit post: ${primaryUrl}`));
+      post.crosspostParent === primaryFullname || post.title === expectedTitle);
     if (existing !== undefined) {
       return {
         postId: existing.id,
@@ -190,12 +189,11 @@ export class LiveWeeklyRedditPublisher implements WeeklyRedditPublisher {
 
     const flairId = await this.flairId(this.cfg.sourceSubreddit);
     try {
-      const created = await this.write.crosspost(this.cfg.sourceSubreddit, primaryPostId, title(review), flairId);
+      const created = await this.write.crosspost(this.cfg.sourceSubreddit, primaryPostId, expectedTitle, flairId);
       return { postId: created.id, mode: 'crosspost' };
     } catch (crosspostError) {
       console.error(`[Reddit weekly Daily Task] native crosspost failed; using self-post fallback: ${safeMessage(crosspostError)}`);
-      const fallback = `${review.markdown}\n\nPrimary Reddit post: ${primaryUrl}\n\n${stamp}`;
-      const created = await this.write.submitSelf(this.cfg.sourceSubreddit, title(review), fallback, flairId);
+      const created = await this.write.submitSelf(this.cfg.sourceSubreddit, expectedTitle, body(review), flairId);
       return { postId: created.id, mode: 'fallback' };
     }
   }
