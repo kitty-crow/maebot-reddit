@@ -1,9 +1,14 @@
-import type { FlairCatalogueResolver } from '../flair/catalogue.ts';
+import { resolve } from 'node:path';
+import {
+  reconcileFlairCatalogue,
+  type FlairCatalogueReader,
+  type FlairCatalogueResolver,
+} from '../flair/catalogue.ts';
 import type { RedditCreatedPost } from '../reddit/mutate.ts';
 import type { RedditPost } from '../reddit/types.ts';
 import { mirrorKey, PostMirrorStore, type MirrorPending } from './store.ts';
 
-export type MirrorReader = {
+export type MirrorReader = FlairCatalogueReader & {
   newPosts(subreddit: string, limit?: number): Promise<readonly RedditPost[]>;
 };
 export type MirrorWriter = {
@@ -57,6 +62,9 @@ const observedIdentity = (item: ObservedPost) => ({
 });
 
 export class BidirectionalPostMirror {
+  private flairs: FlairCatalogueResolver | null = null;
+  private readonly catalogueFile: string;
+
   public constructor(
     private readonly read: MirrorReader,
     private readonly write: MirrorWriter,
@@ -64,11 +72,15 @@ export class BidirectionalPostMirror {
     private readonly firstSubreddit: string,
     private readonly secondSubreddit: string,
     private readonly gate: PostMirrorSourceGate | null = null,
-    private readonly flairs: FlairCatalogueResolver | null = null,
+    catalogueFile = resolve(
+      process.cwd(),
+      process.env['REDDIT_FLAIR_CATALOGUE_FILE']?.trim() || 'data/flairs.json',
+    ),
   ) {
     if (sameSubreddit(firstSubreddit, secondSubreddit)) {
       throw new Error('Bidirectional Reddit mirror requires two different subreddits');
     }
+    this.catalogueFile = catalogueFile;
   }
 
   private async decisions(fullnames: readonly string[]): Promise<ReadonlyMap<string, PostMirrorSourceDecision>> {
@@ -85,7 +97,18 @@ export class BidirectionalPostMirror {
     return this.flairs.targetTemplateId('post', sourceSubreddit, targetSubreddit, source.flairTemplateId);
   }
 
+  private async reconcileFlairs(): Promise<void> {
+    if (this.flairs !== null) return;
+    this.flairs = await reconcileFlairCatalogue(
+      this.catalogueFile,
+      this.read,
+      this.secondSubreddit,
+      this.firstSubreddit,
+    );
+  }
+
   public async tick(now = Date.now()): Promise<PostMirrorTick> {
+    await this.reconcileFlairs();
     const [firstPosts, secondPosts] = await Promise.all([
       this.read.newPosts(this.firstSubreddit, 100),
       this.read.newPosts(this.secondSubreddit, 100),
