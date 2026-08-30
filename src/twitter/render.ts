@@ -1,4 +1,5 @@
 import type { Tweet } from '../../vendor/maebot-twitter/src/index.ts';
+import { preserveKaomojiForReddit } from '../reddit/markdown.ts';
 
 export type RedditTweetRender = {
   readonly title: string;
@@ -18,11 +19,6 @@ const percentage = (value: number): string => {
   return Number.isInteger(rounded) ? String(Math.trunc(rounded)) : rounded.toFixed(1);
 };
 
-const mediaLines = (tweet: Tweet): readonly string[] => [
-  ...tweet.photos.map((url, index) => `- Photo ${index + 1}: ${url}`),
-  ...tweet.videos.map((url, index) => `- Video ${index + 1}: ${url}`),
-];
-
 export const redditTweetTitle = (tweet: Tweet, maxChars = 280): string => {
   const text = compact(tweet.text);
   const fallback = `Update from @${tweet.author.handle}`;
@@ -38,9 +34,6 @@ export const renderTweetForReddit = (tweet: Tweet, majorUpdate = false): RedditT
   const sections: string[] = [];
   const text = tweet.text.trim();
   if (text.length > 0) sections.push(text);
-
-  const media = mediaLines(tweet);
-  if (media.length > 0) sections.push(`**Media**\n${media.join('\n')}`);
 
   if (tweet.quote !== null) {
     const quotedText = tweet.quote.text.trim();
@@ -63,18 +56,12 @@ export const renderTweetForReddit = (tweet: Tweet, majorUpdate = false): RedditT
   sections.push(`Original tweet: ${tweet.url}`);
   return {
     title: majorUpdate ? redditMajorUpdateTitle(tweet) : redditTweetTitle(tweet),
-    body: sections.join('\n\n'),
+    body: preserveKaomojiForReddit(sections.join('\n\n')),
   };
 };
 
 export const renderLegacyFallback = (
   tweet: Tweet,
-  primaryRedditUrl: string,
+  _primaryRedditUrl: string,
   majorUpdate = false,
-): RedditTweetRender => {
-  const rendered = renderTweetForReddit(tweet, majorUpdate);
-  return {
-    title: rendered.title,
-    body: `${rendered.body}\n\nPrimary Reddit post: ${primaryRedditUrl}`,
-  };
-};
+): RedditTweetRender => renderTweetForReddit(tweet, majorUpdate);
