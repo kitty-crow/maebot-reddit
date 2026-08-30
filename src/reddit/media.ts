@@ -11,6 +11,12 @@ export type RedditMediaCreatedPost = {
   readonly url: string;
 };
 
+export type RedditGalleryMedia = {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly bytes: Uint8Array;
+};
+
 const api = 'https://oauth.reddit.com';
 const tokenApi = 'https://www.reddit.com/api/v1/access_token';
 const maxBytes = 20 * 1024 * 1024;
@@ -20,6 +26,12 @@ type Token = { readonly value: string; readonly until: number };
 type Lease = {
   readonly uploadUrl: string;
   readonly fields: ReadonlyMap<string, string>;
+  readonly mediaId: string | null;
+};
+
+type Uploaded = {
+  readonly url: string;
+  readonly mediaId: string | null;
 };
 
 const jsonPayload = (raw: string, context: string): Json => {
@@ -72,7 +84,12 @@ const leaseFrom = (value: Json): Lease => {
   const uploadUrl = action.startsWith('//') ? `https:${action}` : action;
   const parsed = new URL(uploadUrl);
   if (parsed.protocol !== 'https:') throw new RedditError('Reddit media upload target was not HTTPS', 'invalid_response');
-  return { uploadUrl: parsed.toString().replace(/\/$/u, ''), fields };
+  const asset = isMap(value['asset']) ? value['asset'] : null;
+  return {
+    uploadUrl: parsed.toString().replace(/\/$/u, ''),
+    fields,
+    mediaId: asset === null ? null : text(asset['asset_id']),
+  };
 };
 
 export class RedditMediaClient {
@@ -148,7 +165,7 @@ export class RedditMediaClient {
     return leaseFrom(jsonPayload(await response.text(), 'Reddit media lease'));
   }
 
-  public async uploadMedia(name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
+  private async upload(name: string, mimeType: string, bytes: Uint8Array): Promise<Uploaded> {
     if (bytes.byteLength < 1 || bytes.byteLength > maxBytes) throw new Error('Reddit media must be between 1 byte and 20 MB');
     const lease = await this.lease(name, mimeType);
     const form = new FormData();
@@ -165,7 +182,14 @@ export class RedditMediaClient {
     if (!response.ok) throw new RedditError('Reddit media upload was rejected', statusKind(response.status), response.status);
     const key = lease.fields.get('key');
     if (key === undefined || key.length === 0) throw new RedditError('Reddit media upload key was missing', 'invalid_response');
-    return `${lease.uploadUrl}/${key.replace(/^\//u, '')}`;
+    return {
+      url: `${lease.uploadUrl}/${key.replace(/^\//u, '')}`,
+      mediaId: lease.mediaId,
+    };
+  }
+
+  public async uploadMedia(name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
+    return (await this.upload(name, mimeType, bytes)).url;
   }
 
   public async submitMedia(
@@ -179,7 +203,7 @@ export class RedditMediaClient {
   ): Promise<RedditMediaCreatedPost> {
     const kind = mimeType.startsWith('image/') ? 'image' : mimeType === 'video/mp4' ? 'video' : null;
     if (kind === null) throw new Error(`Unsupported Reddit post media type ${mimeType}`);
-    const mediaUrl = await this.uploadMedia(name, mimeType, bytes);
+    const mediaUrl = (await this.upload(name, mimeType, bytes)).url;
     const token = await this.token();
     const form = new URLSearchParams({
       api_type: 'json',
@@ -214,5 +238,53 @@ export class RedditMediaClient {
     const apiError = firstApiError(payload);
     if (apiError !== null) throw new RedditError(apiError, 'invalid_response', response.status);
     return createdPost(payload);
+  }
+
+  public async submitGallery(
+    subreddit: string,
+    title: string,
+    flairTemplateId: string | null,
+    media: readonly RedditGalleryMedia[],
+  ): Promise<RedditMediaCreatedPost> {
+    if (media.length < 2 || media.length > 20) throw new Error('Reddit galleries require between 2 and 20 images');
+    const items: { readonly media_id: string }[] = [];
+    for (const item of media) {
+      if (!item.mimeType.startsWith('image/')) throw new Error(`Unsupported Reddit gallery media type ${item.mimeType}`);
+      const uploaded = await this.upload(item.name, item.mimeType, item.bytes);
+      if (uploaded.mediaId === null) throw new RedditError('Reddit gallery media lease did not include an asset id', 'invalid_response');
+      items.push({ media_id: uploaded.mediaId });
+    }
+
+    const token = await this.token();
+    const payload: Record<string, string | boolean | readonly { readonly media_id: string }[]> = {
+      api_type: 'json',
+      items,
+      nsfw: false,
+      sendreplies: true,
+      spoiler: false,
+      sr: subreddit,
+      title,
+    };
+    if (flairTemplateId !== null && flairTemplateId.length > 0) payload['flair_id'] = flairTemplateId;
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${api}/api/submit_gallery_post.json`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'user-agent': this.cfg.userAgent,
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      throw new RedditError('Reddit gallery submission failed at the network boundary', 'network');
+    }
+    if (!response.ok) throw new RedditError('Reddit gallery submission was rejected', statusKind(response.status), response.status);
+    const result = jsonPayload(await response.text(), 'Reddit gallery submission');
+    const apiError = firstApiError(result);
+    if (apiError !== null) throw new RedditError(apiError, 'invalid_response', response.status);
+    return createdPost(result);
   }
 }
