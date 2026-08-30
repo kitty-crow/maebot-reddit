@@ -46,18 +46,23 @@ const text = (value: Json | undefined): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null;
 
 const firstApiError = (value: Json): string | null => {
-  if (!isMap(value) || !isMap(value['json']) || !Array.isArray(value['json']['errors'])) return null;
-  const first = value['json']['errors'][0];
-  if (!Array.isArray(first)) return value['json']['errors'].length === 0 ? null : 'Reddit API returned an application error';
+  if (!isMap(value)) return null;
+  const envelope = value['json'];
+  if (!isMap(envelope)) return null;
+  const errors = envelope['errors'];
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const first = errors[0];
+  if (!Array.isArray(first)) return 'Reddit API returned an application error';
   const parts = first.filter(part => typeof part === 'string').map(part => String(part));
   return parts.length === 0 ? 'Reddit API returned an application error' : parts.join(': ');
 };
 
 const createdPost = (value: Json): RedditMediaCreatedPost => {
-  if (!isMap(value) || !isMap(value['json']) || !isMap(value['json']['data'])) {
-    throw new RedditError('Reddit media submit response was incomplete', 'invalid_response');
-  }
-  const data = value['json']['data'];
+  if (!isMap(value)) throw new RedditError('Reddit media submit response was not an object', 'invalid_response');
+  const envelope = value['json'];
+  if (!isMap(envelope)) throw new RedditError('Reddit media submit response did not contain json', 'invalid_response');
+  const data = envelope['data'];
+  if (!isMap(data)) throw new RedditError('Reddit media submit response did not contain data', 'invalid_response');
   const id = text(data['id']);
   if (id === null) throw new RedditError('Reddit media submit response did not contain a post id', 'invalid_response');
   return {
@@ -68,13 +73,15 @@ const createdPost = (value: Json): RedditMediaCreatedPost => {
 };
 
 const leaseFrom = (value: Json): Lease => {
-  if (!isMap(value) || !isMap(value['args']) || !Array.isArray(value['args']['fields'])) {
+  if (!isMap(value)) throw new RedditError('Reddit media lease response was not an object', 'invalid_response');
+  const args = value['args'];
+  if (!isMap(args) || !Array.isArray(args['fields'])) {
     throw new RedditError('Reddit media lease response was incomplete', 'invalid_response');
   }
-  const action = text(value['args']['action']);
+  const action = text(args['action']);
   if (action === null) throw new RedditError('Reddit media lease did not include an upload target', 'invalid_response');
   const fields = new Map<string, string>();
-  for (const raw of value['args']['fields']) {
+  for (const raw of args['fields']) {
     if (!isMap(raw)) continue;
     const name = text(raw['name']);
     const fieldValue = text(raw['value']);
@@ -84,7 +91,8 @@ const leaseFrom = (value: Json): Lease => {
   const uploadUrl = action.startsWith('//') ? `https:${action}` : action;
   const parsed = new URL(uploadUrl);
   if (parsed.protocol !== 'https:') throw new RedditError('Reddit media upload target was not HTTPS', 'invalid_response');
-  const asset = isMap(value['asset']) ? value['asset'] : null;
+  const rawAsset = value['asset'];
+  const asset = isMap(rawAsset) ? rawAsset : null;
   return {
     uploadUrl: parsed.toString().replace(/\/$/u, ''),
     fields,
