@@ -49,12 +49,12 @@ const post = (id: string): RedditPost => ({
 });
 
 describe('Twitter Reddit rendering', () => {
-  test('preserves tweet text, source link, media, quote and poll context', () => {
+  test('preserves tweet text, source link, quote and poll context without leaking Twitter media URLs', () => {
     const rendered = renderTweetForReddit(baseTweet());
     expect(rendered.title).toBe('Nya update with all the context.');
     expect(rendered.body).toContain('Nya update with all the context.');
-    expect(rendered.body).toContain('Photo 1: https://example.test/photo.jpg');
-    expect(rendered.body).toContain('Video 1: https://example.test/video.mp4');
+    expect(rendered.body).not.toContain('https://example.test/photo.jpg');
+    expect(rendered.body).not.toContain('https://example.test/video.mp4');
     expect(rendered.body).toContain('Quoted tweet by @example');
     expect(rendered.body).toContain('Quoted context');
     expect(rendered.body).toContain('Quoted tweet: https://twitter.com/example/status/9876543210');
@@ -74,10 +74,10 @@ describe('Twitter Reddit rendering', () => {
     expect(clipped.endsWith('…')).toBe(true);
   });
 
-  test('fallback legacy rendering retains both the canonical tweet and the primary Reddit post', () => {
+  test('fallback legacy rendering does not expose redundant primary Reddit metadata', () => {
     const rendered = renderLegacyFallback(baseTweet(), 'https://reddit.com/r/nyaonearth/comments/primary');
     expect(rendered.body).toContain('Original tweet: https://twitter.com/NyaOnEarth/status/1234567890');
-    expect(rendered.body).toContain('Primary Reddit post: https://reddit.com/r/nyaonearth/comments/primary');
+    expect(rendered.body).not.toContain('Primary Reddit post:');
   });
 });
 
