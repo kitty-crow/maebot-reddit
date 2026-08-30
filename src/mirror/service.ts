@@ -1,10 +1,10 @@
-import type { RedditFlairTemplate, RedditPost } from '../reddit/types.ts';
+import type { FlairCatalogueResolver } from '../flair/catalogue.ts';
 import type { RedditCreatedPost } from '../reddit/mutate.ts';
+import type { RedditPost } from '../reddit/types.ts';
 import { mirrorKey, PostMirrorStore, type MirrorPending } from './store.ts';
 
 export type MirrorReader = {
   newPosts(subreddit: string, limit?: number): Promise<readonly RedditPost[]>;
-  postFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]>;
 };
 export type MirrorWriter = {
   crosspost(subreddit: string, sourcePostId: string, title: string, flairTemplateId: string | null): Promise<RedditCreatedPost>;
@@ -57,8 +57,6 @@ const observedIdentity = (item: ObservedPost) => ({
 });
 
 export class BidirectionalPostMirror {
-  private readonly flairIds = new Map<string, string>();
-
   public constructor(
     private readonly read: MirrorReader,
     private readonly write: MirrorWriter,
@@ -66,6 +64,7 @@ export class BidirectionalPostMirror {
     private readonly firstSubreddit: string,
     private readonly secondSubreddit: string,
     private readonly gate: PostMirrorSourceGate | null = null,
+    private readonly flairs: FlairCatalogueResolver | null = null,
   ) {
     if (sameSubreddit(firstSubreddit, secondSubreddit)) {
       throw new Error('Bidirectional Reddit mirror requires two different subreddits');
@@ -77,28 +76,13 @@ export class BidirectionalPostMirror {
     return await this.gate.decisions(fullnames);
   }
 
-  private async targetFlairId(targetSubreddit: string, source: RedditPost): Promise<string | null> {
+  private targetFlairId(sourceSubreddit: string, targetSubreddit: string, source: RedditPost): string | null {
     if (source.flairTemplateId === null && source.flairText === null) return null;
-    const flairText = source.flairText?.trim() ?? '';
-    if (flairText.length === 0) {
-      throw new Error(`Source post ${source.fullname} has a flair template but no semantic flair text`);
+    if (source.flairTemplateId === null) {
+      throw new Error(`Source post ${source.fullname} has visible flair but Reddit omitted its template UUID`);
     }
-
-    const key = `${lower(targetSubreddit)}\n${flairText}`;
-    const cached = this.flairIds.get(key);
-    if (cached !== undefined) return cached;
-
-    const matches = (await this.read.postFlairTemplates(targetSubreddit))
-      .filter(template => template.text === flairText);
-    if (matches.length !== 1) {
-      throw new Error(`Expected exactly one equivalent post flair ${JSON.stringify(flairText)} in r/${targetSubreddit}, found ${matches.length}`);
-    }
-    const match = matches[0];
-    if (match === undefined) {
-      throw new Error(`Equivalent post flair ${JSON.stringify(flairText)} disappeared in r/${targetSubreddit}`);
-    }
-    this.flairIds.set(key, match.id);
-    return match.id;
+    if (this.flairs === null) throw new Error('Cross-community flair catalogue is unavailable');
+    return this.flairs.targetTemplateId('post', sourceSubreddit, targetSubreddit, source.flairTemplateId);
   }
 
   public async tick(now = Date.now()): Promise<PostMirrorTick> {
@@ -227,7 +211,7 @@ export class BidirectionalPostMirror {
         if (source === null) {
           throw new Error(`Source post ${claimed.sourceFullname} is no longer present in the observed Reddit listing`);
         }
-        const flairId = await this.targetFlairId(claimed.targetSubreddit, source);
+        const flairId = this.targetFlairId(claimed.sourceSubreddit, claimed.targetSubreddit, source);
         const created = await this.write.crosspost(claimed.targetSubreddit, claimed.sourceFullname, claimed.title, flairId);
         await this.store.completePair(
           claimed.key,
@@ -242,7 +226,7 @@ export class BidirectionalPostMirror {
           if (source === null) {
             throw new Error(`Source post ${claimed.sourceFullname} is no longer present in the observed Reddit listing`);
           }
-          const flairId = await this.targetFlairId(claimed.targetSubreddit, source);
+          const flairId = this.targetFlairId(claimed.sourceSubreddit, claimed.targetSubreddit, source);
           const created = await this.write.submitSelf(claimed.targetSubreddit, claimed.title, fallbackBody(claimed), flairId);
           await this.store.completePair(
             claimed.key,
