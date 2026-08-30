@@ -114,6 +114,18 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
     const media = this.media(worthy);
     if (urls.length === 1) {
       const downloaded = await downloadTwitterMedia(urls[0] ?? '');
+      let videoPosterUrl: string | null = null;
+      if (downloaded.contentType === 'video/mp4') {
+        const poster = await downloadTwitterMedia(tweet.author.avatar);
+        if (!poster.contentType.startsWith('image/')) {
+          throw new Error(`Tweet ${tweet.id} author avatar is not an image`);
+        }
+        videoPosterUrl = await media.uploadMedia(
+          `tweet-${tweet.id}-poster.${poster.extension}`,
+          poster.contentType,
+          poster.bytes,
+        );
+      }
       const created = await media.submitMedia(
         subreddit,
         title,
@@ -122,7 +134,7 @@ export class LiveTwitterRedditPublisher implements TwitterRedditPublisher {
         `tweet-${tweet.id}.${downloaded.extension}`,
         downloaded.contentType,
         downloaded.bytes,
-        downloaded.contentType === 'video/mp4' ? tweet.author.avatar : null,
+        videoPosterUrl,
       );
       return created.id;
     }
