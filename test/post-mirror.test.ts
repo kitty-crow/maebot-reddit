@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -64,15 +64,21 @@ const flair = (id: string, text: string): RedditFlairTemplate => ({
 class Reader implements MirrorReader {
   public nya: readonly RedditPost[] = [];
   public catgirl: readonly RedditPost[] = [];
-  public nyaFlairs: readonly RedditFlairTemplate[] = [];
-  public catgirlFlairs: readonly RedditFlairTemplate[] = [];
+  public nyaPostFlairs: readonly RedditFlairTemplate[] = [];
+  public catgirlPostFlairs: readonly RedditFlairTemplate[] = [];
+  public nyaUserFlairs: readonly RedditFlairTemplate[] = [];
+  public catgirlUserFlairs: readonly RedditFlairTemplate[] = [];
 
   public async newPosts(subreddit: string): Promise<readonly RedditPost[]> {
     return subreddit === 'nyaonearth' ? this.nya : this.catgirl;
   }
 
   public async postFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]> {
-    return subreddit === 'nyaonearth' ? this.nyaFlairs : this.catgirlFlairs;
+    return subreddit === 'nyaonearth' ? this.nyaPostFlairs : this.catgirlPostFlairs;
+  }
+
+  public async userFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]> {
+    return subreddit === 'nyaonearth' ? this.nyaUserFlairs : this.catgirlUserFlairs;
   }
 }
 
@@ -124,16 +130,26 @@ class Gate implements PostMirrorSourceGate {
 
 const mirror = async (
   gate: PostMirrorSourceGate | null = null,
-): Promise<{ reader: Reader; writer: Writer; service: BidirectionalPostMirror }> => {
+): Promise<{ reader: Reader; writer: Writer; service: BidirectionalPostMirror; catalogueFile: string }> => {
   const root = await mkdtemp(join(tmpdir(), 'mae-reddit-mirror-'));
   roots.push(root);
   const reader = new Reader();
   const writer = new Writer();
   const store = new PostMirrorStore(join(root, 'mirror.pb'));
+  const catalogueFile = join(root, 'flairs.json');
   return {
     reader,
     writer,
-    service: new BidirectionalPostMirror(reader, writer, store, 'nyaonearth', 'catgirlcoin', gate),
+    catalogueFile,
+    service: new BidirectionalPostMirror(
+      reader,
+      writer,
+      store,
+      'nyaonearth',
+      'catgirlcoin',
+      gate,
+      catalogueFile,
+    ),
   };
 };
 
@@ -239,12 +255,41 @@ describe('bidirectional subreddit post mirror', () => {
     expect(fixture.writer.crossposts.map(call => call.source)).toEqual(['t3_accepted']);
   });
 
-  test('mirrors semantic post flair with the target subreddit UUID rather than the source UUID', async () => {
+  test('persists the complete user and post flair UUID catalogue on startup', async () => {
+    const fixture = await mirror();
+    fixture.reader.nyaUserFlairs = [flair('nya-user-a', 'User A'), flair('nya-user-b', 'User B')];
+    fixture.reader.catgirlUserFlairs = [flair('cat-user-a', 'User A'), flair('cat-user-b', 'User B')];
+    fixture.reader.nyaPostFlairs = [flair('nya-post-a', 'Post A'), flair('nya-post-b', 'Post B')];
+    fixture.reader.catgirlPostFlairs = [flair('cat-post-a', 'Post A'), flair('cat-post-b', 'Post B')];
+    fixture.reader.nya = [post('nyaonearth', 'old-nya', 100)];
+    fixture.reader.catgirl = [post('catgirlcoin', 'old-cat', 100)];
+
+    await fixture.service.tick(1_000);
+    const persisted = JSON.parse(await readFile(fixture.catalogueFile, 'utf8')) as {
+      sourceSubreddit: string;
+      targetSubreddit: string;
+      userTemplates: { mapping: readonly { sourceTemplateId: string; targetTemplateId: string }[] };
+      postTemplates: { mapping: readonly { sourceTemplateId: string; targetTemplateId: string }[] };
+    };
+
+    expect(persisted.sourceSubreddit).toBe('catgirlcoin');
+    expect(persisted.targetSubreddit).toBe('nyaonearth');
+    expect(persisted.userTemplates.mapping.map(item => [item.sourceTemplateId, item.targetTemplateId])).toEqual([
+      ['cat-user-a', 'nya-user-a'],
+      ['cat-user-b', 'nya-user-b'],
+    ]);
+    expect(persisted.postTemplates.mapping.map(item => [item.sourceTemplateId, item.targetTemplateId])).toEqual([
+      ['cat-post-a', 'nya-post-a'],
+      ['cat-post-b', 'nya-post-b'],
+    ]);
+  });
+
+  test('mirrors post flair with the persisted target subreddit UUID rather than the source UUID', async () => {
     const fixture = await mirror();
     fixture.reader.nya = [post('nyaonearth', 'old-nya', 100)];
     fixture.reader.catgirl = [post('catgirlcoin', 'old-cat', 100)];
-    fixture.reader.nyaFlairs = [flair('nya-announcement', 'Announcement :catgirl-moon:')];
-    fixture.reader.catgirlFlairs = [flair('cat-announcement', 'Announcement :catgirl-moon:')];
+    fixture.reader.nyaPostFlairs = [flair('nya-announcement', 'Announcement :catgirl-moon:')];
+    fixture.reader.catgirlPostFlairs = [flair('cat-announcement', 'Announcement :catgirl-moon:')];
     await fixture.service.tick(1_000);
 
     fixture.reader.catgirl = [
