@@ -1,10 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditFlairTemplate } from '../reddit/types.ts';
 import { isMap, parseMap, type JsonMap } from '../types/json.ts';
 
 export type FlairKind = 'user' | 'post';
+
+export type FlairCatalogueReader = {
+  userFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]>;
+  postFlairTemplates(subreddit: string): Promise<readonly RedditFlairTemplate[]>;
+};
 
 export type FlairCatalogueResolver = {
   targetTemplateId(
@@ -133,7 +137,7 @@ class PersistedFlairCatalogue implements FlairCatalogueResolver {
 
 export const reconcileFlairCatalogue = async (
   file: string,
-  read: RedditReadClient,
+  read: FlairCatalogueReader,
   sourceSubreddit: string,
   targetSubreddit: string,
 ): Promise<FlairCatalogueResolver> => {
