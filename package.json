@@ -10,6 +10,7 @@
     "bootstrap:reputation": "bun run scripts/bootstrapReputation.ts",
     "view:reputation": "bun run scripts/viewReputation.ts",
     "experiment:member-notes": "bun run scripts/buildMemberModNotes.ts",
+    "experiment:member-notes:tmux": "bash scripts/runMemberModNotesTmux.sh",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
     "clone:flairs": "bun run scripts/cloneFlairs.ts",
     "preflight:emojis": "bun run scripts/preflightEmojis.ts",
