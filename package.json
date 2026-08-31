@@ -21,7 +21,7 @@
     "check:types": "bun run scripts/noLooseTypes.ts",
     "check:boundaries": "bun run scripts/architectureBoundaries.ts",
     "test": "bun test",
-    "ci": "bun run check && bun test && bash -n scripts/runMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh",
+    "ci": "bun run check && bun test && bash -n scripts/runMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
     "check:imports": "bun run scripts/tsImports.ts"
   },
   "dependencies": {
