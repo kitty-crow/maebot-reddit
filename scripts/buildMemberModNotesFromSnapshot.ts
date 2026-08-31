@@ -15,7 +15,6 @@ import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { snapshotCommentsForMember } from '../src/modnotes/snapshotComments.ts';
 import { MemberModNoteStore, type MemberModNoteLabel } from '../src/modnotes/store.ts';
 import { moderationHistoryFor } from '../src/reputation/moderationHistory.ts';
-import { applyModerationClassification, type ReputationSubject } from '../src/reputation/runtimePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import type { RedditComment } from '../src/reddit/types.ts';
 
@@ -75,7 +74,6 @@ console.log('Mode: PREVIEW ONLY — no Reddit reads, no Reddit writes, no reputa
 console.log('='.repeat(90));
 
 const assessed: MemberCommentAssessment[] = [];
-let projected: ReputationSubject = { points: member.points, status: member.status };
 for (const [offset, comment] of [...comments].reverse().entries()) {
   const classification: ModerationClassification = await classifier.classify(moderationItem(comment));
   assessed.push({ comment, classification });
@@ -88,7 +86,7 @@ for (const [offset, comment] of [...comments].reverse().entries()) {
   console.log(`Community: r/${comment.subreddit}`);
   console.log(`Comment: ${comment.body.trim().length > 0 ? comment.body : '[empty comment]'}`);
   console.log(`Notes: ${classification.reason}`);
-  console.log(`Decision: CONTEXT ONLY — already present in reputation ledger`);
+  console.log('Decision: CONTEXT ONLY — already present in reputation ledger');
 }
 
 let summary: string;
@@ -105,10 +103,9 @@ if (assessed.length === 0) {
   confidence = profile.confidence;
 }
 
-// Snapshot fallback never creates new scoring events. The current audit
+// Snapshot fallback never creates new scoring events. The original audit
 // baseline remains the score/status result for this otherwise inaccessible user.
-projected = { points: member.points, status: member.status };
-const note = memberModNoteText(projected.points, summary);
+const note = memberModNoteText(member.points, summary);
 await notes.generated(
   member.username,
   note,
@@ -122,8 +119,8 @@ console.log('');
 console.log('-'.repeat(90));
 console.log(`USER RESULT 1/1: u/${member.username}`);
 console.log(`Notes: ${summary}`);
-console.log(`Score: ${member.points} -> ${projected.points}`);
-console.log(`Status: ${member.status} -> ${projected.status}`);
+console.log(`Score: ${member.points} -> ${member.points}`);
+console.log(`Status: ${member.status} -> ${member.status}`);
 console.log(`Tag: ${labelText(selectedLabel)} (${selectedLabel})`);
 console.log(`Mod Note: ${note}`);
 console.log(`Confidence: ${confidence.toFixed(3)}`);
