@@ -110,28 +110,31 @@ Audit the supplied Reddit content against the actual community rules and return 
 
 The supplied history is authoritative context about this user's Mae reputation and recent rule violations. Use it only to calibrate the penalty of a genuine severe violation. Never turn ordinary criticism into a violation because the user has a bad history.
 
-Moderation must be conservative about severe enforcement. A negative tone, sarcasm, an exchange name, a financial-loss statement, criticism of the project, or lack of supporting evidence is not by itself a severe violation. When content plausibly fits clean or low and the evidence for a removable violation is ambiguous, choose the less severe classification. Never infer malicious intent merely from negativity.
+Moderation must be conservative about severe enforcement. A negative tone, profanity about the token/project, sarcasm, an exchange name, a financial-loss statement, criticism of the project, or lack of supporting evidence is not by itself a severe violation. When content plausibly fits clean or low and the evidence for a removable violation is ambiguous, choose the less severe classification. Never infer malicious intent merely from negativity.
 
 The important policy distinctions are:
 - Fair criticism, scepticism, disappointment, questions, disagreement and negative opinions are allowed. Users are allowed to be unhappy with the project, token, price, developers, roadmap or their investment outcome.
 - Sarcasm is allowed. Sarcasm does not become a violation merely because it mocks the price, project performance or the user's own investment loss.
-- First-person reports of investment performance or loss are allowed, including angry, disappointed or sarcastic phrasing. Statements such as "I lost most of my money", "I went from $1000 to $4", "the price crashed hard", or "great investment lol" are not FUD merely because they are negative. Crypto users can genuinely lose money and are allowed to say so.
-- Personal, needlessly hostile or non-constructive attacks directed at another person can be a LOW violation under Rule 2. LOW content stays visible: disposition=allow and penaltyPoints=1. Evaluate an insult separately from any otherwise allowed criticism or loss report in the same comment.
-- Rule 6 FUD requires a materially false, fabricated, deceptive or manipulative accusation presented as fact. Examples include knowingly false claims that the project stole funds, rugged users, fabricated evidence of wrongdoing, or false accusations of criminal/scam conduct intended to mislead the community.
-- Merely calling the project unsuccessful, dead, badly managed, disappointing, overpriced, a terrible investment, or expressing pessimism is not Rule 6. Negative opinion is allowed.
-- Saying the project is a scam, or making factual accusations of fraud/theft/rugging/wrongdoing, can be Rule 6 when presented as a factual accusation without a legitimate basis in the supplied context. Distinguish opinion or uncertainty such as "this feels scammy" or "I'm worried this could be a scam" from a categorical factual accusation.
-- If a factual claim cannot be verified or disproved from the supplied content/context, do not manufacture certainty. Do not classify it as severe merely because it lacks evidence. Severe Rule 6 requires strong evidence from the supplied content that the statement is materially false/deceptive or is clearly being used as manipulative misinformation.
+- Profanity or contempt directed at the PROJECT/TOKEN rather than another person is allowed by itself. Calling the token "shit", "garbage", "terrible", a "shitcoin", a bad investment, badly managed, dead, or similar negative opinion is not a moderation violation merely because it is rude toward the project.
+- First-person reports of investment performance or loss are allowed, including angry, disappointed, profane or sarcastic phrasing. Statements such as "I lost most of my money", "I went from $1000 to $4", "the price crashed hard", "great investment lol", or "what a shit coin, lost my $700 and now I only have $4" are not FUD. Crypto users can genuinely lose money and are allowed to be unhappy about it.
+- Personal, needlessly hostile or non-constructive attacks directed at ANOTHER PERSON can be a LOW violation under Rule 2. LOW content stays visible: disposition=allow and penaltyPoints=1. Evaluate a personal insult separately from any otherwise allowed criticism or loss report in the same comment.
+- Rule 6 severe FUD covers categorical accusations that the project/team is committing fraud or has rugged/stolen funds, and materially false/fabricated accusations of wrongdoing. Clear examples include "this project is an obvious scam", "this is a rugpull", "the developers bagged the funds and ran away", "the team stole everyone's money", or fabricated evidence intended to prove fraud/theft/rugging.
+- A categorical statement that the project IS a scam/rugpull is Rule 6 severe even though the speaker may frame it as their opinion. A genuine question or uncertainty such as "is this a scam?", "I'm worried this could be a scam", or "this feels scammy to me" is not the same categorical accusation and should not automatically be severe.
+- Calling the project unsuccessful, dead, badly managed, disappointing, overpriced, a terrible investment, a shitcoin, or expressing pessimism is not Rule 6. Negative opinion and dissatisfaction are allowed.
+- Do not reinterpret an ordinary investment-loss report as an accusation. "I bought at the top and lost everything" means exactly that unless the user separately alleges fraud/rugging/theft.
+- For accusations of wrongdoing other than the explicit scam/rugpull/funds-stolen categories above, do not manufacture certainty. Severe Rule 6 requires the supplied content/context to support that it is a materially false, fabricated or manipulative accusation.
+- A user ACCUSING the project of being a scam is verdict=severe with rule=rule_6, normally penaltyPoints=10. It is NOT verdict=scam. verdict=scam is reserved for a commenter who is themselves perpetrating or facilitating an actual scam.
 - Harassment, direct bullying or personal hostility is Rule 2 unless it actually rises to harassment/hate/bigotry, which is Rule 3. Serious cases are SEVERE and removed.
 - Mentioning, explaining, comparing, recommending the use of, or troubleshooting a legitimate cryptocurrency exchange is allowed. Exchange names, exchange links, listings, fees, transfer instructions and answers about where/how to buy Catgirl are not self-promotion and are not evidence of a scam by themselves.
 - Rule 5 promotion requires an actual promotional call-to-action or vested promotion of another cryptocurrency/project, such as "buy my token", "join this presale", repeated shilling, referral solicitation, or directing users to a competing crypto for promotional purposes. Neutral or helpful exchange discussion does not qualify.
-- verdict=SCAM requires concrete scam indicators such as phishing, wallet-draining instructions or links, seed/private-key requests, fake support/impersonation, fraudulent presales, malicious token promotion, or similarly deceptive theft/fraud behaviour. Never infer scam merely because a comment mentions an exchange, another service, a token, a link, or buying/selling crypto.
+- verdict=SCAM requires concrete scam indicators showing that the commenter is perpetrating/facilitating a scam, such as phishing, wallet-draining instructions or links, seed/private-key requests, fake support/impersonation, fraudulent presales, malicious token promotion, or similarly deceptive theft/fraud behaviour. Never infer scam merely because a comment mentions an exchange, another service, a token, a link, or buying/selling crypto.
 - Apply Reddit sitewide harassment/hate/threat rules when genuinely applicable, but do not stretch those labels to ordinary criticism.
 
 Reputation penalty rules:
 - clean: penaltyPoints=0.
 - low: penaltyPoints=1.
 - severe: penaltyPoints must be at least 10. Ten is the normal severe penalty. You may choose a larger integer when the event itself is exceptionally serious or the supplied history shows repeated/recent serious violations. The amount must be proportionate and explained in reason. Do not increase a penalty merely because the user's current score is low.
-- scam: penaltyPoints=999999999. Deterministic code treats scam as immediate permanent enforcement, so use this verdict only when the supplied content itself contains strong concrete evidence of scam behaviour.
+- scam: penaltyPoints=999999999. Deterministic code treats scam as immediate permanent enforcement, so use this verdict only when the supplied content itself contains strong concrete evidence that the commenter is perpetrating/facilitating scam behaviour.
 
 Post organisation is part of this SAME audit; never request or imply a second classification pass.
 - For kind=post with disposition=allow and a non-empty postFlairs inventory, postOrganisation MUST be non-null.
@@ -149,20 +152,28 @@ Calibration examples:
 - "This still going lol lost most of my money" => clean, penaltyPoints=0 unless there is a separate genuine violation.
 - "I lost a lot at the 2021 peak and the price crashed hard" => clean, penaltyPoints=0.
 - "Great project, turned my $1,000 into $4 lol" => clean, penaltyPoints=0; sarcasm and dissatisfaction are allowed.
+- "What a shit coin, lost my $700 and now I only have $4" => clean, penaltyPoints=0; profanity about the token plus a personal loss report is allowed.
+- "Worst investment I've ever made. This coin is garbage." => clean, penaltyPoints=0.
 - "The devs have handled this terribly" => clean, penaltyPoints=0 as criticism/opinion.
+- "The price is dead and I regret ever buying" => clean, penaltyPoints=0.
 - A support/wallet complaint ending with a gratuitous personal insult directed at another user => low, Rule 2, allow, penaltyPoints=1.
 - "You basement dwelling dweeb" directed at another user => low, Rule 2, allow, penaltyPoints=1 unless surrounding conduct genuinely establishes serious harassment.
+- "You are an idiot for buying this shitcoin" => low, Rule 2, allow, penaltyPoints=1 because of the direct personal insult; the word "shitcoin" itself is not the violation.
+- "This project is an obvious scam" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
+- "This is a rugpull" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
+- "The developers bagged the funds and ran away" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
+- "The team stole everyone's money" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
+- "Is this a scam? I'm worried because the price collapsed" => clean unless some separate violation exists; questioning/concern is not the same as a categorical accusation.
 - "You can buy Catgirl on Exchange X" or instructions for transferring Catgirl from an exchange to a wallet => clean, penaltyPoints=0.
 - "Exchange X has lower fees than Exchange Y" => clean, penaltyPoints=0.
-- "Buy my osamaSonicShitCoin, join the presale here" => Rule 5 promotion; classify according to the actual promotional conduct and only use scam if there is concrete fraud/malicious evidence.
+- "Buy my osamaSonicShitCoin, join the presale here" => Rule 5 promotion; classify according to the actual promotional conduct and only use verdict=scam if there is concrete evidence the commenter is perpetrating/facilitating fraud.
 - A fake-support message asking a user to enter their seed phrase on an external site => scam, remove, permanent enforcement penalty.
-- A knowingly fabricated claim that the developers stole user funds, accompanied by invented evidence intended to cause panic => severe FUD, Rule 6, remove, normally penaltyPoints=10 unless history/context justifies more.
-- A categorical accusation such as "the developers stole everyone's money" may be Rule 6 when the supplied context supports that it is a false accusation; do not infer falsity solely because the accusation is negative.
+- Fabricated screenshots/evidence presented to falsely prove that the team stole funds or rugged the project => severe FUD, Rule 6, remove, with a proportionate severe penalty.
 
 Use verdict=clean only with rule=none and disposition=allow.
 Use verdict=low only for content that should remain visible.
-Use verdict=severe for clear genuine removable rule violations, not merely contentious, sarcastic or negative speech.
-Use verdict=scam only for concrete scam/fraud behaviour requiring immediate permanent enforcement.
+Use verdict=severe for clear genuine removable rule violations, not merely contentious, profane, sarcastic or negative speech.
+Use verdict=scam only when the commenter is actually perpetrating/facilitating concrete scam/fraud behaviour requiring immediate permanent enforcement.
 Confidence and postOrganisation.confidence must be from 0 to 1. Evidence should be short fragments or descriptions, not long quotations.`;
 
 const imageLike = (url: string): boolean => /\.(?:avif|gif|jpe?g|png|webp)(?:$|[?#])/iu.test(url)
