@@ -14,6 +14,7 @@ export type MemberAuditResult = {
 
 export type ParsedMemberAudit = {
   readonly declaredMembers: number | null;
+  readonly attemptedUsers: readonly string[];
   readonly results: readonly MemberAuditResult[];
   readonly duplicateUsers: readonly string[];
 };
@@ -53,6 +54,18 @@ const label = (raw: string): MemberModNoteLabel => {
   const value = raw.trim() as MemberModNoteLabel;
   if (!labels.has(value)) throw new Error(`Member audit label is invalid: ${raw}`);
   return value;
+};
+
+const attemptedUsersFrom = (lines: readonly string[]): readonly string[] => {
+  const users = new Map<string, string>();
+  for (const line of lines) {
+    const match = /CURRENT USER\s+\d+\/\d+:\s+u\/([A-Za-z0-9_-]{1,32})\s*$/u.exec(line);
+    const username = match?.[1];
+    if (username === undefined) continue;
+    const key = username.toLowerCase();
+    if (!users.has(key)) users.set(key, username);
+  }
+  return [...users.values()].sort((a, b) => a.localeCompare(b));
 };
 
 export const parseMemberAuditLog = (raw: string): ParsedMemberAudit => {
@@ -138,6 +151,7 @@ export const parseMemberAuditLog = (raw: string): ParsedMemberAudit => {
 
   return {
     declaredMembers,
+    attemptedUsers: attemptedUsersFrom(lines),
     results: [...records.values()].sort((a, b) => a.username.localeCompare(b.username)),
     duplicateUsers: [...duplicates].sort((a, b) => a.localeCompare(b)),
   };
