@@ -117,7 +117,7 @@ if [[ "$COUNT" -eq 0 ]]; then
     echo "Completion logs already available:"
     printf '  %s\n' "${COMPLETIONS[@]}"
   fi
-  exit 0
+  exec bash scripts/previewMemberModNotesReconciliation.sh "--base=$BASE"
 fi
 
 cp --reflink=auto -- "$SOURCE_REPUTATION" "$SNAPSHOT_REPUTATION"
@@ -156,6 +156,7 @@ NOTES_FILE="$5"
 RATE_INTERVAL_MS="$6"
 MAX_USER_ATTEMPTS="$7"
 FAILED="$8"
+BASE="$9"
 
 printf '%s\n' '=========================================================================================='
 printf 'MAE MEMBER MOD NOTES — MISSING AUDIT COMPLETION\n'
@@ -239,6 +240,8 @@ fi
 printf 'MISSING AUDIT COMPLETION COMPLETE\n'
 printf 'Completed users: %s\n' "$COUNT"
 printf '%s\n' '=========================================================================================='
+printf '\nStarting reconciliation preview for the now-complete audit...\n'
+exec bash scripts/previewMemberModNotesReconciliation.sh "--base=$BASE"
 WORKER
 chmod +x "$WORKER"
 
@@ -252,6 +255,7 @@ ARGS=(
   "$RATE_INTERVAL_MS"
   "$MAX_USER_ATTEMPTS"
   "$FAILED"
+  "$BASE"
 )
 printf -v COMMAND '%q ' "${ARGS[@]}"
 printf -v LOG_Q '%q' "$LOG"
