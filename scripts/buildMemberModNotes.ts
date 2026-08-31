@@ -13,8 +13,9 @@ import {
 } from '../src/modnotes/assessor.ts';
 import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
-import { MemberModNoteStore } from '../src/modnotes/store.ts';
+import { MemberModNoteStore, type MemberModNoteLabel } from '../src/modnotes/store.ts';
 import { moderationHistoryFor } from '../src/reputation/moderationHistory.ts';
+import { applyModerationClassification, type ReputationSubject } from '../src/reputation/runtimePolicy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
 import type { RedditComment } from '../src/reddit/types.ts';
@@ -70,26 +71,103 @@ const classify = async (comment: RedditComment, username: string): Promise<Moder
 const sameSample = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
+const progressBar = (fraction: number, width = 32): string => {
+  const safe = Math.max(0, Math.min(1, fraction));
+  const filled = Math.round(safe * width);
+  return `[${'█'.repeat(filled)}${'░'.repeat(width - filled)}] ${(safe * 100).toFixed(1).padStart(5)}%`;
+};
+
+const overallFraction = (
+  userIndex: number,
+  userCount: number,
+  commentIndex: number,
+  commentCount: number,
+): number => {
+  if (userCount <= 0) return 1;
+  const withinUser = commentCount <= 0 ? 1 : Math.max(0, Math.min(1, commentIndex / commentCount));
+  return Math.max(0, Math.min(1, (userIndex + withinUser) / userCount));
+};
+
+const labelText = (label: MemberModNoteLabel): string => {
+  if (label === 'HELPFUL_USER') return 'Helpful';
+  if (label === 'SOLID_CONTRIBUTOR') return 'Good Contributor';
+  if (label === 'SPAM_WATCH') return 'Spam Watch';
+  if (label === 'SPAM_WARNING') return 'Spam Warning';
+  if (label === 'ABUSE_WARNING') return 'Abuse Warning';
+  return 'No Label';
+};
+
+const decisionText = (
+  before: ReputationSubject,
+  after: ReputationSubject & { readonly ban?: boolean },
+  classification: ModerationClassification,
+  alreadyScored: boolean,
+): string => {
+  if (alreadyScored) return 'already scored earlier; no reputation change';
+  if (after.ban === true) return `BAN (${classification.verdict}, ${classification.rule})`;
+  const delta = after.points - before.points;
+  if (delta > 0) return `UP SCORE +${delta} (${classification.verdict})`;
+  if (delta < 0) return `LOWER SCORE ${delta} (${classification.verdict}, ${classification.rule})`;
+  if (classification.disposition === 'remove') return `REMOVE, score unchanged (${classification.verdict}, ${classification.rule})`;
+  return `NO SCORE CHANGE (${classification.verdict})`;
+};
+
+const printCommentResult = (
+  userIndex: number,
+  userCount: number,
+  username: string,
+  commentIndex: number,
+  commentCount: number,
+  comment: RedditComment,
+  classification: ModerationClassification,
+  before: ReputationSubject,
+  after: ReputationSubject & { readonly ban?: boolean },
+  alreadyScored: boolean,
+): void => {
+  const fraction = overallFraction(userIndex, userCount, commentIndex, commentCount);
+  console.log('');
+  console.log(`${progressBar(fraction)}  user ${userIndex + 1}/${userCount}: u/${username}  comment ${commentIndex}/${commentCount}`);
+  console.log(`Community: r/${comment.subreddit}`);
+  console.log(`Reddit item: ${comment.fullname}  created=${new Date(comment.createdUtc * 1_000).toISOString()}`);
+  console.log('Comment:');
+  console.log(comment.body.trim().length > 0 ? comment.body : '[empty comment]');
+  console.log(`Notes: ${classification.reason}`);
+  if (classification.evidence.length > 0) console.log(`Evidence: ${classification.evidence.join(' | ')}`);
+  console.log(`Score: ${before.points} -> ${after.points}`);
+  console.log(`Status: ${before.status} -> ${after.status}`);
+  console.log(`Decision: ${decisionText(before, after, classification, alreadyScored)}`);
+};
+
 let generated = 0;
 let reused = 0;
 let scored = 0;
 let posted = 0;
 let failed = 0;
 
-console.log(
-  `[Member Mod Notes] members=${members.length} mode=${apply ? 'APPLY' : 'PREVIEW'} communities=${canonicalCommunities.join(',')}`,
-);
+console.log('='.repeat(90));
+console.log('MAE MEMBER MOD NOTES EXPERIMENT');
+console.log('='.repeat(90));
+console.log(`Members: ${members.length}`);
+console.log(`Mode: ${apply ? 'APPLY' : 'PREVIEW'}`);
+console.log(`Communities: ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}`);
+console.log(`Member note store: ${process.env['REDDIT_MEMBER_MOD_NOTES_FILE']?.trim() || 'data/memberModNotes.pb'}`);
 if (apply) {
-  console.log('[Member Mod Notes] APPLY mode sends untracked sampled comments through Mae\'s normal reputation scoring path, then posts the resulting native Mod Notes to both moderated subreddits.');
+  console.log('APPLY mode: untracked sampled comments mutate canonical reputation, then native Mod Notes are posted to both communities.');
 } else {
-  console.log('[Member Mod Notes] preview mode writes only the separate memberModNotes.pb store; add --apply to score untracked sampled comments and post native Reddit Mod Notes.');
+  console.log('PREVIEW mode: reputation changes are simulated and memberModNotes.pb is written; Reddit and reputation.pb are not mutated.');
 }
+console.log('='.repeat(90));
 
 for (let index = 0; index < members.length; index += 1) {
   const member = members[index];
   if (member === undefined) continue;
   const progress = `${index + 1}/${members.length}`;
   try {
+    console.log('');
+    console.log('='.repeat(90));
+    console.log(`${progressBar(overallFraction(index, members.length, 0, 1))}  CURRENT USER ${progress}: u/${member.username}`);
+    console.log('Fetching the 10 most recent comments across the two moderated communities...');
+
     const comments = await reddit.recentCommentsInCommunities(member.username, canonicalCommunities, 10, 1_000);
     const sampleFullnames = comments.map(comment => comment.fullname);
     const existing = await notes.record(member.username);
@@ -103,62 +181,132 @@ for (let index = 0; index < members.length; index += 1) {
       : false;
 
     if (
-      !refresh
+      apply
+      && !refresh
+      && allAlreadyScored
       && existing !== null
       && existing.note !== null
       && existing.label !== null
       && existing.note.startsWith(currentScorePrefix)
       && sameSample(existing.sampledCommentFullnames, sampleFullnames)
-      && (!apply || allAlreadyScored)
     ) {
       reused += 1;
-      console.log(`[Member Mod Notes] ${progress} u/${member.username}: reuse ${comments.length}-comment assessment.`);
-      if (apply) {
-        const failures: string[] = [];
-        for (const community of canonicalCommunities) {
-          if (existing.appliedTo.some(value => value.toLowerCase() === community)) continue;
-          try {
-            await reddit.addModNote(community, member.username, existing.note, existing.label);
-            await notes.markApplied(member.username, community);
-            posted += 1;
-          } catch (error) {
-            failures.push(`r/${community}: ${safeError(error)}`);
-          }
+      console.log(`Sample unchanged and all ${comments.length} comments are already scored. Reusing stored assessment.`);
+      console.log(`Notes: ${existing.summary ?? existing.note}`);
+      console.log(`Score: ${currentBefore.points}`);
+      console.log(`Status: ${currentBefore.status}`);
+      console.log(`Tag: ${labelText(existing.label)}`);
+      console.log(`Mod Note: ${existing.note}`);
+
+      const failures: string[] = [];
+      for (const community of canonicalCommunities) {
+        if (existing.appliedTo.some(value => value.toLowerCase() === community)) {
+          console.log(`Reddit: r/${community} already has this experiment note recorded as applied.`);
+          continue;
         }
-        if (failures.length > 0) {
-          failed += 1;
-          await notes.failed(member.username, failures.join(' | '));
+        try {
+          console.log(`Reddit: posting native Mod Note to r/${community}...`);
+          await reddit.addModNote(community, member.username, existing.note, existing.label);
+          await notes.markApplied(member.username, community);
+          posted += 1;
+          console.log(`Reddit: posted to r/${community}.`);
+        } catch (error) {
+          failures.push(`r/${community}: ${safeError(error)}`);
         }
       }
+      if (failures.length > 0) {
+        failed += 1;
+        await notes.failed(member.username, failures.join(' | '));
+      }
+      console.log(`${progressBar(overallFraction(index + 1, members.length, 0, 1))}  completed u/${member.username}`);
       continue;
     }
 
+    console.log(`Found ${comments.length}/10 qualifying comments. Starting Mae moderation assessment.`);
     const assessed: MemberCommentAssessment[] = [];
-    for (const comment of [...comments].reverse()) {
+    let projected: ReputationSubject = {
+      points: currentBefore.points,
+      status: currentBefore.status,
+    };
+    const chronological = [...comments].reverse();
+
+    for (let commentOffset = 0; commentOffset < chronological.length; commentOffset += 1) {
+      const comment = chronological[commentOffset];
+      if (comment === undefined) continue;
+      const commentNumber = commentOffset + 1;
+      console.log('');
+      console.log(`${progressBar(overallFraction(index, members.length, commentOffset, chronological.length))}  user ${progress}: u/${member.username}`);
+      console.log(`Checking comment ${commentNumber}/${chronological.length} with Mae...`);
+      console.log(`Comment: ${comment.body.trim().length > 0 ? comment.body : '[empty comment]'}`);
+      console.log('LLM: analysing...');
+
       const classification = await classify(comment, member.username);
       assessed.push({ comment, classification });
-      if (!apply || await reputation.hasContribution(comment.fullname)) continue;
-      if (comment.author === null || comment.author.toLowerCase() !== member.username.toLowerCase()) continue;
-      await reputation.applyModeration({
-        fullname: comment.fullname,
-        kind: 'comment',
-        author: member.username,
-        createdAt: comment.createdUtc,
-        score: comment.score,
-        permalink: comment.permalink,
-        content: comment.body,
+      const alreadyScored = await reputation.hasContribution(comment.fullname);
+      const before: ReputationSubject = apply
+        ? (() => {
+            const value = projected;
+            return { points: value.points, status: value.status };
+          })()
+        : { points: projected.points, status: projected.status };
+
+      let after: ReputationSubject & { readonly ban?: boolean };
+      if (alreadyScored) {
+        after = { points: before.points, status: before.status, ban: false };
+      } else if (apply) {
+        if (comment.author === null || comment.author.toLowerCase() !== member.username.toLowerCase()) {
+          throw new Error(`Reddit comment ${comment.fullname} no longer belongs to u/${member.username}`);
+        }
+        const next = await reputation.applyModeration({
+          fullname: comment.fullname,
+          kind: 'comment',
+          author: member.username,
+          createdAt: comment.createdUtc,
+          score: comment.score,
+          permalink: comment.permalink,
+          content: comment.body,
+          classification,
+          moderatedAt: Math.floor(Date.now() / 1_000),
+        });
+        after = {
+          points: next.points,
+          status: next.status,
+          ban: next.status === 'banned' || next.status === 'scam',
+        };
+        scored += 1;
+      } else {
+        const transition = applyModerationClassification(projected, classification);
+        after = {
+          points: transition.points,
+          status: transition.status,
+          ban: transition.ban,
+        };
+      }
+      projected = { points: after.points, status: after.status };
+      printCommentResult(
+        index,
+        members.length,
+        member.username,
+        commentNumber,
+        chronological.length,
+        comment,
         classification,
-        moderatedAt: Math.floor(Date.now() / 1_000),
-      });
-      scored += 1;
+        before,
+        after,
+        alreadyScored,
+      );
     }
 
+    console.log('');
+    console.log('Summarising this member across the combined comment sample...');
     const profile = await assessor.assess(member.username, assessed);
-    const current = await reputation.user(member.username);
-    if (current === null) {
+    const finalState = apply ? await reputation.user(member.username) : null;
+    if (apply && finalState === null) {
       throw new Error(`Reputation member u/${member.username} disappeared during assessment`);
     }
-    const note = memberModNoteText(current.points, profile.summary);
+    const finalPoints = finalState?.points ?? projected.points;
+    const finalStatus = finalState?.status ?? projected.status;
+    const note = memberModNoteText(finalPoints, profile.summary);
     await notes.generated(
       member.username,
       note,
@@ -169,25 +317,37 @@ for (let index = 0; index < members.length; index += 1) {
     );
     generated += 1;
 
-    console.log(
-      `[Member Mod Notes] ${progress} u/${member.username}: comments=${comments.length} score=${current.points} label=${profile.label}`,
-    );
+    console.log('');
+    console.log('-'.repeat(90));
+    console.log(`USER RESULT ${progress}: u/${member.username}`);
+    console.log(`Notes: ${profile.summary}`);
+    console.log(`Score: ${currentBefore.points} -> ${finalPoints}`);
+    console.log(`Status: ${currentBefore.status} -> ${finalStatus}`);
+    console.log(`Tag: ${labelText(profile.label)} (${profile.label})`);
+    console.log(`Mod Note: ${note}`);
+    console.log(`Confidence: ${profile.confidence.toFixed(3)}`);
+    console.log('-'.repeat(90));
 
-    if (!apply) continue;
-    const failures: string[] = [];
-    for (const community of canonicalCommunities) {
-      try {
-        await reddit.addModNote(community, member.username, note, profile.label);
-        await notes.markApplied(member.username, community);
-        posted += 1;
-      } catch (error) {
-        failures.push(`r/${community}: ${safeError(error)}`);
+    if (apply) {
+      const failures: string[] = [];
+      for (const community of canonicalCommunities) {
+        try {
+          console.log(`Reddit: posting native Mod Note to r/${community}...`);
+          await reddit.addModNote(community, member.username, note, profile.label);
+          await notes.markApplied(member.username, community);
+          posted += 1;
+          console.log(`Reddit: posted to r/${community}.`);
+        } catch (error) {
+          failures.push(`r/${community}: ${safeError(error)}`);
+        }
+      }
+      if (failures.length > 0) {
+        failed += 1;
+        await notes.failed(member.username, failures.join(' | '));
       }
     }
-    if (failures.length > 0) {
-      failed += 1;
-      await notes.failed(member.username, failures.join(' | '));
-    }
+
+    console.log(`${progressBar(overallFraction(index + 1, members.length, 0, 1))}  completed u/${member.username}`);
   } catch (error) {
     failed += 1;
     const message = safeError(error);
@@ -196,6 +356,8 @@ for (let index = 0; index < members.length; index += 1) {
   }
 }
 
-console.log(
-  `[Member Mod Notes] complete members=${members.length} generated=${generated} reused=${reused} scored=${scored} posted=${posted} failed=${failed}`,
-);
+console.log('');
+console.log('='.repeat(90));
+console.log(`${progressBar(1)}  COMPLETE`);
+console.log(`members=${members.length} generated=${generated} reused=${reused} scored=${scored} posted=${posted} failed=${failed}`);
+console.log('='.repeat(90));
