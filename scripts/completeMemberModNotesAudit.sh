@@ -45,11 +45,27 @@ if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux is required for detached audit completion." >&2
   exit 1
 fi
+
 if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "tmux session '$SESSION' already exists." >&2
-  echo "Attach with: tmux attach -t '$SESSION'" >&2
+  ACTIVE_MANIFEST="$(
+    find "$RUN_ROOT" -type f -path '*-missing-rerun/manifest.txt' -print 2>/dev/null \
+      | sort -r \
+      | while IFS= read -r manifest; do
+          if grep -Fqx "source_audit=$BASE" "$manifest"; then
+            printf '%s\n' "$manifest"
+            break
+          fi
+        done
+  )"
+  if [[ -n "$ACTIVE_MANIFEST" ]]; then
+    ACTIVE_RUN="$(dirname "$ACTIVE_MANIFEST")"
+    echo "Audit completion worker is already running; reopening its dashboard."
+    exec bun run scripts/memberModNotesTui.ts -- "--run=$ACTIVE_RUN"
+  fi
+  echo "tmux session '$SESSION' already exists but is not associated with this audit." >&2
   exit 1
 fi
+
 if [[ ! -f "$SOURCE_REPUTATION" ]]; then
   echo "Original audit reputation snapshot is missing: $SOURCE_REPUTATION" >&2
   exit 1
@@ -123,6 +139,7 @@ candidates=$CANDIDATES
 candidate_count=$COUNT
 rate_interval_ms=$RATE_INTERVAL_MS
 max_user_attempts=$MAX_USER_ATTEMPTS
+tmux_session=$SESSION
 mode=PREVIEW_ONLY_MISSING_USERS
 EOF
 
@@ -176,17 +193,37 @@ while IFS= read -r username; do
       break
     fi
 
+    if grep -Eq '(forbidden HTTP 403|not_found HTTP 404)' "$tmp"; then
+      printf '\nSNAPSHOT FALLBACK: u/%s — Reddit profile history is inaccessible; using persisted contribution context.\n' "$username"
+      rm -f "$tmp"
+      fallback_tmp="$(mktemp)"
+      set +e
+      env \
+        MEMBER_MOD_NOTES_ISOLATED_RUN=1 \
+        REDDIT_REPUTATION_STATE_FILE="$SNAPSHOT_REPUTATION" \
+        REDDIT_MEMBER_MOD_NOTES_FILE="$NOTES_FILE" \
+        bun run scripts/buildMemberModNotesFromSnapshot.ts -- "--user=$username" \
+        2>&1 | tee "$fallback_tmp"
+      fallback_status=${PIPESTATUS[0]}
+      set -e
+      if [[ "$fallback_status" -eq 0 ]] && grep -Eq '^USER RESULT 1/1: ' "$fallback_tmp"; then
+        success=1
+      fi
+      rm -f "$fallback_tmp"
+      break
+    fi
+
     rm -f "$tmp"
     if (( attempt < MAX_USER_ATTEMPTS )); then
       delay=$((attempt * 10))
-      printf 'u/%s did not produce a final result; retrying in %ds.\n' "$username" "$delay"
+      printf 'u/%s hit a transient failure; retrying in %ds.\n' "$username" "$delay"
       sleep "$delay"
     fi
   done
 
   if [[ "$success" -ne 1 ]]; then
     printf '%s\n' "$username" >> "$FAILED"
-    printf 'u/%s exhausted all retries without a USER RESULT.\n' "$username" >&2
+    printf 'u/%s could not produce a USER RESULT.\n' "$username" >&2
   fi
 done < "$CANDIDATES"
 
@@ -223,18 +260,12 @@ tmux new-session -d -s "$SESSION" -c "$ROOT" \
   "set -o pipefail; ${COMMAND}2>&1 | tee -a ${LOG_Q}"
 
 echo "Started missing-user audit completion in tmux session '$SESSION'."
+echo "Worker survives SSH disconnects; leaving the dashboard does not stop it."
 echo ""
 echo "Original audit:       $BASE"
 echo "Original baseline:    $SOURCE_REPUTATION"
 echo "Missing users now:    $COUNT"
-echo "Candidate list:       $CANDIDATES"
-echo "Completion log:       $LOG"
-echo "Failed-user list:     $FAILED"
-echo "Rate interval:        ${RATE_INTERVAL_MS}ms"
-echo "Attempts per user:    $MAX_USER_ATTEMPTS"
+echo "Completion state:     $RUN_DIR"
 echo ""
-echo "Only users without an existing USER RESULT are processed."
-echo "The original reputation snapshot is copied; no live reputation mutation occurs."
-echo "This runner never passes --apply and never writes Reddit Mod Notes."
-echo ""
-echo "Watch: tail -n +1 -F '$LOG'"
+
+exec bun run scripts/memberModNotesTui.ts -- "--run=$RUN_DIR"
