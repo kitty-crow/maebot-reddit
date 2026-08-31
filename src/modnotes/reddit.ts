@@ -30,13 +30,12 @@ const defaultSleep = async (milliseconds: number): Promise<void> => {
   await new Promise<void>(resolve => setTimeout(resolve, milliseconds));
 };
 
-const json = async (response: Response, context: string): Promise<Json> => {
-  const raw = await response.text();
+const jsonPayload = (raw: string, context: string, status: number): Json => {
   if (raw.trim().length === 0) return null;
   try {
     return parseJson(raw);
   } catch {
-    throw new RedditError(`${context} returned invalid JSON`, 'invalid_response', response.status);
+    throw new RedditError(`${context} returned invalid JSON`, 'invalid_response', status);
   }
 };
 
@@ -133,7 +132,9 @@ export class MemberModNotesRedditClient {
     const community = subreddit(rawSubreddit);
     const user = username(rawUsername);
     const text = note.trim();
-    if (text.length === 0 || text.length > 250) throw new Error('Reddit Mod Note text must be from 1 to 250 characters');
+    if (text.length === 0 || text.length > 250) {
+      throw new Error('Reddit Mod Note text must be from 1 to 250 characters');
+    }
     const form = new URLSearchParams({
       api_type: 'json',
       subreddit: community,
@@ -146,7 +147,9 @@ export class MemberModNotesRedditClient {
 
   private async token(force = false): Promise<string> {
     const now = Date.now();
-    if (!force && this.tokenCache !== null && this.tokenCache.until > now + 60_000) return this.tokenCache.value;
+    if (!force && this.tokenCache !== null && this.tokenCache.until > now + 60_000) {
+      return this.tokenCache.value;
+    }
     const body = new URLSearchParams({
       grant_type: 'password',
       username: this.cfg.username,
@@ -168,13 +171,22 @@ export class MemberModNotesRedditClient {
       throw new RedditError('OAuth token request failed at the network boundary', 'network');
     }
     if (!response.ok) {
-      throw new RedditError('OAuth token request was rejected', statusKind(response.status), response.status, retryAfterMs(response.headers));
+      throw new RedditError(
+        'OAuth token request was rejected',
+        statusKind(response.status),
+        response.status,
+        retryAfterMs(response.headers),
+      );
     }
-    const payload = await json(response, 'OAuth token request');
-    if (!isMap(payload)) throw new RedditError('OAuth token response was not an object', 'invalid_response', response.status);
+    const payload = jsonPayload(await response.text(), 'OAuth token request', response.status);
+    if (!isMap(payload)) {
+      throw new RedditError('OAuth token response was not an object', 'invalid_response', response.status);
+    }
     const value = strVal(payload['access_token'], 'access_token');
     const seconds = numVal(payload['expires_in'], 'expires_in');
-    if (value.length === 0 || seconds <= 0) throw new RedditError('OAuth token response was incomplete', 'invalid_response', response.status);
+    if (value.length === 0 || seconds <= 0) {
+      throw new RedditError('OAuth token response was incomplete', 'invalid_response', response.status);
+    }
     this.tokenCache = { value, until: now + Math.floor(seconds * 1_000) };
     return value;
   }
@@ -219,11 +231,15 @@ export class MemberModNotesRedditClient {
         throw last;
       }
 
-      const payload = await json(response, `${method} ${url.pathname}`);
       if (response.ok) {
+        const payload = jsonPayload(await response.text(), `${method} ${url.pathname}`, response.status);
         const applicationError = firstApiError(payload);
         if (applicationError !== null) {
-          throw new RedditError(`${method} ${url.pathname} rejected: ${applicationError}`, 'invalid_response', response.status);
+          throw new RedditError(
+            `${method} ${url.pathname} rejected: ${applicationError}`,
+            'invalid_response',
+            response.status,
+          );
         }
         return payload;
       }
