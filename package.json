@@ -12,6 +12,7 @@
     "audit:member-notes:complete": "bash scripts/completeMemberModNotesAudit.sh",
     "audit:member-notes:apply": "MEMBER_MOD_NOTES_RECONCILE=1 bun run scripts/reconcileMemberModNotesAudit.ts --apply",
     "apply:member-notes": "bun run scripts/applyMemberModNotes.ts",
+    "apply:member-notes:tmux": "bash scripts/runApplyMemberModNotesTmux.sh",
     "experiment:member-notes": "bun run scripts/buildMemberModNotes.ts",
     "experiment:member-notes:tmux": "bash scripts/runMemberModNotesTmux.sh",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
@@ -22,7 +23,7 @@
     "check:types": "bun run scripts/noLooseTypes.ts",
     "check:boundaries": "bun run scripts/architectureBoundaries.ts",
     "test": "bun test",
-    "ci": "bun run check && bun test && bash -n scripts/runMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
+    "ci": "bun run check && bun test && bash -n scripts/runMemberModNotesTmux.sh scripts/runApplyMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
     "check:imports": "bun run scripts/tsImports.ts"
   },
   "dependencies": {
