@@ -25,12 +25,14 @@ const status = (value: Json | undefined): ReputationStatus => {
 };
 
 export const memberInventoryFromReputation = (raw: Json): readonly MemberInventoryRow[] => {
-  if (!isMap(raw) || raw['schema'] !== 1 || !isMap(raw['users'])) {
+  if (!isMap(raw) || raw['schema'] !== 1) {
     throw new Error('Reputation protobuf does not contain a valid users inventory');
   }
+  const users = raw['users'];
+  if (!isMap(users)) throw new Error('Reputation protobuf does not contain a valid users inventory');
 
   const out: MemberInventoryRow[] = [];
-  for (const value of Object.values(raw['users'])) {
+  for (const value of Object.values(users)) {
     if (!isMap(value) || typeof value['username'] !== 'string') continue;
     const userStatus = status(value['status']);
     out.push({
