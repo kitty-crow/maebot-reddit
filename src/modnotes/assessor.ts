@@ -18,10 +18,23 @@ export type MemberCommentAssessment = {
   readonly classification: ModerationClassification;
 };
 
+export type MemberActivityAssessment = {
+  readonly fullname: string;
+  readonly kind: 'post' | 'comment';
+  readonly subreddit: string;
+  readonly text: string;
+  readonly classification: ModerationClassification;
+};
+
 export type MemberContributionAssessment = {
   readonly summary: string;
   readonly label: MemberModNoteLabel;
   readonly confidence: number;
+};
+
+export type ExistingMemberContributionAssessment = {
+  readonly summary: string | null;
+  readonly label: MemberModNoteLabel | null;
 };
 
 const labels: readonly MemberModNoteLabel[] = [
@@ -56,6 +69,24 @@ Select exactly one Reddit Mod Note label:
 Do not choose a warning label merely because Mae classified one comment as low or severe. Judge the user's overall recent pattern and reserve warning labels for clear evidence. Do not label fair criticism, scepticism, disagreement or negative opinions as abuse or spam.
 
 The summary must be one compact sentence, no more than 170 characters, with no username and no score. Confidence must be from 0 to 1.`;
+
+export const memberUpdateInstructions = `You are Mae's incremental member-contribution summariser for the Catgirl Coin Reddit communities.
+You are given the member's existing moderator summary/label plus exactly one new post or comment and Mae's semantic moderation classification for that new activity.
+Return an UPDATED summary and label. Do not rebuild the member from scratch and do not forget established context merely because the newest interaction is different.
+
+Treat the existing summary and label as compressed accumulated context. Integrate the new activity proportionately. Preserve established patterns unless the new evidence genuinely changes them. A single clean interaction should not erase a well-established abuse/spam pattern, and a single low-level violation should not manufacture a warning label where no pattern exists.
+
+Fair criticism, scepticism, disappointment, sarcasm, investment losses, project-directed profanity, ordinary cryptocurrency comparisons, exchange/network discussion and first-party Nya/Catgirl ecosystem discussion are not abuse or spam by themselves. Follow the supplied moderation classification for the new activity rather than inventing a stricter interpretation.
+
+Labels:
+- NONE: no strong pattern, mixed/insufficient evidence, or ordinary participation.
+- HELPFUL_USER: clearly helpful participation.
+- SOLID_CONTRIBUTOR: consistently constructive good-faith participation.
+- SPAM_WATCH: mild/uncertain repeated promotion or spam concern.
+- SPAM_WARNING: clear repeated spam or unwanted promotion.
+- ABUSE_WARNING: clear repeated abusive, harassing or seriously hostile conduct.
+
+The summary must be one compact moderator-facing sentence, no more than 170 characters, with no username and no score. Do not infer sensitive/private traits. Confidence must be from 0 to 1.`;
 
 const checked = (value: MemberContributionAssessment): MemberContributionAssessment => {
   if (!Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
@@ -94,6 +125,39 @@ const inputFor = (
   }],
 }];
 
+const updateInputFor = (
+  username: string,
+  existing: ExistingMemberContributionAssessment,
+  activity: MemberActivityAssessment,
+): readonly object[] => [{
+  role: 'user',
+  content: [{
+    type: 'input_text',
+    text: JSON.stringify({
+      source: 'reddit',
+      username,
+      existing: {
+        summary: existing.summary,
+        label: existing.label,
+      },
+      newActivity: {
+        fullname: activity.fullname,
+        kind: activity.kind,
+        subreddit: activity.subreddit,
+        text: activity.text,
+        moderation: {
+          verdict: activity.classification.verdict,
+          rule: activity.classification.rule,
+          disposition: activity.classification.disposition,
+          penaltyPoints: activity.classification.penaltyPoints,
+          reason: activity.classification.reason,
+          evidence: activity.classification.evidence,
+        },
+      },
+    }),
+  }],
+}];
+
 export class MemberContributionAssessor {
   private readonly api: OpenAISchema<MemberContributionAssessment>;
 
@@ -122,6 +186,22 @@ export class MemberContributionAssessor {
       body: {
         model: this.cfg.model,
         instructions: memberAssessmentInstructions,
+        reasoning: { effort: this.cfg.effort },
+      },
+    });
+    return checked(value);
+  }
+
+  public async update(
+    username: string,
+    existing: ExistingMemberContributionAssessment,
+    activity: MemberActivityAssessment,
+  ): Promise<MemberContributionAssessment> {
+    const value = await this.api.run(assessmentShape, updateInputFor(username, existing, activity), {
+      retries: 1,
+      body: {
+        model: this.cfg.model,
+        instructions: memberUpdateInstructions,
         reasoning: { effort: this.cfg.effort },
       },
     });
