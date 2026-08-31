@@ -98,7 +98,12 @@ export class MemberContributionAssessor {
   private readonly api: OpenAISchema<MemberContributionAssessment>;
 
   public constructor(private readonly cfg: ModerationAiCfg) {
-    this.api = openaiSchema<MemberContributionAssessment>(cfg.key, assessmentShape);
+    this.api = openaiSchema<MemberContributionAssessment>(
+      cfg.key,
+      assessmentShape,
+      undefined,
+      { conversation: false },
+    );
   }
 
   public async assess(
