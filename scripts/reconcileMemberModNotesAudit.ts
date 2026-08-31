@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import { constants, access, copyFile, mkdir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { redditConfig, redditModerationConfig } from '../src/env.ts';
@@ -17,7 +18,7 @@ import {
 import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
 import { Store } from '../src/store/store.ts';
-import { isMap, type Json, type JsonMap } from '../src/types/json.ts';
+import { isMap, type JsonMap } from '../src/types/json.ts';
 
 const canonicalCommunities = ['catgirlcoin', 'nyaonearth'] as const;
 const args = process.argv.slice(2);
@@ -131,7 +132,9 @@ try {
   await copyFile(moderationCfg.stateFile, backup, constants.COPYFILE_EXCL);
   console.log(`Canonical reputation backup: ${backup}`);
 } catch (error) {
-  const code = isMap(error as unknown as Json) ? null : error instanceof Error && 'code' in error ? String(error.code) : null;
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { readonly code?: unknown }).code)
+    : null;
   if (code !== 'EEXIST') throw error;
   console.log(`Canonical reputation backup already exists: ${backup}`);
 }
