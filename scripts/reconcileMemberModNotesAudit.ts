@@ -8,33 +8,37 @@ import { parseMemberAuditLog, type MemberAuditResult } from '../src/modnotes/aud
 import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
 import { MemberModNoteStore } from '../src/modnotes/store.ts';
+import { reconcileReputationAudit } from '../src/reputation/auditReconcile.ts';
 import {
   BAN_TRIGGER_POINTS,
   REPUTATION_FLOOR,
   clampReputationPoints,
-  tierForPoints,
   type ReputationStatus,
 } from '../src/reputation/policy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
 import { Store } from '../src/store/store.ts';
-import { isMap, type JsonMap } from '../src/types/json.ts';
 
 const canonicalCommunities = ['catgirlcoin', 'nyaonearth'] as const;
 const args = process.argv.slice(2);
 const apply = args.includes('--apply');
 const baseArg = args.find(arg => arg.startsWith('--base='));
+const completionArgs = args.filter(arg => arg.startsWith('--completion='));
 const overlayArgs = args.filter(arg => arg.startsWith('--overlay='));
 const expectArg = args.find(arg => arg.startsWith('--expect-overrides='));
 
 if (baseArg === undefined) {
-  throw new Error('Usage: --base=<completed-full-audit.log> [--overlay=<corrected.log> ...] [--expect-overrides=N] [--apply]');
+  throw new Error(
+    'Usage: --base=<full-audit.log> [--completion=<missing-users.log> ...] '
+    + '[--overlay=<corrected.log> ...] [--expect-overrides=N] [--apply]',
+  );
 }
 if (apply && process.env['MEMBER_MOD_NOTES_RECONCILE'] !== '1') {
   throw new Error('Live audit reconciliation requires MEMBER_MOD_NOTES_RECONCILE=1');
 }
 
 const baseFile = resolve(process.cwd(), baseArg.slice('--base='.length));
+const completionFiles = completionArgs.map(arg => resolve(process.cwd(), arg.slice('--completion='.length)));
 const overlayFiles = overlayArgs.map(arg => resolve(process.cwd(), arg.slice('--overlay='.length)));
 const expectedOverrides = expectArg === undefined ? null : Number(expectArg.slice('--expect-overrides='.length));
 if (expectedOverrides !== null && (!Number.isSafeInteger(expectedOverrides) || expectedOverrides < 0)) {
@@ -47,27 +51,69 @@ if (base.declaredMembers === null) throw new Error('Base audit log has no Member
 if (base.duplicateUsers.length > 0) {
   throw new Error(`Base audit contains duplicate USER RESULT blocks: ${base.duplicateUsers.join(', ')}`);
 }
-if (base.results.length !== base.declaredMembers) {
-  throw new Error(`Base audit is incomplete: declared=${base.declaredMembers} final-results=${base.results.length}`);
+if (base.attemptedUsers.length !== base.declaredMembers) {
+  throw new Error(
+    `Base audit attempted-member coverage mismatch: declared=${base.declaredMembers} attempted=${base.attemptedUsers.length}`,
+  );
+}
+if (base.results.length > base.declaredMembers) {
+  throw new Error(`Base audit contains more final results than declared members: ${base.results.length}/${base.declaredMembers}`);
 }
 
+const attempted = new Map(base.attemptedUsers.map(username => [username.toLowerCase(), username]));
 const final = new Map(base.results.map(result => [result.username.toLowerCase(), result]));
+const completed = new Set<string>();
 const overridden = new Set<string>();
 const sourceHash = createHash('sha256').update(baseRaw);
 
+for (const file of completionFiles) {
+  const raw = await readFile(file, 'utf8');
+  sourceHash.update('\0completion\0').update(raw);
+  const completion = parseMemberAuditLog(raw);
+  if (completion.duplicateUsers.length > 0) {
+    throw new Error(`Completion log ${file} contains duplicate USER RESULT blocks: ${completion.duplicateUsers.join(', ')}`);
+  }
+  for (const result of completion.results) {
+    const key = result.username.toLowerCase();
+    if (!attempted.has(key)) {
+      throw new Error(`Completion log ${file} contains u/${result.username}, which was not attempted by the base audit`);
+    }
+    if (final.has(key) || completed.has(key)) {
+      throw new Error(`Completion logs repeat an already completed base-audit user: u/${result.username}`);
+    }
+    final.set(key, result);
+    completed.add(key);
+  }
+}
+
 for (const file of overlayFiles) {
   const raw = await readFile(file, 'utf8');
-  sourceHash.update('\0').update(raw);
+  sourceHash.update('\0correction\0').update(raw);
   const overlay = parseMemberAuditLog(raw);
+  if (overlay.duplicateUsers.length > 0) {
+    throw new Error(`Corrected overlay ${file} contains duplicate USER RESULT blocks: ${overlay.duplicateUsers.join(', ')}`);
+  }
   for (const result of overlay.results) {
     const key = result.username.toLowerCase();
-    if (!final.has(key)) throw new Error(`Overlay contains u/${result.username}, which is absent from the base audit`);
+    if (!attempted.has(key)) {
+      throw new Error(`Corrected overlay contains u/${result.username}, which was not attempted by the base audit`);
+    }
     final.set(key, result);
     overridden.add(key);
   }
 }
 if (expectedOverrides !== null && overridden.size !== expectedOverrides) {
   throw new Error(`Corrected overlay coverage mismatch: expected=${expectedOverrides} actual=${overridden.size}`);
+}
+
+if (final.size !== base.declaredMembers) {
+  const missing = base.attemptedUsers.filter(username => !final.has(username.toLowerCase()));
+  const preview = missing.slice(0, 25).map(username => `u/${username}`).join(', ');
+  const more = missing.length > 25 ? `, ... +${missing.length - 25} more` : '';
+  throw new Error(
+    `Audit result set is incomplete: declared=${base.declaredMembers} final-results=${final.size} missing=${missing.length}. `
+    + `Missing: ${preview}${more}. Complete only these users with scripts/completeMemberModNotesAudit.sh.`,
+  );
 }
 
 const auditId = sourceHash.digest('hex').slice(0, 16);
@@ -97,19 +143,26 @@ if (moderationCfg === null) throw new Error('Audit reconciliation requires REDDI
 const reputation = new ReputationStore(moderationCfg.stateFile);
 const inventory = memberInventoryFromReputation(await reputation.raw());
 const inventoryByName = new Map(inventory.map(row => [row.username.toLowerCase(), row]));
-const missing = results.filter(result => !inventoryByName.has(result.username.toLowerCase()));
-if (missing.length > 0) throw new Error(`Audit users missing from canonical reputation: ${missing.map(row => `u/${row.username}`).join(', ')}`);
+const absent = results.filter(result => !inventoryByName.has(result.username.toLowerCase()));
+if (absent.length > 0) {
+  throw new Error(`Audit users missing from canonical reputation: ${absent.map(row => `u/${row.username}`).join(', ')}`);
+}
 const moderators = results.filter(result => inventoryByName.get(result.username.toLowerCase())?.moderator === true);
-if (moderators.length > 0) throw new Error(`Audit reconciliation reached moderators: ${moderators.map(row => `u/${row.username}`).join(', ')}`);
+if (moderators.length > 0) {
+  throw new Error(`Audit reconciliation reached moderators: ${moderators.map(row => `u/${row.username}`).join(', ')}`);
+}
 const extras = inventory.filter(row => !row.moderator && !final.has(row.username.toLowerCase()));
 
 console.log('='.repeat(96));
 console.log('MAE MEMBER MOD NOTES COMPLETED-AUDIT RECONCILIATION');
 console.log('='.repeat(96));
 console.log(`Base audit: ${baseFile}`);
+console.log(`Base final results: ${base.results.length}/${base.declaredMembers}`);
+for (const file of completionFiles) console.log(`Missing-user completion: ${file}`);
 for (const file of overlayFiles) console.log(`Corrected overlay: ${file}`);
 console.log(`Audit id: ${auditId}`);
 console.log(`Audited members: ${results.length}`);
+console.log(`Recovered missing users: ${completed.size}`);
 console.log(`Corrected overrides: ${overridden.size}`);
 console.log(`Current non-moderators not present in historical audit: ${extras.length} (left untouched)`);
 console.log(`Mode: ${apply ? 'APPLY' : 'PREVIEW'}`);
@@ -140,43 +193,8 @@ try {
 }
 
 const rawReputation = new Store(moderationCfg.stateFile, { schema: 1 });
-await rawReputation.edit(current => {
-  if (!isMap(current) || current['schema'] !== 1) throw new Error('Canonical reputation store is not schema 1');
-  const users = current['users'];
-  if (!isMap(users)) throw new Error('Canonical reputation users map is missing');
-  let journal = current['reputationJournal'];
-  if (!isMap(journal)) {
-    journal = {};
-    current['reputationJournal'] = journal;
-  }
-
-  for (const result of results) {
-    const key = result.username.toLowerCase();
-    const user = users[key];
-    if (!isMap(user)) throw new Error(`Canonical reputation record missing for u/${result.username}`);
-    if (user['status'] === 'moderator' || user['immutableModeratorFlair'] === true) {
-      throw new Error(`Moderator u/${result.username} reached audit reconciliation mutation boundary`);
-    }
-    const beforePoints = typeof user['points'] === 'number' && Number.isSafeInteger(user['points']) ? user['points'] : 0;
-    const beforeStatus = typeof user['status'] === 'string' ? user['status'] : 'unmapped';
-    user['points'] = result.afterPoints;
-    user['tier'] = tierForPoints(result.afterPoints);
-    user['status'] = result.afterStatus;
-    journal[`member-mod-notes-audit:${auditId}:${key}`] = {
-      kind: 'member-mod-notes-audit-reconcile',
-      username: result.username,
-      at: Math.floor(Date.now() / 1_000),
-      beforePoints,
-      afterPoints: result.afterPoints,
-      beforeStatus,
-      afterStatus: result.afterStatus,
-      auditBeforePoints: result.beforePoints,
-      auditBeforeStatus: result.beforeStatus,
-      auditId,
-    } satisfies JsonMap;
-  }
-  return current;
-});
+const reconciledAt = Math.floor(Date.now() / 1_000);
+await rawReputation.edit(current => reconcileReputationAudit(current, results, auditId, reconciledAt));
 console.log(`Canonical reputation reconciled for ${results.length} audited users.`);
 
 const notesFile = resolve(process.cwd(), process.env['REDDIT_MEMBER_MOD_NOTES_FILE']?.trim() || 'data/memberModNotes.pb');
