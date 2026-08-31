@@ -38,6 +38,7 @@ if (apply && process.env['MEMBER_MOD_NOTES_RECONCILE'] !== '1') {
 }
 
 const baseFile = resolve(process.cwd(), baseArg.slice('--base='.length));
+const sourceReputationFile = resolve(dirname(baseFile), 'reputation.pb');
 const completionFiles = completionArgs.map(arg => resolve(process.cwd(), arg.slice('--completion='.length)));
 const overlayFiles = overlayArgs.map(arg => resolve(process.cwd(), arg.slice('--overlay='.length)));
 const expectedOverrides = expectArg === undefined ? null : Number(expectArg.slice('--expect-overrides='.length));
@@ -51,20 +52,41 @@ if (base.declaredMembers === null) throw new Error('Base audit log has no Member
 if (base.duplicateUsers.length > 0) {
   throw new Error(`Base audit contains duplicate USER RESULT blocks: ${base.duplicateUsers.join(', ')}`);
 }
-if (base.attemptedUsers.length !== base.declaredMembers) {
-  throw new Error(
-    `Base audit attempted-member coverage mismatch: declared=${base.declaredMembers} attempted=${base.attemptedUsers.length}`,
-  );
-}
 if (base.results.length > base.declaredMembers) {
   throw new Error(`Base audit contains more final results than declared members: ${base.results.length}/${base.declaredMembers}`);
 }
 
-const attempted = new Map(base.attemptedUsers.map(username => [username.toLowerCase(), username]));
+await access(sourceReputationFile);
+const sourceSnapshot = new ReputationStore(sourceReputationFile);
+const sourceInventory = memberInventoryFromReputation(await sourceSnapshot.raw());
+const expectedUsers = sourceInventory
+  .filter(user => !user.moderator)
+  .map(user => user.username)
+  .sort((a, b) => a.localeCompare(b));
+if (expectedUsers.length !== base.declaredMembers) {
+  throw new Error(
+    `Original audit snapshot/member-count mismatch: declared=${base.declaredMembers} snapshot=${expectedUsers.length}`,
+  );
+}
+const expected = new Map(expectedUsers.map(username => [username.toLowerCase(), username]));
+for (const username of base.attemptedUsers) {
+  if (!expected.has(username.toLowerCase())) {
+    throw new Error(`Base audit attempted u/${username}, which is absent from its reputation snapshot`);
+  }
+}
+for (const result of base.results) {
+  if (!expected.has(result.username.toLowerCase())) {
+    throw new Error(`Base audit result u/${result.username} is absent from its reputation snapshot`);
+  }
+}
+
 const final = new Map(base.results.map(result => [result.username.toLowerCase(), result]));
 const completed = new Set<string>();
 const overridden = new Set<string>();
-const sourceHash = createHash('sha256').update(baseRaw);
+const sourceHash = createHash('sha256')
+  .update(baseRaw)
+  .update('\0snapshot\0')
+  .update(await readFile(sourceReputationFile));
 
 for (const file of completionFiles) {
   const raw = await readFile(file, 'utf8');
@@ -75,8 +97,8 @@ for (const file of completionFiles) {
   }
   for (const result of completion.results) {
     const key = result.username.toLowerCase();
-    if (!attempted.has(key)) {
-      throw new Error(`Completion log ${file} contains u/${result.username}, which was not attempted by the base audit`);
+    if (!expected.has(key)) {
+      throw new Error(`Completion log ${file} contains u/${result.username}, which is absent from the original audit snapshot`);
     }
     if (final.has(key) || completed.has(key)) {
       throw new Error(`Completion logs repeat an already completed base-audit user: u/${result.username}`);
@@ -95,8 +117,8 @@ for (const file of overlayFiles) {
   }
   for (const result of overlay.results) {
     const key = result.username.toLowerCase();
-    if (!attempted.has(key)) {
-      throw new Error(`Corrected overlay contains u/${result.username}, which was not attempted by the base audit`);
+    if (!expected.has(key)) {
+      throw new Error(`Corrected overlay contains u/${result.username}, which is absent from the original audit snapshot`);
     }
     final.set(key, result);
     overridden.add(key);
@@ -107,7 +129,7 @@ if (expectedOverrides !== null && overridden.size !== expectedOverrides) {
 }
 
 if (final.size !== base.declaredMembers) {
-  const missing = base.attemptedUsers.filter(username => !final.has(username.toLowerCase()));
+  const missing = expectedUsers.filter(username => !final.has(username.toLowerCase()));
   const preview = missing.slice(0, 25).map(username => `u/${username}`).join(', ');
   const more = missing.length > 25 ? `, ... +${missing.length - 25} more` : '';
   throw new Error(
@@ -131,8 +153,8 @@ const consistentStatus = (result: MemberAuditResult): void => {
     return;
   }
   if (status === 'unmapped') return;
-  const expected: ReputationStatus = points >= 1 ? 'ordinary' : points <= -4 ? 'uncivil' : 'warned';
-  if (points <= BAN_TRIGGER_POINTS || status !== expected) {
+  const expectedStatus: ReputationStatus = points >= 1 ? 'ordinary' : points <= -4 ? 'uncivil' : 'warned';
+  if (points <= BAN_TRIGGER_POINTS || status !== expectedStatus) {
     throw new Error(`Audit score/status mismatch for u/${result.username}: ${points}/${status}`);
   }
 };
@@ -157,6 +179,9 @@ console.log('='.repeat(96));
 console.log('MAE MEMBER MOD NOTES COMPLETED-AUDIT RECONCILIATION');
 console.log('='.repeat(96));
 console.log(`Base audit: ${baseFile}`);
+console.log(`Original audit snapshot: ${sourceReputationFile}`);
+console.log(`Original audit population: ${expectedUsers.length}`);
+console.log(`Base attempted users visible in log: ${base.attemptedUsers.length}`);
 console.log(`Base final results: ${base.results.length}/${base.declaredMembers}`);
 for (const file of completionFiles) console.log(`Missing-user completion: ${file}`);
 for (const file of overlayFiles) console.log(`Corrected overlay: ${file}`);
