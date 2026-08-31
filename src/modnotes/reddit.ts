@@ -70,7 +70,10 @@ const findModNoteId = (value: Json): string | null => {
   return null;
 };
 
-const networkError = (context: string, error: unknown): RedditError => {
+const networkError = (
+  context: string,
+  error: Parameters<Console['error']>[number],
+): RedditError => {
   if (error instanceof RedditError) return error;
   const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return new RedditError(`${context}: ${detail}`, 'network');
