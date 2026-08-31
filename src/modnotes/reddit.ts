@@ -70,6 +70,12 @@ const findModNoteId = (value: Json): string | null => {
   return null;
 };
 
+const networkError = (context: string, error: unknown): RedditError => {
+  if (error instanceof RedditError) return error;
+  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return new RedditError(`${context}: ${detail}`, 'network');
+};
+
 const username = (raw: string): string => {
   const value = raw.trim();
   if (!/^[A-Za-z0-9_-]{1,32}$/u.test(value)) throw new Error(`Invalid Reddit username ${raw}`);
@@ -214,8 +220,8 @@ export class MemberModNotesRedditClient {
         },
         body,
       });
-    } catch {
-      throw new RedditError('OAuth token request failed at the network boundary', 'network');
+    } catch (error) {
+      throw networkError('OAuth token request failed', error);
     }
     if (!response.ok) {
       throw new RedditError(
@@ -269,8 +275,8 @@ export class MemberModNotesRedditClient {
           },
           ...(body === null ? {} : { body }),
         });
-      } catch {
-        last = new RedditError(`Reddit ${method} request failed at the network boundary`, 'network');
+      } catch (error) {
+        last = networkError(`Reddit ${method} request failed`, error);
         if (attempt + 1 < this.maxAttempts) {
           await this.sleep(backoffMs(attempt, this.random));
           continue;
