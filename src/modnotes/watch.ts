@@ -8,6 +8,9 @@ import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import type { MemberModNoteRuntime, MemberModNoteScoreReader } from './runtime.ts';
 
 export type MemberModNoteWatchReader = Pick<RedditReadClient, 'newPosts' | 'newComments'>;
+export type MemberModNoteWatchScoreReader = MemberModNoteScoreReader & {
+  hasContribution(fullname: string): Promise<boolean>;
+};
 
 export type MemberModNoteWatchTick = {
   readonly seeded: number;
@@ -138,7 +141,7 @@ export class MemberModNoteWatchRuntime {
     communities: readonly string[],
     cfg: RedditModerationCfg,
     private readonly reader: MemberModNoteWatchReader,
-    private readonly scores: MemberModNoteScoreReader,
+    private readonly scores: MemberModNoteWatchScoreReader,
     private readonly notes: MemberModNoteRuntime,
     stateFile = 'data/memberModNoteWatch.pb',
   ) {
@@ -181,10 +184,14 @@ export class MemberModNoteWatchRuntime {
       }
 
       try {
+        // The note watcher is downstream of scoring. If the canonical scoring
+        // runtime has not recorded this item yet, leave it unseen and retry on
+        // a later tick instead of racing or mutating reputation here.
+        if (!await this.scores.hasContribution(item.fullname)) continue;
+
         const score = await this.scores.user(item.author);
         if (score === null) continue;
-        const status = 'status' in score && typeof score.status === 'string' ? score.status : null;
-        if (status === 'moderator') {
+        if (score.status === 'moderator') {
           await this.store.mark([item.fullname]);
           skipped += 1;
           continue;
