@@ -26,6 +26,7 @@ import { ModmailMediaStore } from './modmail/media/store.ts';
 import { ModmailReplyOutbox } from './modmail/outbox.ts';
 import { ModmailRuntime } from './modmail/runtime.ts';
 import { ModmailStore } from './modmail/store.ts';
+import { startMemberModNoteService } from './modnotes/service.ts';
 import {
   OrganisingModerationClassifier,
   PostOrganisationRuntime,
@@ -516,6 +517,7 @@ if (directMessages !== null) {
   const seeded = await directMessages.bootstrap();
   console.log(`Reddit DM activation boundary established; historic incoming direct messages skipped=${seeded}.`);
 }
+const stopMemberModNotes = await startMemberModNoteService();
 if (communityProjection !== null) {
   const primed = await communityProjection.tick();
   console.log(
@@ -537,6 +539,7 @@ const stop = (): void => {
   if (stopping) return;
   stopping = true;
   clearInterval(timer);
+  stopMemberModNotes();
   internal?.stop();
 };
 process.once('SIGINT', stop);
