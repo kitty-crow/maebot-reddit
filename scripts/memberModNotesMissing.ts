@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parseMemberAuditLog } from '../src/modnotes/auditResults.ts';
 import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
@@ -9,15 +9,17 @@ const baseArg = args.find(arg => arg.startsWith('--base='));
 const reputationArg = args.find(arg => arg.startsWith('--reputation='));
 const completionArgs = args.filter(arg => arg.startsWith('--completion='));
 
-if (baseArg === undefined || reputationArg === undefined) {
+if (baseArg === undefined) {
   throw new Error(
-    'Usage: --base=<full-audit.log> --reputation=<original-audit-reputation.pb> '
+    'Usage: --base=<full-audit.log> [--reputation=<original-audit-reputation.pb>] '
     + '[--completion=<completion.log> ...]',
   );
 }
 
 const baseFile = resolve(process.cwd(), baseArg.slice('--base='.length));
-const reputationFile = resolve(process.cwd(), reputationArg.slice('--reputation='.length));
+const reputationFile = reputationArg === undefined
+  ? resolve(dirname(baseFile), 'reputation.pb')
+  : resolve(process.cwd(), reputationArg.slice('--reputation='.length));
 const base = parseMemberAuditLog(await readFile(baseFile, 'utf8'));
 if (base.declaredMembers === null) throw new Error('Base audit log has no Members: header');
 if (base.duplicateUsers.length > 0) {
