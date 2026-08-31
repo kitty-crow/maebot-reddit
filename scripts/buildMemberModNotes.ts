@@ -6,7 +6,11 @@ import {
   type ModerationClassification,
   type ModerationItem,
 } from '../src/mod/classifier.ts';
-import { MemberContributionAssessor, memberModNoteText, type MemberCommentAssessment } from '../src/modnotes/assessor.ts';
+import {
+  MemberContributionAssessor,
+  memberModNoteText,
+  type MemberCommentAssessment,
+} from '../src/modnotes/assessor.ts';
 import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
 import { MemberModNoteStore } from '../src/modnotes/store.ts';
@@ -37,11 +41,17 @@ const classifier = new RedditModerationClassifier(moderationCfg.ai);
 const assessor = new MemberContributionAssessor(moderationCfg.ai);
 
 const inventory = memberInventoryFromReputation(await reputation.raw());
-const members = inventory.filter(user => !user.moderator && (onlyUser === null || user.username.toLowerCase() === onlyUser));
-if (onlyUser !== null && members.length === 0) throw new Error(`No non-moderator reputation member found for u/${onlyUser}`);
+const members = inventory.filter(user =>
+  !user.moderator && (onlyUser === null || user.username.toLowerCase() === onlyUser));
+if (onlyUser !== null && members.length === 0) {
+  throw new Error(`No non-moderator reputation member found for u/${onlyUser}`);
+}
 await notes.seed(members.map(user => user.username));
 
-const moderationItem = (comment: RedditComment, history: ReturnType<typeof moderationHistoryFor>): ModerationItem => ({
+const moderationItem = (
+  comment: RedditComment,
+  history: ReturnType<typeof moderationHistoryFor>,
+): ModerationItem => ({
   kind: 'comment',
   subreddit: comment.subreddit,
   author: comment.author ?? '[deleted]',
@@ -69,7 +79,9 @@ let failed = 0;
 console.log(
   `[Member Mod Notes] members=${members.length} mode=${apply ? 'APPLY' : 'PREVIEW'} communities=${canonicalCommunities.join(',')}`,
 );
-if (!apply) {
+if (apply) {
+  console.log('[Member Mod Notes] APPLY mode sends untracked sampled comments through Mae\'s normal reputation scoring path, then posts the resulting native Mod Notes to both moderated subreddits.');
+} else {
   console.log('[Member Mod Notes] preview mode writes only the separate memberModNotes.pb store; add --apply to score untracked sampled comments and post native Reddit Mod Notes.');
 }
 
@@ -87,8 +99,8 @@ for (let index = 0; index < members.length; index += 1) {
 
     if (
       !refresh
-      && existing?.note !== null
-      && existing?.note !== undefined
+      && existing !== null
+      && existing.note !== null
       && existing.label !== null
       && sameSample(existing.sampledCommentFullnames, sampleFullnames)
       && (!apply || allAlreadyScored)
@@ -137,7 +149,9 @@ for (let index = 0; index < members.length; index += 1) {
 
     const profile = await assessor.assess(member.username, assessed);
     const current = await reputation.user(member.username);
-    if (current === null) throw new Error(`Reputation member u/${member.username} disappeared during assessment`);
+    if (current === null) {
+      throw new Error(`Reputation member u/${member.username} disappeared during assessment`);
+    }
     const note = memberModNoteText(current.points, profile.summary);
     await notes.generated(
       member.username,
