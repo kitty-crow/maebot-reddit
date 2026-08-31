@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memberModNoteText } from '../src/modnotes/assessor.ts';
+import { parseMemberAuditLog } from '../src/modnotes/auditResults.ts';
 import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
 import { MemberModNoteStore } from '../src/modnotes/store.ts';
@@ -100,6 +101,32 @@ describe('member Mod Notes experiment', () => {
       { username: 'Member', points: 42, status: 'ordinary', moderator: false },
       { username: 'Mod', points: 999999999, status: 'moderator', moderator: true },
     ]);
+  });
+
+  test('parses completed audit USER RESULT blocks without reclassifying content', () => {
+    const parsed = parseMemberAuditLog(`Members: 1
+------------------------------------------------------------------------------------------
+USER RESULT 1/1: u/Member
+Notes: Constructive participant.
+Score: -1 -> 4
+Status: warned -> ordinary
+Tag: Good Contributor (SOLID_CONTRIBUTOR)
+Mod Note: Mae score: 4. Constructive participant.
+Confidence: 0.970
+------------------------------------------------------------------------------------------
+`);
+    expect(parsed.declaredMembers).toBe(1);
+    expect(parsed.duplicateUsers).toEqual([]);
+    expect(parsed.results).toEqual([{
+      username: 'Member',
+      beforePoints: -1,
+      afterPoints: 4,
+      beforeStatus: 'warned',
+      afterStatus: 'ordinary',
+      summary: 'Constructive participant.',
+      label: 'SOLID_CONTRIBUTOR',
+      note: 'Mae score: 4. Constructive participant.',
+    }]);
   });
 
   test('persists generated notes without copying score or flair fields into the note store', async () => {
