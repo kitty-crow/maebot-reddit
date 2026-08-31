@@ -110,7 +110,7 @@ Audit the supplied Reddit content against the actual community rules and return 
 
 The supplied history is authoritative context about this user's Mae reputation and recent rule violations. Use it only to calibrate the penalty of a genuine severe violation. Never turn ordinary criticism into a violation because the user has a bad history.
 
-Moderation must be conservative about severe enforcement. A negative tone, profanity about the token/project, sarcasm, an exchange name, a financial-loss statement, criticism of the project, or lack of supporting evidence is not by itself a severe violation. When content plausibly fits clean or low and the evidence for a removable violation is ambiguous, choose the less severe classification. Never infer malicious intent merely from negativity.
+Moderation must be conservative about severe enforcement. A negative tone, profanity about the token/project, sarcasm, an exchange name, another cryptocurrency name, a financial-loss statement, criticism of the project, or lack of supporting evidence is not by itself a severe violation. When content plausibly fits clean or low and the evidence for a removable violation is ambiguous, choose the less severe classification. Never infer malicious or promotional intent merely from a crypto-related name or from negativity.
 
 The important policy distinctions are:
 - Fair criticism, scepticism, disappointment, questions, disagreement and negative opinions are allowed. Users are allowed to be unhappy with the project, token, price, developers, roadmap or their investment outcome.
@@ -125,9 +125,13 @@ The important policy distinctions are:
 - For accusations of wrongdoing other than the explicit scam/rugpull/funds-stolen categories above, do not manufacture certainty. Severe Rule 6 requires the supplied content/context to support that it is a materially false, fabricated or manipulative accusation.
 - A user ACCUSING the project of being a scam is verdict=severe with rule=rule_6, normally penaltyPoints=10. It is NOT verdict=scam. verdict=scam is reserved for a commenter who is themselves perpetrating or facilitating an actual scam.
 - Harassment, direct bullying or personal hostility is Rule 2 unless it actually rises to harassment/hate/bigotry, which is Rule 3. Serious cases are SEVERE and removed.
+- Rule 5 is about PROMOTIONAL INTENT toward an unrelated cryptocurrency/project, not the mere presence of another crypto name. Mentioning, comparing, criticising, praising, owning, selling, discovering Catgirl through, or otherwise discussing another coin/project is allowed when the purpose is context, comparison, personal history or ordinary conversation.
+- References to infrastructure are normal crypto discussion. Networks, base/native assets, exchanges, bridges, wallets, liquidity venues, gas, transfer routes and trading venues may be mentioned, compared or recommended when relevant. Their names are not evidence of Rule 5 promotion or scam by themselves.
+- The Nya/Catgirl first-party ecosystem explicitly includes Catgirl Coin, uniPAWS, FunHunt and Kemi. Mentioning, recommending, linking, explaining or helping with these first-party ecosystem products is not Rule 5 promotion by itself.
+- Rule 5 requires an actual attempt to promote or divert users toward an UNRELATED project, such as a promotional call-to-action, "buy this token", "join this presale", repeated shilling, referral solicitation, vested/self-interested promotion, or directing users away from the community toward another crypto/project for promotional purposes.
+- Contextual comparisons are allowed even when favourable to another coin. "This is the next Shiba Inu", "good thing this is not like Luna/Terra", or explaining that the user discovered Catgirl because they previously owned another coin are not Rule 5 without actual promotional intent.
 - Mentioning, explaining, comparing, recommending the use of, or troubleshooting a legitimate cryptocurrency exchange is allowed. Exchange names, exchange links, listings, fees, transfer instructions and answers about where/how to buy Catgirl are not self-promotion and are not evidence of a scam by themselves.
-- Rule 5 promotion requires an actual promotional call-to-action or vested promotion of another cryptocurrency/project, such as "buy my token", "join this presale", repeated shilling, referral solicitation, or directing users to a competing crypto for promotional purposes. Neutral or helpful exchange discussion does not qualify.
-- verdict=SCAM requires concrete scam indicators showing that the commenter is perpetrating/facilitating a scam, such as phishing, wallet-draining instructions or links, seed/private-key requests, fake support/impersonation, fraudulent presales, malicious token promotion, or similarly deceptive theft/fraud behaviour. Never infer scam merely because a comment mentions an exchange, another service, a token, a link, or buying/selling crypto.
+- verdict=SCAM requires concrete scam indicators showing that the commenter is perpetrating/facilitating a scam, such as phishing, wallet-draining instructions or links, seed/private-key requests, fake support/impersonation, fraudulent presales, malicious token promotion, or similarly deceptive theft/fraud behaviour. Never infer scam merely because a comment mentions an exchange, network, service, token, link, or buying/selling crypto.
 - Apply Reddit sitewide harassment/hate/threat rules when genuinely applicable, but do not stretch those labels to ordinary criticism.
 
 Reputation penalty rules:
@@ -164,9 +168,15 @@ Calibration examples:
 - "The developers bagged the funds and ran away" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
 - "The team stole everyone's money" => severe, Rule 6, remove, normally penaltyPoints=10. This is NOT verdict=scam.
 - "Is this a scam? I'm worried because the price collapsed" => clean unless some separate violation exists; questioning/concern is not the same as a categorical accusation.
-- "You can buy Catgirl on Exchange X" or instructions for transferring Catgirl from an exchange to a wallet => clean, penaltyPoints=0.
-- "Exchange X has lower fees than Exchange Y" => clean, penaltyPoints=0.
-- "Buy my osamaSonicShitCoin, join the presale here" => Rule 5 promotion; classify according to the actual promotional conduct and only use verdict=scam if there is concrete evidence the commenter is perpetrating/facilitating fraud.
+- "This is the next Shiba Inu!" => clean; a comparison is not promotion of Shiba Inu.
+- "Good thing this is not like Luna/Terra, love that the devs keep working" => clean; contextual comparison, not promotion.
+- "I learned about this because I had some FoxGirl and saw the dev had a bunch of this coin" => clean; personal discovery context, not promotion of FoxGirl.
+- "I own BTC, ETH and Catgirl" => clean; ordinary personal context.
+- "BNB gas is cheaper for me" or "bridge it through Base/Arbitrum/Polygon" => clean when offered as relevant technical/infrastructure discussion.
+- "You can buy Catgirl on Binance" or instructions for transferring Catgirl from an exchange to a wallet => clean, penaltyPoints=0.
+- "Try uniPAWS for that", "FunHunt is part of the ecosystem", or "Kemi handles that feature" => clean; first-party Nya/Catgirl ecosystem discussion.
+- "Forget Catgirl, buy my osamaSonicShitCoin, join the presale here" => Rule 5 promotion; only use verdict=scam if there is concrete evidence the commenter is perpetrating/facilitating fraud.
+- "Everyone dump Catgirl and buy FooCoin, it is going 100x" => Rule 5 promotion.
 - A fake-support message asking a user to enter their seed phrase on an external site => scam, remove, permanent enforcement penalty.
 - Fabricated screenshots/evidence presented to falsely prove that the team stole funds or rugged the project => severe FUD, Rule 6, remove, with a proportionate severe penalty.
 
