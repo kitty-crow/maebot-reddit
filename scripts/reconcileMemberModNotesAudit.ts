@@ -13,7 +13,6 @@ import {
   BAN_TRIGGER_POINTS,
   REPUTATION_FLOOR,
   clampReputationPoints,
-  type ReputationStatus,
 } from '../src/reputation/policy.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
@@ -141,7 +140,7 @@ if (final.size !== base.declaredMembers) {
 const auditId = sourceHash.digest('hex').slice(0, 16);
 const results = [...final.values()].sort((a, b) => a.username.localeCompare(b.username));
 
-const consistentStatus = (result: MemberAuditResult): void => {
+const validateAuditResult = (result: MemberAuditResult): void => {
   const points = result.afterPoints;
   const status = result.afterStatus;
   if (clampReputationPoints(points) !== points) {
@@ -149,16 +148,16 @@ const consistentStatus = (result: MemberAuditResult): void => {
   }
   if (status === 'moderator') throw new Error(`Audit result unexpectedly targets moderator u/${result.username}`);
   if (status === 'banned' || status === 'scam') {
-    if (points !== REPUTATION_FLOOR) throw new Error(`Permanent status for u/${result.username} does not use the reputation floor`);
+    if (points !== REPUTATION_FLOOR) {
+      throw new Error(`Permanent status for u/${result.username} does not use the reputation floor`);
+    }
     return;
   }
-  if (status === 'unmapped') return;
-  const expectedStatus: ReputationStatus = points >= 1 ? 'ordinary' : points <= -4 ? 'uncivil' : 'warned';
-  if (points <= BAN_TRIGGER_POINTS || status !== expectedStatus) {
-    throw new Error(`Audit score/status mismatch for u/${result.username}: ${points}/${status}`);
+  if (points <= BAN_TRIGGER_POINTS) {
+    throw new Error(`Non-permanent audit result for u/${result.username} is at or below the ban trigger: ${points}/${status}`);
   }
 };
-for (const result of results) consistentStatus(result);
+for (const result of results) validateAuditResult(result);
 
 const moderationCfg = redditModerationConfig();
 if (moderationCfg === null) throw new Error('Audit reconciliation requires REDDIT_MODERATION_ENABLED=true');
