@@ -186,12 +186,12 @@ Use verdict=severe for clear genuine removable rule violations, not merely conte
 Use verdict=scam only when the commenter is actually perpetrating/facilitating concrete scam/fraud behaviour requiring immediate permanent enforcement.
 Confidence and postOrganisation.confidence must be from 0 to 1. Evidence should be short fragments or descriptions, not long quotations.`;
 
-const imageFormats = new Set(['avif', 'gif', 'jpeg', 'jpg', 'pjpg', 'png', 'webp']);
+const imageFormats = new Set(['avif', 'jpeg', 'jpg', 'pjpg', 'png', 'webp']);
 
 const imageLike = (raw: string): boolean => {
   try {
     const url = new URL(raw);
-    if (/\.(?:avif|gif|jpe?g|png|webp)$/iu.test(url.pathname)) return true;
+    if (/\.(?:avif|jpe?g|png|webp)$/iu.test(url.pathname)) return true;
     const format = url.searchParams.get('format')?.trim().toLowerCase();
     return format !== undefined && imageFormats.has(format);
   } catch {
