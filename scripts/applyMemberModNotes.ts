@@ -1,10 +1,9 @@
 import 'dotenv/config';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { redditConfig } from '../src/env.ts';
 import { parseMemberAuditLog, type MemberAuditResult } from '../src/modnotes/auditResults.ts';
-import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
 import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
 import { MemberModNoteStore } from '../src/modnotes/store.ts';
 import {
@@ -12,7 +11,6 @@ import {
   REPUTATION_FLOOR,
   clampReputationPoints,
 } from '../src/reputation/policy.ts';
-import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
 
 const communities = ['catgirlcoin', 'nyaonearth'] as const;
@@ -26,10 +24,10 @@ const expectAuditIdArg = args.find(arg => arg.startsWith('--expect-audit-id='));
 if (process.env['MEMBER_MOD_NOTES_NATIVE_APPLY'] !== '1') {
   throw new Error('Native Reddit Mod Note application requires MEMBER_MOD_NOTES_NATIVE_APPLY=1');
 }
-if (baseArg === undefined) {
+if (baseArg === undefined || expectAuditIdArg === undefined) {
   throw new Error(
     'Usage: --base=<full-audit.log> [--completion=<missing-users.log> ...] '
-    + '[--overlay=<corrected.log> ...] [--expect-overrides=N] [--expect-audit-id=ID]',
+    + '[--overlay=<corrected.log> ...] [--expect-overrides=N] --expect-audit-id=<16-hex-id>',
   );
 }
 
@@ -40,12 +38,12 @@ const overlayFiles = overlayArgs.map(arg => resolve(process.cwd(), arg.slice('--
 const expectedOverrides = expectOverridesArg === undefined
   ? null
   : Number(expectOverridesArg.slice('--expect-overrides='.length));
-const expectedAuditId = expectAuditIdArg?.slice('--expect-audit-id='.length).trim() || null;
+const expectedAuditId = expectAuditIdArg.slice('--expect-audit-id='.length).trim();
 
 if (expectedOverrides !== null && (!Number.isSafeInteger(expectedOverrides) || expectedOverrides < 0)) {
   throw new Error('--expect-overrides must be a non-negative safe integer');
 }
-if (expectedAuditId !== null && !/^[0-9a-f]{16}$/u.test(expectedAuditId)) {
+if (!/^[0-9a-f]{16}$/u.test(expectedAuditId)) {
   throw new Error('--expect-audit-id must be a 16-character lowercase hexadecimal audit id');
 }
 
@@ -58,27 +56,16 @@ if (base.duplicateUsers.length > 0) {
 if (base.results.length > base.declaredMembers) {
   throw new Error(`Base audit contains more final results than declared members: ${base.results.length}/${base.declaredMembers}`);
 }
-
-await access(sourceReputationFile);
-const sourceSnapshot = new ReputationStore(sourceReputationFile);
-const expectedUsers = memberInventoryFromReputation(await sourceSnapshot.raw())
-  .filter(user => !user.moderator)
-  .map(user => user.username)
-  .sort((a, b) => a.localeCompare(b));
-if (expectedUsers.length !== base.declaredMembers) {
+if (base.attemptedUsers.length !== base.declaredMembers) {
   throw new Error(
-    `Original audit snapshot/member-count mismatch: declared=${base.declaredMembers} snapshot=${expectedUsers.length}`,
+    `Base audit attempted-user coverage mismatch: declared=${base.declaredMembers} attempted=${base.attemptedUsers.length}`,
   );
 }
-const expected = new Map(expectedUsers.map(username => [username.toLowerCase(), username]));
-for (const username of base.attemptedUsers) {
-  if (!expected.has(username.toLowerCase())) {
-    throw new Error(`Base audit attempted u/${username}, which is absent from its reputation snapshot`);
-  }
-}
+
+const expected = new Set(base.attemptedUsers.map(username => username.toLowerCase()));
 for (const result of base.results) {
   if (!expected.has(result.username.toLowerCase())) {
-    throw new Error(`Base audit result u/${result.username} is absent from its reputation snapshot`);
+    throw new Error(`Base audit result u/${result.username} was not in the original attempted-user population`);
   }
 }
 
@@ -100,7 +87,7 @@ for (const file of completionFiles) {
   for (const result of completion.results) {
     const key = result.username.toLowerCase();
     if (!expected.has(key)) {
-      throw new Error(`Completion log ${file} contains u/${result.username}, which is absent from the original audit snapshot`);
+      throw new Error(`Completion log ${file} contains u/${result.username}, outside the original audit population`);
     }
     if (final.has(key) || completed.has(key)) {
       throw new Error(`Completion logs repeat an already completed base-audit user: u/${result.username}`);
@@ -120,7 +107,10 @@ for (const file of overlayFiles) {
   for (const result of overlay.results) {
     const key = result.username.toLowerCase();
     if (!expected.has(key)) {
-      throw new Error(`Corrected overlay contains u/${result.username}, which is absent from the original audit snapshot`);
+      throw new Error(`Corrected overlay contains u/${result.username}, outside the original audit population`);
+    }
+    if (!final.has(key)) {
+      throw new Error(`Corrected overlay targets u/${result.username} before that user's final audit result exists`);
     }
     final.set(key, result);
     overridden.add(key);
@@ -131,14 +121,14 @@ if (expectedOverrides !== null && overridden.size !== expectedOverrides) {
   throw new Error(`Corrected overlay coverage mismatch: expected=${expectedOverrides} actual=${overridden.size}`);
 }
 if (final.size !== base.declaredMembers) {
-  const missing = expectedUsers.filter(username => !final.has(username.toLowerCase()));
+  const missing = base.attemptedUsers.filter(username => !final.has(username.toLowerCase()));
   throw new Error(
     `Audit result set is incomplete: declared=${base.declaredMembers} final-results=${final.size} missing=${missing.length}`,
   );
 }
 
 const auditId = sourceHash.digest('hex').slice(0, 16);
-if (expectedAuditId !== null && auditId !== expectedAuditId) {
+if (auditId !== expectedAuditId) {
   throw new Error(`Audit id mismatch: expected=${expectedAuditId} actual=${auditId}`);
 }
 
@@ -172,8 +162,6 @@ const bold = `${esc}1m`;
 const dim = `${esc}2m`;
 const cyan = `${esc}36m`;
 const green = `${esc}32m`;
-const yellow = `${esc}33m`;
-const red = `${esc}31m`;
 const magenta = `${esc}35m`;
 const clear = `${esc}2J${esc}H`;
 const altOn = `${esc}?1049h${esc}?25l`;
@@ -348,7 +336,7 @@ for (let index = 0; index < results.length; index += 1) {
             await reddit.deleteModNote(community, result.username, newId);
           } catch {
             // The store still points at the old note. Report both remote failures rather than
-            // claiming the replacement completed; the operator can inspect this exceptional case.
+            // claiming the replacement completed; this exceptional case needs operator review.
           }
           throw new Error(`old-note delete failed after replacement create: ${safeError(deleteError)}`);
         }
