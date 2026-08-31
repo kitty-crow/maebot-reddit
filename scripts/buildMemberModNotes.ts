@@ -93,6 +93,11 @@ for (let index = 0; index < members.length; index += 1) {
     const comments = await reddit.recentCommentsInCommunities(member.username, canonicalCommunities, 10, 1_000);
     const sampleFullnames = comments.map(comment => comment.fullname);
     const existing = await notes.record(member.username);
+    const currentBefore = await reputation.user(member.username);
+    if (currentBefore === null) {
+      throw new Error(`Reputation member u/${member.username} disappeared before assessment`);
+    }
+    const currentScorePrefix = `Mae score: ${currentBefore.points}. `;
     const allAlreadyScored = apply
       ? (await Promise.all(comments.map(comment => reputation.hasContribution(comment.fullname)))).every(Boolean)
       : false;
@@ -102,6 +107,7 @@ for (let index = 0; index < members.length; index += 1) {
       && existing !== null
       && existing.note !== null
       && existing.label !== null
+      && existing.note.startsWith(currentScorePrefix)
       && sameSample(existing.sampledCommentFullnames, sampleFullnames)
       && (!apply || allAlreadyScored)
     ) {
