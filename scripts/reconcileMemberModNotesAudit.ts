@@ -133,7 +133,7 @@ try {
   console.log(`Canonical reputation backup: ${backup}`);
 } catch (error) {
   const code = typeof error === 'object' && error !== null && 'code' in error
-    ? String((error as { readonly code?: unknown }).code)
+    ? String(error.code)
     : null;
   if (code !== 'EEXIST') throw error;
   console.log(`Canonical reputation backup already exists: ${backup}`);
