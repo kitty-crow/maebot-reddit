@@ -9,6 +9,7 @@
     "audit:reddit": "bun run scripts/redditAudit.ts",
     "bootstrap:reputation": "bun run scripts/bootstrapReputation.ts",
     "view:reputation": "bun run scripts/viewReputation.ts",
+    "experiment:member-notes": "bun run scripts/buildMemberModNotes.ts",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
     "clone:flairs": "bun run scripts/cloneFlairs.ts",
     "preflight:emojis": "bun run scripts/preflightEmojis.ts",
