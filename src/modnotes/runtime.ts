@@ -10,6 +10,7 @@ import { MemberModNoteStore, type MemberModNoteRecord } from './store.ts';
 
 export type MemberModNoteScore = {
   readonly points: number;
+  readonly status?: string;
 };
 
 export type MemberModNoteScoreReader = {
