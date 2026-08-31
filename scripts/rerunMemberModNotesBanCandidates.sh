@@ -103,6 +103,13 @@ cat > "$WORKER" <<'WORKER'
 #!/usr/bin/env bash
 set -euo pipefail
 
+CANDIDATES="$1"
+CANDIDATE_COUNT="$2"
+SNAPSHOT_REPUTATION="$3"
+SNAPSHOT_RATE="$4"
+NOTES_FILE="$5"
+RATE_INTERVAL_MS="$6"
+
 printf '%s\n' '=========================================================================================='
 printf 'MAE BAN-CANDIDATE RE-EVALUATION — CORRECTED MODERATION RULES\n'
 printf 'Candidates: %s\n' "$CANDIDATE_COUNT"
@@ -122,6 +129,7 @@ while IFS= read -r username; do
     MEMBER_MOD_NOTES_ISOLATED_RUN=1 \
     REDDIT_REPUTATION_STATE_FILE="$SNAPSHOT_REPUTATION" \
     REDDIT_RATE_STATE_FILE="$SNAPSHOT_RATE" \
+    REDDIT_MEMBER_MOD_NOT_NOTES_FILE="$NOTES_FILE" \
     REDDIT_MEMBER_MOD_NOTES_FILE="$NOTES_FILE" \
     REDDIT_RATE_MINIMUM_INTERVAL_MS="$RATE_INTERVAL_MS" \
     bun run experiment:member-notes -- --refresh "--user=$username"
@@ -134,14 +142,20 @@ printf '%s\n' '=================================================================
 WORKER
 chmod +x "$WORKER"
 
-export CANDIDATE_COUNT="$COUNT"
-export CANDIDATES SNAPSHOT_REPUTATION SNAPSHOT_RATE NOTES_FILE RATE_INTERVAL_MS
-
-printf -v WORKER_Q '%q' "$WORKER"
+ARGS=(
+  "$WORKER"
+  "$CANDIDATES"
+  "$COUNT"
+  "$SNAPSHOT_REPUTATION"
+  "$SNAPSHOT_RATE"
+  "$NOTES_FILE"
+  "$RATE_INTERVAL_MS"
+)
+printf -v COMMAND '%q ' "${ARGS[@]}"
 printf -v LOG_Q '%q' "$LOG"
 
 tmux new-session -d -s "$SESSION" -c "$ROOT" \
-  "set -o pipefail; ${WORKER_Q} 2>&1 | tee -a ${LOG_Q}"
+  "set -o pipefail; ${COMMAND}2>&1 | tee -a ${LOG_Q}"
 
 echo "Started corrected-rule ban-candidate preview in tmux session '$SESSION'."
 echo ""
