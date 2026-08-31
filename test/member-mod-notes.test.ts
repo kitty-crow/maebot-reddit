@@ -1,0 +1,157 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { memberModNoteText } from '../src/modnotes/assessor.ts';
+import { memberInventoryFromReputation } from '../src/modnotes/inventory.ts';
+import { MemberModNotesRedditClient } from '../src/modnotes/reddit.ts';
+import { MemberModNoteStore } from '../src/modnotes/store.ts';
+import type { RedditAuthCfg } from '../src/env.ts';
+
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
+
+const auth: RedditAuthCfg = {
+  clientId: 'client',
+  clientSecret: 'secret',
+  username: 'mae',
+  password: 'password',
+  userAgent: 'test',
+};
+
+const token = (): Response => new Response(JSON.stringify({
+  access_token: 'token',
+  expires_in: 3600,
+}), { status: 200 });
+
+const listing = (): Response => new Response(JSON.stringify({
+  kind: 'Listing',
+  data: {
+    after: null,
+    children: [
+      {
+        kind: 't1',
+        data: {
+          id: 'a',
+          name: 't1_a',
+          subreddit: 'catgirlcoin',
+          link_id: 't3_x',
+          author: 'Member',
+          body: 'Helpful answer',
+          permalink: '/r/catgirlcoin/comments/x/post/a/',
+          created_utc: 30,
+          score: 4,
+        },
+      },
+      {
+        kind: 't1',
+        data: {
+          id: 'b',
+          name: 't1_b',
+          subreddit: 'elsewhere',
+          link_id: 't3_y',
+          author: 'Member',
+          body: 'Outside sample',
+          permalink: '/r/elsewhere/comments/y/post/b/',
+          created_utc: 20,
+          score: 1,
+        },
+      },
+      {
+        kind: 't1',
+        data: {
+          id: 'c',
+          name: 't1_c',
+          subreddit: 'nyaonearth',
+          link_id: 't3_z',
+          author: 'Member',
+          body: 'Another useful comment',
+          permalink: '/r/nyaonearth/comments/z/post/c/',
+          created_utc: 10,
+          score: 2,
+        },
+      },
+    ],
+  },
+}), { status: 200 });
+
+describe('member Mod Notes experiment', () => {
+  test('reads the canonical member inventory from reputation protobuf data and marks moderators', () => {
+    const rows = memberInventoryFromReputation({
+      schema: 1,
+      users: {
+        member: {
+          username: 'Member',
+          points: 42,
+          status: 'ordinary',
+          immutableModeratorFlair: false,
+        },
+        mod: {
+          username: 'Mod',
+          points: 999999999,
+          status: 'moderator',
+          immutableModeratorFlair: true,
+        },
+      },
+    });
+    expect(rows).toEqual([
+      { username: 'Member', points: 42, status: 'ordinary', moderator: false },
+      { username: 'Mod', points: 999999999, status: 'moderator', moderator: true },
+    ]);
+  });
+
+  test('persists generated notes without copying score or flair fields into the note store', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mae-member-notes-'));
+    roots.push(root);
+    const store = new MemberModNoteStore(join(root, 'notes.pb'));
+    await store.seed(['Member']);
+    await store.generated('Member', 'Mae score: 42. Constructive participant.', 'Constructive participant.', 'SOLID_CONTRIBUTOR', ['t1_a'], 123);
+    await store.markApplied('Member', 'catgirlcoin');
+    expect(await store.record('member')).toEqual({
+      username: 'Member',
+      note: 'Mae score: 42. Constructive participant.',
+      summary: 'Constructive participant.',
+      label: 'SOLID_CONTRIBUTOR',
+      sampledCommentFullnames: ['t1_a'],
+      generatedAt: 123,
+      appliedTo: ['catgirlcoin'],
+      error: null,
+    });
+  });
+
+  test('samples only comments from the two moderated communities', async () => {
+    const calls: string[] = [];
+    const client = new MemberModNotesRedditClient(auth, {
+      fetcher: async input => {
+        const url = String(input);
+        calls.push(url);
+        return url.includes('/api/v1/access_token') ? token() : listing();
+      },
+    });
+    const comments = await client.recentCommentsInCommunities('Member', ['catgirlcoin', 'nyaonearth'], 10);
+    expect(comments.map(comment => comment.fullname)).toEqual(['t1_a', 't1_c']);
+    expect(calls.some(url => url.includes('/user/Member/comments'))).toBe(true);
+  });
+
+  test('posts native Mod Notes with Reddit label constants and keeps note text within 250 characters', async () => {
+    let body = '';
+    const client = new MemberModNotesRedditClient(auth, {
+      fetcher: async (input, init) => {
+        const url = String(input);
+        if (url.includes('/api/v1/access_token')) return token();
+        body = init?.body instanceof URLSearchParams ? init.body.toString() : '';
+        return new Response('{}', { status: 200 });
+      },
+    });
+    const note = memberModNoteText(42, 'x'.repeat(500));
+    expect(note.length).toBe(250);
+    await client.addModNote('catgirlcoin', 'Member', note, 'HELPFUL_USER');
+    const form = new URLSearchParams(body);
+    expect(form.get('subreddit')).toBe('catgirlcoin');
+    expect(form.get('user')).toBe('Member');
+    expect(form.get('label')).toBe('HELPFUL_USER');
+    expect(form.get('note')).toBe(note);
+  });
+});
