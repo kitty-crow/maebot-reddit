@@ -109,6 +109,7 @@ describe('member Mod Notes experiment', () => {
     await store.seed(['Member']);
     await store.generated('Member', 'Mae score: 42. Constructive participant.', 'Constructive participant.', 'SOLID_CONTRIBUTOR', ['t1_a'], 123);
     await store.markApplied('Member', 'catgirlcoin');
+    await store.markNativeNote('Member', 'catgirlcoin', 'ModNote_abc');
     expect(await store.record('member')).toEqual({
       username: 'Member',
       note: 'Mae score: 42. Constructive participant.',
@@ -117,6 +118,7 @@ describe('member Mod Notes experiment', () => {
       sampledCommentFullnames: ['t1_a'],
       generatedAt: 123,
       appliedTo: ['catgirlcoin'],
+      nativeNotes: [{ subreddit: 'catgirlcoin', noteId: 'ModNote_abc' }],
       error: null,
     });
   });
@@ -135,23 +137,34 @@ describe('member Mod Notes experiment', () => {
     expect(calls.some(url => url.includes('/user/Member/comments'))).toBe(true);
   });
 
-  test('posts native Mod Notes with Reddit label constants and keeps note text within 250 characters', async () => {
+  test('posts and deletes tracked native Mod Notes with Reddit label constants', async () => {
     let body = '';
+    const calls: { readonly url: string; readonly method: string }[] = [];
     const client = new MemberModNotesRedditClient(auth, {
       fetcher: async (input, init) => {
         const url = String(input);
         if (url.includes('/api/v1/access_token')) return token();
-        body = init?.body instanceof URLSearchParams ? init.body.toString() : '';
-        return new Response('{}', { status: 200 });
+        calls.push({ url, method: init?.method ?? 'GET' });
+        body = init?.body instanceof URLSearchParams ? init.body.toString() : body;
+        if (init?.method === 'DELETE') return new Response('{}', { status: 200 });
+        return new Response(JSON.stringify({ id: 'ModNote_test' }), { status: 200 });
       },
     });
     const note = memberModNoteText(42, 'x'.repeat(500));
     expect(note.length).toBe(250);
-    await client.addModNote('catgirlcoin', 'Member', note, 'HELPFUL_USER');
+    const id = await client.addModNote('catgirlcoin', 'Member', note, 'HELPFUL_USER', 't1_a');
+    expect(id).toBe('ModNote_test');
     const form = new URLSearchParams(body);
     expect(form.get('subreddit')).toBe('catgirlcoin');
     expect(form.get('user')).toBe('Member');
     expect(form.get('label')).toBe('HELPFUL_USER');
     expect(form.get('note')).toBe(note);
+    expect(form.get('reddit_id')).toBe('t1_a');
+
+    await client.deleteModNote('catgirlcoin', 'Member', id);
+    const deletion = calls.find(call => call.method === 'DELETE');
+    expect(deletion?.url).toContain('note_id=ModNote_test');
+    expect(deletion?.url).toContain('subreddit=catgirlcoin');
+    expect(deletion?.url).toContain('user=Member');
   });
 });
