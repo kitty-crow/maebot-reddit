@@ -9,6 +9,11 @@ export type MemberModNoteLabel =
   | 'SPAM_WARNING'
   | 'ABUSE_WARNING';
 
+export type MemberNativeModNote = {
+  readonly subreddit: string;
+  readonly noteId: string;
+};
+
 export type MemberModNoteRecord = {
   readonly username: string;
   readonly note: string | null;
@@ -17,6 +22,7 @@ export type MemberModNoteRecord = {
   readonly sampledCommentFullnames: readonly string[];
   readonly generatedAt: number | null;
   readonly appliedTo: readonly string[];
+  readonly nativeNotes: readonly MemberNativeModNote[];
   readonly error: string | null;
 };
 
@@ -45,6 +51,21 @@ const stringList = (value: Json | undefined): readonly string[] => Array.isArray
   ? value.filter((entry): entry is string => typeof entry === 'string')
   : [];
 
+const nativeNotes = (value: Json | undefined): readonly MemberNativeModNote[] => {
+  if (!Array.isArray(value)) return [];
+  const out: MemberNativeModNote[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (!isMap(raw) || typeof raw['subreddit'] !== 'string' || typeof raw['noteId'] !== 'string') continue;
+    const subreddit = raw['subreddit'].trim().toLowerCase();
+    const noteId = raw['noteId'].trim();
+    if (subreddit.length === 0 || !noteId.startsWith('ModNote_') || seen.has(subreddit)) continue;
+    seen.add(subreddit);
+    out.push({ subreddit, noteId });
+  }
+  return out.sort((a, b) => a.subreddit.localeCompare(b.subreddit));
+};
+
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported member mod-note store');
   if (!isMap(value['users'])) value['users'] = {};
@@ -61,6 +82,7 @@ const recordFrom = (value: Json | undefined): MemberModNoteRecord | null => {
     sampledCommentFullnames: stringList(value['sampledCommentFullnames']),
     generatedAt: integerOrNull(value['generatedAt']),
     appliedTo: stringList(value['appliedTo']),
+    nativeNotes: nativeNotes(value['nativeNotes']),
     error: textOrNull(value['error']),
   };
 };
@@ -73,6 +95,7 @@ const recordJson = (value: MemberModNoteRecord): JsonMap => ({
   sampledCommentFullnames: [...value.sampledCommentFullnames],
   generatedAt: value.generatedAt,
   appliedTo: [...value.appliedTo],
+  nativeNotes: value.nativeNotes.map(entry => ({ subreddit: entry.subreddit, noteId: entry.noteId })),
   error: value.error,
 });
 
@@ -84,6 +107,7 @@ const blank = (username: string): MemberModNoteRecord => ({
   sampledCommentFullnames: [],
   generatedAt: null,
   appliedTo: [],
+  nativeNotes: [],
   error: null,
 });
 
@@ -179,6 +203,30 @@ export class MemberModNoteStore {
       const applied = new Set(previous.appliedTo.map(value => value.toLowerCase()));
       applied.add(community);
       users[key] = recordJson({ ...previous, appliedTo: [...applied].sort(), error: null });
+      return value;
+    });
+  }
+
+  public async markNativeNote(username: string, subreddit: string, noteId: string): Promise<void> {
+    const community = subreddit.trim().toLowerCase();
+    const id = noteId.trim();
+    if (community.length === 0) throw new Error('Native Mod Note subreddit cannot be empty');
+    if (!id.startsWith('ModNote_')) throw new Error(`Invalid native Mod Note id ${noteId}`);
+    await this.store.edit(current => {
+      const value = root(current);
+      const users = value['users'];
+      if (!isMap(users)) throw new Error('Member mod-note users map is invalid');
+      const key = username.trim().toLowerCase();
+      const previous = recordFrom(users[key]) ?? blank(username);
+      const mapped = new Map(previous.nativeNotes.map(entry => [entry.subreddit.toLowerCase(), entry.noteId]));
+      mapped.set(community, id);
+      users[key] = recordJson({
+        ...previous,
+        nativeNotes: [...mapped.entries()]
+          .map(([subredditName, nativeId]) => ({ subreddit: subredditName, noteId: nativeId }))
+          .sort((a, b) => a.subreddit.localeCompare(b.subreddit)),
+        error: null,
+      });
       return value;
     });
   }
