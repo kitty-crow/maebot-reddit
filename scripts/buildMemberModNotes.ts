@@ -25,6 +25,14 @@ const apply = process.argv.includes('--apply');
 const refresh = process.argv.includes('--refresh');
 const onlyArg = process.argv.find(arg => arg.startsWith('--user='));
 const onlyUser = onlyArg === undefined ? null : onlyArg.slice('--user='.length).trim().toLowerCase();
+const isolatedRun = process.env['MEMBER_MOD_NOTES_ISOLATED_RUN'] === '1';
+const liveApply = process.env['MEMBER_MOD_NOTES_LIVE_APPLY'] === '1';
+
+if (apply && !isolatedRun && !liveApply) {
+  throw new Error(
+    'Live member Mod Notes apply requires MEMBER_MOD_NOTES_LIVE_APPLY=1. Use the isolated tmux launcher for experiments.',
+  );
+}
 
 const redditCfg = redditConfig();
 const moderationCfg = redditModerationConfig();
@@ -97,6 +105,21 @@ const labelText = (label: MemberModNoteLabel): string => {
   return 'No Label';
 };
 
+const replaceNativeNote = async (
+  community: string,
+  username: string,
+  note: string,
+  label: MemberModNoteLabel,
+  redditId?: string,
+): Promise<void> => {
+  const previous = await notes.record(username);
+  const oldId = previous?.nativeNotes.find(entry => entry.subreddit.toLowerCase() === community.toLowerCase())?.noteId ?? null;
+  const newId = await reddit.addModNote(community, username, note, label, redditId);
+  await notes.markNativeNote(username, community, newId);
+  await notes.markApplied(username, community);
+  if (oldId !== null && oldId !== newId) await reddit.deleteModNote(community, username, oldId);
+};
+
 const decisionText = (
   before: ReputationSubject,
   after: ReputationSubject & { readonly ban?: boolean },
@@ -148,11 +171,11 @@ console.log('='.repeat(90));
 console.log('MAE MEMBER MOD NOTES EXPERIMENT');
 console.log('='.repeat(90));
 console.log(`Members: ${members.length}`);
-console.log(`Mode: ${apply ? 'APPLY' : 'PREVIEW'}`);
+console.log(`Mode: ${apply ? (liveApply ? 'LIVE AUDIT APPLY' : 'ISOLATED APPLY') : 'PREVIEW'}`);
 console.log(`Communities: ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}`);
 console.log(`Member note store: ${process.env['REDDIT_MEMBER_MOD_NOTES_FILE']?.trim() || 'data/memberModNotes.pb'}`);
 if (apply) {
-  console.log('APPLY mode: untracked sampled comments mutate canonical reputation, then native Mod Notes are posted to both communities.');
+  console.log('APPLY mode: untracked sampled comments update reputation scores, then the tracked native Mod Note/tag is replaced in both communities.');
 } else {
   console.log('PREVIEW mode: reputation changes are simulated and memberModNotes.pb is written; Reddit and reputation.pb are not mutated.');
 }
@@ -200,16 +223,16 @@ for (let index = 0; index < members.length; index += 1) {
 
       const failures: string[] = [];
       for (const community of canonicalCommunities) {
-        if (existing.appliedTo.some(value => value.toLowerCase() === community)) {
-          console.log(`Reddit: r/${community} already has this experiment note recorded as applied.`);
+        const hasNative = existing.nativeNotes.some(entry => entry.subreddit.toLowerCase() === community);
+        if (existing.appliedTo.some(value => value.toLowerCase() === community) && hasNative) {
+          console.log(`Reddit: r/${community} already has the tracked current Mae note.`);
           continue;
         }
         try {
-          console.log(`Reddit: posting native Mod Note to r/${community}...`);
-          await reddit.addModNote(community, member.username, existing.note, existing.label);
-          await notes.markApplied(member.username, community);
+          console.log(`Reddit: replacing native Mod Note in r/${community}...`);
+          await replaceNativeNote(community, member.username, existing.note, existing.label, sampleFullnames[0]);
           posted += 1;
-          console.log(`Reddit: posted to r/${community}.`);
+          console.log(`Reddit: current Mae note installed in r/${community}.`);
         } catch (error) {
           failures.push(`r/${community}: ${safeError(error)}`);
         }
@@ -332,11 +355,10 @@ for (let index = 0; index < members.length; index += 1) {
       const failures: string[] = [];
       for (const community of canonicalCommunities) {
         try {
-          console.log(`Reddit: posting native Mod Note to r/${community}...`);
-          await reddit.addModNote(community, member.username, note, profile.label);
-          await notes.markApplied(member.username, community);
+          console.log(`Reddit: replacing native Mod Note in r/${community}...`);
+          await replaceNativeNote(community, member.username, note, profile.label, sampleFullnames[0]);
           posted += 1;
-          console.log(`Reddit: posted to r/${community}.`);
+          console.log(`Reddit: current Mae note installed in r/${community}.`);
         } catch (error) {
           failures.push(`r/${community}: ${safeError(error)}`);
         }
