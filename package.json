@@ -9,6 +9,7 @@
     "audit:reddit": "bun run scripts/redditAudit.ts",
     "bootstrap:reputation": "bun run scripts/bootstrapReputation.ts",
     "view:reputation": "bun run scripts/viewReputation.ts",
+    "audit:member-notes:apply": "MEMBER_MOD_NOTES_LIVE_APPLY=1 bun run scripts/buildMemberModNotes.ts --apply --refresh",
     "experiment:member-notes": "bun run scripts/buildMemberModNotes.ts",
     "experiment:member-notes:tmux": "bash scripts/runMemberModNotesTmux.sh",
     "migrate:legacy": "bun run scripts/migrateLegacy.ts",
