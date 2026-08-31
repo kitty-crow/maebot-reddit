@@ -51,6 +51,25 @@ const firstApiError = (value: Json): string | null => {
   return parts.length === 0 ? 'Reddit API returned an application error' : parts.join(': ');
 };
 
+const findModNoteId = (value: Json): string | null => {
+  if (typeof value === 'string') return value.startsWith('ModNote_') ? value : null;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findModNoteId(child);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (!isMap(value)) return null;
+  const direct = value['id'];
+  if (typeof direct === 'string' && direct.startsWith('ModNote_')) return direct;
+  for (const child of Object.values(value)) {
+    const found = findModNoteId(child);
+    if (found !== null) return found;
+  }
+  return null;
+};
+
 const username = (raw: string): string => {
   const value = raw.trim();
   if (!/^[A-Za-z0-9_-]{1,32}$/u.test(value)) throw new Error(`Invalid Reddit username ${raw}`);
@@ -60,6 +79,12 @@ const username = (raw: string): string => {
 const subreddit = (raw: string): string => {
   const value = raw.trim().replace(/^r\//iu, '');
   if (!/^[A-Za-z0-9_]{2,21}$/u.test(value)) throw new Error(`Invalid subreddit ${raw}`);
+  return value;
+};
+
+const redditFullname = (raw: string): string => {
+  const value = raw.trim();
+  if (!/^t[13]_[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit post/comment fullname ${raw}`);
   return value;
 };
 
@@ -128,7 +153,8 @@ export class MemberModNotesRedditClient {
     rawUsername: string,
     note: string,
     label: MemberModNoteLabel,
-  ): Promise<void> {
+    redditId?: string,
+  ): Promise<string> {
     const community = subreddit(rawSubreddit);
     const user = username(rawUsername);
     const text = note.trim();
@@ -142,7 +168,28 @@ export class MemberModNotesRedditClient {
       note: text,
     });
     if (label !== 'NONE') form.set('label', label);
-    await this.post('/api/mod/notes', form);
+    if (redditId !== undefined) form.set('reddit_id', redditFullname(redditId));
+    const payload = await this.post('/api/mod/notes', form);
+    const id = findModNoteId(payload);
+    if (id === null) throw new RedditError('POST /api/mod/notes returned no ModNote id', 'invalid_response');
+    return id;
+  }
+
+  public async deleteModNote(
+    rawSubreddit: string,
+    rawUsername: string,
+    rawNoteId: string,
+  ): Promise<void> {
+    const community = subreddit(rawSubreddit);
+    const user = username(rawUsername);
+    const noteId = rawNoteId.trim();
+    if (!noteId.startsWith('ModNote_')) throw new Error(`Invalid native Mod Note id ${rawNoteId}`);
+    const query = new URLSearchParams({
+      note_id: noteId,
+      subreddit: community,
+      user,
+    });
+    await this.request(`/api/mod/notes?${query}`, 'DELETE', null, false);
   }
 
   private async token(force = false): Promise<string> {
@@ -201,7 +248,7 @@ export class MemberModNotesRedditClient {
 
   private async request(
     path: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     body: URLSearchParams | null,
     reauthed: boolean,
   ): Promise<Json> {
