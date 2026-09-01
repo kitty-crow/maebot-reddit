@@ -127,15 +127,18 @@ printf -v PERSISTED_NOTES_Q '%q' "$PERSISTED_NOTES"
 DASHBOARD=(
   bun run scripts/applyMemberModNotesTui.ts --
   "--log=$LOG"
-  "--notes=$WORK_NOTES"
   "--audit-id=$AUDIT_ID"
   "--total=$TOTAL"
+  "$@"
 )
 printf -v DASHBOARD_Q '%q ' "${DASHBOARD[@]}"
 
-# The worker owns only run-local copies. Persist its run-local note state after
-# exit so the exact same audit can resume without reposting completed targets.
-# The live Mae store is never opened or replaced here.
+# The worker is the only process that opens the run-local protobuf stores.
+# The dashboard reads only the worker log and immutable audit logs, so it can
+# never contend on a MutexProtoBuffStore lock.
+# Persist the worker's run-local note state after exit so the exact same audit
+# can resume without reposting completed targets. The live Mae store is never
+# opened or replaced here.
 WORKER_WRAPPER="
 set -o pipefail
 sync_state() {
@@ -164,7 +167,8 @@ echo "Working rate state:     $WORK_RATE"
 echo "Rate interval:          ${RATE_INTERVAL_MS}ms"
 echo "Worker log:             $LOG"
 echo ""
-echo "The worker does not open the live member-note or rate-state stores."
+echo "Only the worker opens the run-local protobuf stores."
+echo "The dashboard uses logs only and opens no protobuf store."
 echo "No live .lock file is copied."
 echo ""
 echo "Attach:     tmux attach -t '$SESSION'"
