@@ -41,4 +41,26 @@ describe('authoritative flair reconciliation with Reddit legacy assignments', ()
       { username: 'Alice', templateId: 'canonical-id', text: ':hana:' },
     ]);
   });
+
+  test('recovers canonical visible text from the flair catalogue when persisted text is blank', () => {
+    const blankText = {
+      flairCatalog: {
+        user: [{ id: 'canonical-id', text: ':hana:' }],
+      },
+      users: {
+        alice: {
+          username: 'Alice',
+          status: 'ordinary',
+          desiredFlairTemplateId: 'canonical-id',
+          desiredFlairText: '',
+          immutableModeratorFlair: false,
+          needsFlair: false,
+        },
+      },
+    };
+
+    expect(authoritativeFlairRestores(blankText, [assignment('canonical-id', '')])).toEqual([
+      { username: 'Alice', templateId: 'canonical-id', text: ':hana:' },
+    ]);
+  });
 });

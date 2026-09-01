@@ -20,14 +20,19 @@ export type ReputationFlairReconcileResult = {
   readonly applied: number;
 };
 
+const visibleText = (value: string | null): string | null =>
+  value === null || value.trim().length === 0 ? null : value;
+
 const appliedUser = (
   user: ReputationUser,
   template: RedditFlairTemplate,
 ): ReputationUser => ({
   ...user,
   currentFlairTemplateId: template.id,
-  currentFlairText: user.desiredFlairText ?? template.text,
+  currentFlairText: visibleText(user.desiredFlairText) ?? template.text,
   currentFlairCssClass: template.cssClass,
+  desiredFlairTemplateId: template.id,
+  desiredFlairText: visibleText(user.desiredFlairText) ?? template.text,
   needsFlair: false,
 });
 
@@ -56,7 +61,7 @@ export const applyBootstrapFlairs = async (
       bootstrap.subreddit,
       user.username,
       template.id,
-      template.textEditable ? user.desiredFlairText : null,
+      template.textEditable ? visibleText(user.desiredFlairText) : null,
     );
     users.push(appliedUser(user, template));
     applied += 1;
@@ -73,7 +78,21 @@ export const applyBootstrapFlairs = async (
 
 const normalise = (value: string): string => value.trim().toLowerCase();
 const textOrNull = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
+const nonBlankText = (value: Json | undefined): string | null => visibleText(textOrNull(value));
 const flag = (value: Json | undefined): boolean => value === true;
+
+const catalogueText = (raw: Json, templateId: string): string | null => {
+  if (!isMap(raw)) return null;
+  const catalogue = raw['flairCatalog'];
+  if (!isMap(catalogue)) return null;
+  const users = catalogue['user'];
+  if (!Array.isArray(users)) return null;
+  for (const value of users) {
+    if (!isMap(value) || value['id'] !== templateId) continue;
+    return nonBlankText(value['text']);
+  }
+  return null;
+};
 
 export const authoritativeFlairRestores = (
   raw: Json,
@@ -92,13 +111,15 @@ export const authoritativeFlairRestores = (
     if (value['status'] === 'moderator' || flag(value['immutableModeratorFlair'])) continue;
     if (flag(value['needsFlair'])) continue;
 
-    const username = textOrNull(value['username']);
-    const templateId = textOrNull(value['desiredFlairTemplateId']);
-    const flairText = textOrNull(value['desiredFlairText']);
-    if (username === null || templateId === null || flairText === null) continue;
+    const username = nonBlankText(value['username']);
+    const templateId = nonBlankText(value['desiredFlairTemplateId']);
+    if (username === null || templateId === null) continue;
+    const flairText = nonBlankText(value['desiredFlairText']) ?? catalogueText(raw, templateId);
+    if (flairText === null) continue;
 
     const assignment = live.get(normalise(username));
-    const wrongText = assignment === undefined || assignment.text !== flairText;
+    const liveText = visibleText(assignment?.text ?? null);
+    const wrongText = assignment === undefined || liveText !== flairText;
     // Reddit's /api/flairlist can omit flair_template_id for legacy assignments.
     // Missing UUID is unknown, not evidence of a wrong template. Explicitly
     // returned mismatched UUIDs remain authoritative evidence and are restored.
