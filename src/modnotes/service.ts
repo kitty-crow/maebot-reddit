@@ -58,10 +58,14 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
   );
 
   const interval = pollMs();
-  const primed = await watcher.tick();
-  console.log(
-    `Member Mod Note live boundary established across ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}; seeded=${primed.seeded}, poll=${interval}ms.`,
-  );
+  try {
+    const primed = await watcher.tick();
+    console.log(
+      `Member Mod Note live boundary established across ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}; seeded=${primed.seeded}, poll=${interval}ms.`,
+    );
+  } catch (error) {
+    console.error(`[Reddit member notes] startup prime failed: ${safeError(error)}`);
+  }
 
   let ticking = false;
   const tick = async (): Promise<void> => {
