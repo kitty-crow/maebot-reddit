@@ -10,6 +10,7 @@ import { MemberModNoteStore } from './store.ts';
 import { MemberModNoteWatchRuntime } from './watch.ts';
 
 const canonicalCommunities = ['catgirlcoin', 'nyaonearth'] as const;
+const STARTUP_PRIME_ATTEMPTS = 3;
 
 const pollMs = (): number => {
   const raw = process.env['REDDIT_MEMBER_MOD_NOTES_POLL_MS']?.trim();
@@ -58,13 +59,27 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
   );
 
   const interval = pollMs();
-  try {
-    const primed = await watcher.tick();
-    console.log(
-      `Member Mod Note live boundary established across ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}; seeded=${primed.seeded}, poll=${interval}ms.`,
+  let primed = false;
+  let primeError: unknown = null;
+  for (let attempt = 0; attempt < STARTUP_PRIME_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await watcher.tick();
+      console.log(
+        `Member Mod Note live boundary established across ${canonicalCommunities.map(value => `r/${value}`).join(' + ')}; seeded=${result.seeded}, poll=${interval}ms.`,
+      );
+      primed = true;
+      break;
+    } catch (error) {
+      primeError = error;
+      if (attempt + 1 < STARTUP_PRIME_ATTEMPTS) {
+        await Bun.sleep(500 * (2 ** attempt));
+      }
+    }
+  }
+  if (!primed) {
+    console.warn(
+      `[Reddit member notes] startup prime deferred after ${STARTUP_PRIME_ATTEMPTS} attempts: ${safeError(primeError)}; periodic watcher will retry.`,
     );
-  } catch (error) {
-    console.error(`[Reddit member notes] startup prime failed: ${safeError(error)}`);
   }
 
   let ticking = false;
