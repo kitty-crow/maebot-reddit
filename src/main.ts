@@ -519,10 +519,16 @@ if (directMessages !== null) {
 }
 const stopMemberModNotes = await startMemberModNoteService();
 if (communityProjection !== null) {
-  const primed = await communityProjection.tick();
-  console.log(
-    `Initial r/${canonicalTargetSubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
-  );
+  try {
+    const primed = await communityProjection.tick();
+    console.log(
+      `Initial r/${canonicalTargetSubreddit} reputation projection applied=${primed.applied} failed=${primed.failed}.`,
+    );
+  } catch (error) {
+    console.error(
+      `[Reddit reputation] startup projection failed: ${safeError(error)}`,
+    );
+  }
 }
 if (postMirror !== null) {
   await postMirror.tick();
