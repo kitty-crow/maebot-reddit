@@ -1,24 +1,47 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { MemberModNoteStore, type MemberModNoteRecord } from '../src/modnotes/store.ts';
+import { parseMemberAuditLog, type MemberAuditResult } from '../src/modnotes/auditResults.ts';
 
 const communities = ['catgirlcoin', 'nyaonearth'] as const;
 const args = process.argv.slice(2);
 const logArg = args.find(arg => arg.startsWith('--log='));
-const notesArg = args.find(arg => arg.startsWith('--notes='));
 const auditArg = args.find(arg => arg.startsWith('--audit-id='));
 const totalArg = args.find(arg => arg.startsWith('--total='));
-if (logArg === undefined || notesArg === undefined || auditArg === undefined || totalArg === undefined) {
-  throw new Error('Usage: --log=<worker.log> --notes=<memberModNotes.pb> --audit-id=<id> --total=<members>');
+const baseArg = args.find(arg => arg.startsWith('--base='));
+const completionArgs = args.filter(arg => arg.startsWith('--completion='));
+const overlayArgs = args.filter(arg => arg.startsWith('--overlay='));
+if (logArg === undefined || auditArg === undefined || totalArg === undefined || baseArg === undefined) {
+  throw new Error(
+    'Usage: --log=<worker.log> --audit-id=<id> --total=<members> --base=<audit.log> '
+    + '[--completion=<log> ...] [--overlay=<log> ...]',
+  );
 }
 
 const logFile = resolve(process.cwd(), logArg.slice('--log='.length));
-const notesFile = resolve(process.cwd(), notesArg.slice('--notes='.length));
 const auditId = auditArg.slice('--audit-id='.length).trim();
 const totalMembers = Number(totalArg.slice('--total='.length));
+const baseFile = resolve(process.cwd(), baseArg.slice('--base='.length));
+const completionFiles = completionArgs.map(arg => resolve(process.cwd(), arg.slice('--completion='.length)));
+const overlayFiles = overlayArgs.map(arg => resolve(process.cwd(), arg.slice('--overlay='.length)));
 if (!/^[0-9a-f]{16}$/u.test(auditId)) throw new Error('--audit-id must be a 16-character lowercase hexadecimal id');
 if (!Number.isSafeInteger(totalMembers) || totalMembers < 1) throw new Error('--total must be a positive integer');
+
+const base = parseMemberAuditLog(await readFile(baseFile, 'utf8'));
+const final = new Map(base.results.map(result => [result.username.toLowerCase(), result]));
+for (const file of completionFiles) {
+  const parsed = parseMemberAuditLog(await readFile(file, 'utf8'));
+  for (const result of parsed.results) final.set(result.username.toLowerCase(), result);
+}
+for (const file of overlayFiles) {
+  const parsed = parseMemberAuditLog(await readFile(file, 'utf8'));
+  for (const result of parsed.results) final.set(result.username.toLowerCase(), result);
+}
+if (final.size !== totalMembers) {
+  throw new Error(`Dashboard audit coverage mismatch: expected=${totalMembers} actual=${final.size}`);
+}
+const results = [...final.values()].sort((a, b) => a.username.localeCompare(b.username));
+const resultByUser = new Map(results.map(result => [result.username.toLowerCase(), result]));
 
 const esc = '\u001b[';
 const reset = `${esc}0m`;
@@ -58,15 +81,7 @@ const progressBar = (done: number, total: number, width: number): string => {
   return `${green}${'█'.repeat(filled)}${reset}${dim}${'░'.repeat(cells - filled)}${reset} ${(fraction * 100).toFixed(1)}%`;
 };
 
-const applied = (record: MemberModNoteRecord, community: string): boolean => {
-  const key = community.toLowerCase();
-  return record.appliedTo.some(value => value.toLowerCase() === key)
-    && record.nativeNotes.some(value => value.subreddit.toLowerCase() === key);
-};
-
-const trackedId = (record: MemberModNoteRecord, community: string): string | null =>
-  record.nativeNotes.find(value => value.subreddit.toLowerCase() === community.toLowerCase())?.noteId ?? null;
-
+type FinalState = 'applied' | 'skipped' | 'failed';
 type WorkerView = {
   readonly phase: string;
   readonly username: string;
@@ -74,6 +89,11 @@ type WorkerView = {
   readonly detail: string;
   readonly targetDone: number;
   readonly targetTotal: number;
+  readonly posted: number;
+  readonly skipped: number;
+  readonly failed: number;
+  readonly completedMembers: number;
+  readonly complete: boolean;
 };
 
 const parseWorker = (raw: string): WorkerView => {
@@ -83,23 +103,32 @@ const parseWorker = (raw: string): WorkerView => {
   let detail = '';
   let targetDone = 0;
   let targetTotal = totalMembers * communities.length;
+  const finals = new Map<string, FinalState>();
 
   for (const line of raw.split(/\r?\n/u)) {
     if (!line.startsWith('[native-notes] ')) continue;
     const body = line.slice('[native-notes] '.length);
     const ratio = /\b(\d+)\/(\d+)\b/u.exec(body);
     if (ratio === null || ratio[1] === undefined || ratio[2] === undefined) continue;
-    targetDone = Number(ratio[1]);
-    targetTotal = Number(ratio[2]);
-    phase = body.slice(0, ratio.index).trim() || phase;
 
+    const parsedPhase = body.slice(0, ratio.index).trim();
+    const parsedDone = Number(ratio[1]);
+    const parsedTotal = Number(ratio[2]);
     const afterRatio = body.slice(ratio.index + ratio[0].length).trim();
     const target = /^([A-Za-z0-9_-]{1,32})\s+(catgirlcoin|nyaonearth)(?:\s+(.*))?$/u.exec(afterRatio);
+
+    phase = parsedPhase || phase;
+    targetDone = parsedDone;
+    targetTotal = parsedTotal;
     if (target !== null) {
       username = target[1] ?? username;
       community = target[2] ?? community;
       detail = target[3]?.trim() ?? '';
-    } else if (afterRatio.length > 0) {
+      const key = `${username.toLowerCase()}|${community}`;
+      if (phase === 'Applied') finals.set(key, 'applied');
+      if (phase === 'Already applied') finals.set(key, 'skipped');
+      if (phase === 'Failed') finals.set(key, 'failed');
+    } else {
       detail = afterRatio;
       if (phase.startsWith('COMPLETE')) {
         username = '';
@@ -108,10 +137,40 @@ const parseWorker = (raw: string): WorkerView => {
     }
   }
 
-  return { phase, username, community, detail, targetDone, targetTotal };
+  let posted = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const state of finals.values()) {
+    if (state === 'applied') posted += 1;
+    if (state === 'skipped') skipped += 1;
+    if (state === 'failed') failed += 1;
+  }
+
+  const completedMembers = results.filter(result =>
+    communities.every(communityName => {
+      const status = finals.get(`${result.username.toLowerCase()}|${communityName}`);
+      return status === 'applied' || status === 'skipped';
+    }),
+  ).length;
+
+  return {
+    phase,
+    username,
+    community,
+    detail,
+    targetDone,
+    targetTotal,
+    posted,
+    skipped,
+    failed,
+    completedMembers,
+    complete: phase.startsWith('COMPLETE'),
+  };
 };
 
-const notes = new MemberModNoteStore(notesFile);
+const auditResult = (username: string): MemberAuditResult | null =>
+  username.length === 0 ? null : resultByUser.get(username.toLowerCase()) ?? null;
+
 let quit = false;
 const tty = process.stdin.isTTY && process.stdout.isTTY;
 const restore = (): void => {
@@ -137,40 +196,19 @@ process.on('SIGHUP', () => { quit = true; });
 while (!quit) {
   const raw = existsSync(logFile) ? await readFile(logFile, 'utf8') : '';
   const worker = parseWorker(raw);
-  const records = existsSync(notesFile) ? await notes.records() : [];
-  const totalTargets = totalMembers * communities.length;
-  const appliedTargets = records.reduce(
-    (sum, record) => sum + communities.filter(community => applied(record, community)).length,
-    0,
-  );
-  const completedMembers = records.filter(record => communities.every(community => applied(record, community))).length;
-  const failedMembers = records.filter(record => record.error !== null).length;
-
-  let current = worker.username.length > 0
-    ? records.find(record => record.username.toLowerCase() === worker.username.toLowerCase()) ?? null
-    : null;
-  if (current === null) {
-    current = records.find(record => !communities.every(community => applied(record, community))) ?? null;
-  }
-
-  const currentCommunity = worker.community.length > 0
-    ? worker.community
-    : current === null
-      ? ''
-      : communities.find(community => !applied(current, community)) ?? '';
+  const current = auditResult(worker.username);
   const currentIndex = current === null
     ? 0
-    : Math.max(1, records.findIndex(record => record.username.toLowerCase() === current.username.toLowerCase()) + 1);
-  const targetIndex = currentCommunity === 'catgirlcoin' ? 1 : currentCommunity === 'nyaonearth' ? 2 : 0;
-  const note = current?.note ?? '';
-  const tag = current?.label ?? '';
-  const nativeId = current === null || currentCommunity.length === 0 ? null : trackedId(current, currentCommunity);
-  const result = current?.error !== null && current?.error !== undefined
-    ? `${red}${current.error}${reset}`
-    : nativeId !== null
-      ? `${green}applied • ${nativeId}${reset}`
-      : `${yellow}${worker.phase.startsWith('COMPLETE') ? 'finished' : 'pending'}${reset}`;
-  const complete = appliedTargets >= totalTargets && failedMembers === 0;
+    : Math.max(1, results.findIndex(result => result.username.toLowerCase() === current.username.toLowerCase()) + 1);
+  const targetIndex = worker.community === 'catgirlcoin' ? 1 : worker.community === 'nyaonearth' ? 2 : 0;
+  const successfulTargets = worker.posted + worker.skipped;
+  const result = worker.phase === 'Failed'
+    ? `${red}${worker.detail || 'failed'}${reset}`
+    : worker.phase === 'Applied'
+      ? `${green}${worker.detail || 'applied'}${reset}`
+      : worker.phase === 'Already applied'
+        ? `${yellow}${worker.detail || 'already applied'}${reset}`
+        : worker.detail || '—';
 
   const width = Math.max(62, Math.min(process.stdout.columns ?? 100, 120));
   const lines: string[] = [];
@@ -179,20 +217,28 @@ while (!quit) {
   lines.push(boxLine('audit', auditId, width));
   lines.push(separator(width));
   lines.push(boxLine('phase', `${cyan}${worker.phase}${reset}`, width));
-  lines.push(boxLine('overall', progressBar(appliedTargets, totalTargets, Math.min(44, width - 30)), width));
-  lines.push(boxLine('members', `${completedMembers}/${totalMembers} complete   ${red}${failedMembers} failed${reset}`, width));
+  lines.push(boxLine('overall', progressBar(worker.targetDone, worker.targetTotal, Math.min(44, width - 30)), width));
+  lines.push(boxLine(
+    'members',
+    `${worker.completedMembers}/${totalMembers} complete   ${red}${worker.failed} failed targets${reset}`,
+    width,
+  ));
   lines.push(separator(width));
   lines.push(boxLine('current', current === null ? 'waiting…' : `u/${current.username}  (${currentIndex}/${totalMembers})`, width));
-  lines.push(boxLine('source', `${blue}completed 990-member audit${reset}`, width));
-  lines.push(boxLine('target', currentCommunity.length > 0 ? `r/${currentCommunity}  (${targetIndex}/2)` : '—', width));
-  lines.push(boxLine('notes', `${appliedTargets}/${totalTargets} native Mod Notes applied`, width));
+  lines.push(boxLine('source', `${blue}completed ${totalMembers}-member audit${reset}`, width));
+  lines.push(boxLine('target', worker.community.length > 0 ? `r/${worker.community}  (${targetIndex}/2)` : '—', width));
+  lines.push(boxLine(
+    'notes',
+    `${successfulTargets}/${worker.targetTotal} satisfied   posted=${worker.posted} skipped=${worker.skipped} failed=${worker.failed}`,
+    width,
+  ));
   lines.push(separator(width));
-  lines.push(boxLine('Mod Note', note || '—', width));
-  lines.push(boxLine('tag', tag || '—', width));
+  lines.push(boxLine('Mod Note', current?.note ?? '—', width));
+  lines.push(boxLine('tag', current?.label ?? '—', width));
   lines.push(boxLine('result', result, width));
   lines.push(boxLine('detail', worker.detail || '—', width));
   lines.push(separator(width));
-  lines.push(boxLine('', complete
+  lines.push(boxLine('', worker.complete
     ? `${green}${bold}Finished.${reset} Press q to leave.`
     : `${dim}q / Esc: leave dashboard • worker continues in tmux${reset}`, width));
   lines.push(bottom(width));
