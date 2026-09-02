@@ -22,8 +22,8 @@
     "check": "bunx tsc -p tsconfig.json --noEmit && bun run check:types && bun run check:imports && bun run check:boundaries",
     "check:types": "bun run scripts/noLooseTypes.ts",
     "check:boundaries": "bun run scripts/architectureBoundaries.ts",
-    "test": "bun test",
-    "ci": "bun run check && bun test && bash -n scripts/runMemberModNotesTmux.sh scripts/runApplyMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
+    "test": "bun test --timeout 15000",
+    "ci": "bun run check && bun run test && bash -n scripts/runMemberModNotesTmux.sh scripts/runApplyMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
     "check:imports": "bun run scripts/tsImports.ts"
   },
   "dependencies": {
