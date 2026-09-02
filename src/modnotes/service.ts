@@ -11,6 +11,7 @@ import { MemberModNoteWatchRuntime } from './watch.ts';
 
 const canonicalCommunities = ['catgirlcoin', 'nyaonearth'] as const;
 const STARTUP_PRIME_ATTEMPTS = 3;
+const MEMBER_READ_ATTEMPTS = 6;
 
 const pollMs = (): number => {
   const raw = process.env['REDDIT_MEMBER_MOD_NOTES_POLL_MS']?.trim();
@@ -32,7 +33,10 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
 
   const redditCfg = redditConfig();
   const reputation = new ReputationStore(moderationCfg.stateFile);
-  const reader = new RedditReadClient(redditCfg.auth);
+  // Member-note maintenance is periodic background work. Give read-only Reddit
+  // calls a wider bounded retry window so a few seconds of DNS/TLS/socket churn
+  // does not turn a healthy watcher into a red failure every polling cycle.
+  const reader = new RedditReadClient(redditCfg.auth, { maxAttempts: MEMBER_READ_ATTEMPTS });
   const store = new MemberModNoteStore(resolve(
     process.cwd(),
     process.env['REDDIT_MEMBER_MOD_NOTES_FILE']?.trim() || 'data/memberModNotes.pb',
