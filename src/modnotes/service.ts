@@ -64,7 +64,7 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
 
   const interval = pollMs();
   let primed = false;
-  let primeError: unknown = null;
+  let primeError = 'no startup error captured';
   for (let attempt = 0; attempt < STARTUP_PRIME_ATTEMPTS; attempt += 1) {
     try {
       const result = await watcher.tick();
@@ -74,7 +74,7 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
       primed = true;
       break;
     } catch (error) {
-      primeError = error;
+      primeError = safeError(error);
       if (attempt + 1 < STARTUP_PRIME_ATTEMPTS) {
         await Bun.sleep(500 * (2 ** attempt));
       }
@@ -82,7 +82,7 @@ export const startMemberModNoteService = async (): Promise<StopMemberModNoteServ
   }
   if (!primed) {
     console.warn(
-      `[Reddit member notes] startup prime deferred after ${STARTUP_PRIME_ATTEMPTS} attempts: ${safeError(primeError)}; periodic watcher will retry.`,
+      `[Reddit member notes] startup prime deferred after ${STARTUP_PRIME_ATTEMPTS} attempts: ${primeError}; periodic watcher will retry.`,
     );
   }
 
