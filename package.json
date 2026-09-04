@@ -23,7 +23,8 @@
     "check:types": "bun run scripts/noLooseTypes.ts",
     "check:boundaries": "bun run scripts/architectureBoundaries.ts",
     "test": "bun test --timeout 15000",
-    "ci": "bun run check && bun run test && bash -n scripts/runMemberModNotesTmux.sh scripts/runApplyMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
+    "ci:raw": "bun run check && bun run test && bash -n scripts/runMemberModNotesTmux.sh scripts/runApplyMemberModNotesTmux.sh scripts/rerunMemberModNotesBanCandidates.sh scripts/completeMemberModNotesAudit.sh scripts/previewMemberModNotesReconciliation.sh",
+    "ci": "bash scripts/dashboardGuard.sh ci -- bun run ci:raw",
     "check:imports": "bun run scripts/tsImports.ts"
   },
   "dependencies": {
