@@ -34,7 +34,7 @@ type MutationWriter = Pick<
 
 type LiveStateReader = Pick<
   RedditReadClient,
-  'userFlairAssignments' | 'bannedUsers' | 'mutedUsers'
+  'userFlairAssignment' | 'bannedUser' | 'mutedUser'
 >;
 
 const adoptionWireFlair = '__MAE_INTERNAL_ADOPT_REDDIT_STATE_V1__';
@@ -215,17 +215,18 @@ export class ManualReputationModeration {
     username: string,
     actor: ManualModerationActor,
   ): Promise<ManualUserActionResult> {
-    const reader = this.reader ?? new RedditReadClient(redditConfig().auth);
-    const [assignments, bannedUsers, mutedUsers] = await Promise.all([
-      reader.userFlairAssignments(this.subreddit),
-      reader.bannedUsers(this.subreddit),
-      reader.mutedUsers(this.subreddit),
+    // This is an explicit operator override, not part of Mae's normal polling
+    // workload. Use three one-user reads and fail promptly on a real Reddit
+    // rate-limit response instead of waiting behind the shared background
+    // rate-budget for minutes or enumerating whole subreddit inventories.
+    const reader = this.reader ?? new RedditReadClient(redditConfig().auth, { fetcher: fetch, maxAttempts: 1 });
+    const [assignment, bannedUser, liveMute] = await Promise.all([
+      reader.userFlairAssignment(this.subreddit, username),
+      reader.bannedUser(this.subreddit, username),
+      reader.mutedUser(this.subreddit, username),
     ]);
-    const key = lower(username);
-    const assignment = assignments.find(item => lower(item.username) === key);
-    const liveBanned = bannedUsers.some(item => lower(item.username) === key);
-    const liveMute = mutedUsers.find(item => lower(item.username) === key);
-    const liveMuted = liveMute !== undefined;
+    const liveBanned = bannedUser !== null;
+    const liveMuted = liveMute !== null;
     const now = Date.now();
     let flairDescription = 'none';
     let clearedBanEffects = 0;
@@ -236,7 +237,7 @@ export class ManualReputationModeration {
       assertMutableMember(user);
       const beforeStatus = text(user['status']);
       const beforeFlairId = nullableText(user['desiredFlairTemplateId']);
-      const adoptedFlair = liveFlairTemplate(value, assignment);
+      const adoptedFlair = liveFlairTemplate(value, assignment ?? undefined);
       if (adoptedFlair === null) {
         user['currentFlairTemplateId'] = null;
         user['currentFlairText'] = null;
@@ -259,7 +260,7 @@ export class ManualReputationModeration {
       user['status'] = afterStatus;
 
       const record = discipline(value, username);
-      if (liveMute === undefined) {
+      if (liveMute === null) {
         record['muteUntil'] = null;
         record['mutePermanent'] = false;
         record['redditMuted'] = false;
