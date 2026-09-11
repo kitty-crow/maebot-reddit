@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { ModerationReviewStore } from '../mod/review.ts';
 import type { ModmailMediaService } from '../modmail/media/service.ts';
 import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
@@ -5,10 +6,10 @@ import type { ModmailReplyAttachment, ModmailReplyOutbox } from '../modmail/outb
 import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
-import type {
-  ManualModerationActor,
+import {
   ManualReputationModeration,
-  ManualUserAction,
+  type ManualModerationActor,
+  type ManualUserAction,
 } from '../reputation/manualModeration.ts';
 import type { ReputationStore } from '../reputation/store.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
@@ -214,6 +215,16 @@ const moderationFailureStatus = (message: string): number => {
   return 503;
 };
 
+const supportsUserModeration = (value: ModmailCloser | null): value is RedditMutationClient => {
+  if (value === null) return false;
+  const candidate = value as unknown as Record<string, unknown>;
+  return typeof candidate['setUserFlairTemplate'] === 'function'
+    && typeof candidate['banUser'] === 'function'
+    && typeof candidate['unbanUser'] === 'function'
+    && typeof candidate['muteUser'] === 'function'
+    && typeof candidate['unmuteUser'] === 'function';
+};
+
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
@@ -243,6 +254,13 @@ export class RedditInternalHttpServer {
     this.modmailMedia = media;
     this.modmailReputation = reputation;
     this.modmailCloser = closer;
+    if (reputation !== null && supportsUserModeration(closer)) {
+      this.userModeration = new ManualReputationModeration(
+        resolve(process.cwd(), process.env['REDDIT_REPUTATION_STATE_FILE']?.trim() || 'data/reputation.pb'),
+        process.env['REDDIT_SOURCE_SUBREDDIT']?.trim() || 'catgirlcoin',
+        closer,
+      );
+    }
   }
 
   public useUserModeration(service: ManualReputationModeration): void {
