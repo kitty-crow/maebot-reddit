@@ -4,6 +4,7 @@ import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
+import { DashboardRedditReconciler } from './dashboardReconcile.ts';
 import { withRedditStateAdoption } from './manualOverrideGate.ts';
 import { clampReputationPoints, tierForPoints } from './policy.ts';
 
@@ -35,7 +36,12 @@ type MutationWriter = Pick<
 
 type LiveStateReader = Pick<
   RedditReadClient,
-  'userFlairAssignment' | 'bannedUser' | 'mutedUser'
+  | 'userFlairAssignment'
+  | 'bannedUser'
+  | 'mutedUser'
+  | 'userFlairAssignments'
+  | 'bannedUsers'
+  | 'mutedUsers'
 >;
 
 type CanonicalFlair = {
@@ -272,6 +278,8 @@ const statusAdoptedFromLive = (user: JsonMap, liveBanned: boolean, liveMuted: bo
 
 export class ManualReputationModeration {
   private readonly store: Store;
+  private readonly reconciler: DashboardRedditReconciler;
+  private readonly reconcileOnWrite: boolean;
 
   public constructor(
     stateFile: string,
@@ -279,8 +287,15 @@ export class ManualReputationModeration {
     writer: MutationWriter,
     private readonly reader: LiveStateReader | null = null,
   ) {
-    void writer;
     this.store = new Store(stateFile, initial());
+    this.reconciler = new DashboardRedditReconciler(stateFile, subreddit, writer, reader);
+    this.reconcileOnWrite = reader === null;
+    if (this.reconcileOnWrite) this.reconciler.start();
+  }
+
+  private finish(result: ManualUserActionResult): ManualUserActionResult {
+    if (this.reconcileOnWrite && result.kind !== 'adopt-reddit-state') this.reconciler.queue(result.username);
+    return result;
   }
 
   private async adoptLiveRedditState(
@@ -390,7 +405,7 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'set-score', { beforePoints: before, afterPoints: points });
         return value;
       });
-      return { username, kind: action.kind, detail: `canonical score set to ${points}` };
+      return this.finish({ username, kind: action.kind, detail: `canonical score set to ${points}` });
     }
 
     if (action.kind === 'set-flair') {
@@ -406,7 +421,7 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'set-flair', { templateId: template.id, flairText: template.text });
         return value;
       });
-      return { username, kind: action.kind, detail: 'canonical flair intent stored; Mae will reconcile Reddit' };
+      return this.finish({ username, kind: action.kind, detail: 'canonical flair intent stored; Mae will reconcile Reddit' });
     }
 
     if (action.kind === 'ban') {
@@ -419,7 +434,7 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'ban', { beforeStatus: before, afterStatus: 'banned' });
         return value;
       });
-      return { username, kind: action.kind, detail: 'canonical ban intent stored; Mae will reconcile Reddit' };
+      return this.finish({ username, kind: action.kind, detail: 'canonical ban intent stored; Mae will reconcile Reddit' });
     }
 
     if (action.kind === 'unban') {
@@ -439,7 +454,7 @@ export class ManualReputationModeration {
         });
         return value;
       });
-      return { username, kind: action.kind, detail: `canonical unban intent stored; cleared ${cleared} pending historical ban effect(s)` };
+      return this.finish({ username, kind: action.kind, detail: `canonical unban intent stored; cleared ${cleared} pending historical ban effect(s)` });
     }
 
     if (action.kind === 'mute') {
@@ -453,7 +468,7 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'mute', { durationDays: 28 });
         return value;
       });
-      return { username, kind: action.kind, detail: 'canonical 28-day mute intent stored; Mae will reconcile Reddit' };
+      return this.finish({ username, kind: action.kind, detail: 'canonical 28-day mute intent stored; Mae will reconcile Reddit' });
     }
 
     await this.store.edit(current => {
@@ -465,6 +480,6 @@ export class ManualReputationModeration {
       journal(value, username, actor, 'unmute');
       return value;
     });
-    return { username, kind: action.kind, detail: 'canonical unmute intent stored; Mae will reconcile Reddit' };
+    return this.finish({ username, kind: action.kind, detail: 'canonical unmute intent stored; Mae will reconcile Reddit' });
   }
 }
