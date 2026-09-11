@@ -66,13 +66,23 @@ const fixture = async () => {
     banned: Relationship[];
     muted: Relationship[];
   } = { assignments: [], banned: [], muted: [] };
+  const readerCalls: string[] = [];
   const reader = {
-    userFlairAssignments: async (_subreddit: string) => live.assignments,
-    bannedUsers: async (_subreddit: string) => live.banned,
-    mutedUsers: async (_subreddit: string) => live.muted,
+    userFlairAssignment: async (_subreddit: string, username: string) => {
+      readerCalls.push(`flair:${username}`);
+      return live.assignments.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
+    },
+    bannedUser: async (_subreddit: string, username: string) => {
+      readerCalls.push(`banned:${username}`);
+      return live.banned.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
+    },
+    mutedUser: async (_subreddit: string, username: string) => {
+      readerCalls.push(`muted:${username}`);
+      return live.muted.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
+    },
   };
   const service = new ManualReputationModeration(stateFile, 'catgirlcoin', writer, reader);
-  return { store, service, calls, live };
+  return { store, service, calls, live, readerCalls };
 };
 
 const actor = { platform: 'discord' as const, userId: '7', userName: 'kitty' };
@@ -137,8 +147,8 @@ describe('manual Reddit user moderation', () => {
     expect(calls).toEqual(['mute:alice', 'unmute:alice']);
   });
 
-  test('adopts live canonical Reddit ban, mute and flair through the internal API wire sentinel without writing to Reddit', async () => {
-    const { store, service, calls, live } = await fixture();
+  test('adopts live canonical Reddit ban, mute and flair through targeted one-user reads without writing to Reddit', async () => {
+    const { store, service, calls, live, readerCalls } = await fixture();
     const startedAt = Math.floor(Date.now() / 1_000) - 60;
     live.assignments.push({
       username: 'Alice',
@@ -166,6 +176,7 @@ describe('manual Reddit user moderation', () => {
     expect(alice['needsFlair']).toBe(false);
     expect(mute['redditMuted']).toBe(true);
     expect(typeof mute['muteUntil']).toBe('number');
+    expect(readerCalls).toEqual(['flair:alice', 'banned:alice', 'muted:alice']);
     expect(calls).toEqual([]);
   });
 
