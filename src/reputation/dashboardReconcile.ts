@@ -4,7 +4,7 @@ import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
-import { isRedditStateAdoptionActive } from './manualOverrideGate.ts';
+import { redditStateAdoptionInProgress } from './manualOverrideGate.ts';
 
 export type DashboardRedditReader = Pick<
   RedditReadClient,
@@ -183,7 +183,7 @@ export class DashboardRedditReconciler {
       readonly flair: RedditFlairAssignment | null;
     },
   ): Promise<void> {
-    if (isRedditStateAdoptionActive(desired.username)) {
+    if (redditStateAdoptionInProgress(desired.username)) {
       this.pending.add(key(desired.username));
       return;
     }
