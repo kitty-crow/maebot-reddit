@@ -217,15 +217,17 @@ export class ManualReputationModeration {
     actor: ManualModerationActor,
   ): Promise<ManualUserActionResult> {
     // This is an explicit operator override, not part of Mae's normal polling
-    // workload. Use three one-user reads and fail promptly on a real Reddit
-    // rate-limit response instead of waiting behind the shared background
-    // rate-budget for minutes or enumerating whole subreddit inventories.
-    const reader = this.reader ?? new RedditReadClient(redditConfig().auth, { fetcher: fetch, maxAttempts: 1 });
-    const [assignment, bannedUser, liveMute] = await Promise.all([
-      reader.userFlairAssignment(this.subreddit, username),
-      reader.bannedUser(this.subreddit, username),
-      reader.mutedUser(this.subreddit, username),
-    ]);
+    // workload. Use one-user reads outside the background rate-budget and bound
+    // the real network boundary so this administrative action cannot hang.
+    const boundedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      await fetch(input, { ...init, signal: AbortSignal.timeout(10_000) });
+    const reader = this.reader ?? new RedditReadClient(redditConfig().auth, { fetcher: boundedFetch, maxAttempts: 1 });
+
+    // Sequential reads deliberately share one OAuth token instead of starting
+    // three concurrent token requests on a fresh administrative reader.
+    const assignment = await reader.userFlairAssignment(this.subreddit, username);
+    const bannedUser = await reader.bannedUser(this.subreddit, username);
+    const liveMute = await reader.mutedUser(this.subreddit, username);
     const liveBanned = bannedUser !== null;
     const liveMuted = liveMute !== null;
     const now = Date.now();
