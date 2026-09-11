@@ -12,7 +12,7 @@ import {
   type ManualUserAction,
 } from '../reputation/manualModeration.ts';
 import type { ReputationStore } from '../reputation/store.ts';
-import type { RedditMutationClient } from '../reddit/mutate.ts';
+import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
@@ -215,16 +215,6 @@ const moderationFailureStatus = (message: string): number => {
   return 503;
 };
 
-const supportsUserModeration = (value: ModmailCloser | null): value is RedditMutationClient => {
-  if (value === null) return false;
-  const candidate = value as unknown as Record<string, unknown>;
-  return typeof candidate['setUserFlairTemplate'] === 'function'
-    && typeof candidate['banUser'] === 'function'
-    && typeof candidate['unbanUser'] === 'function'
-    && typeof candidate['muteUser'] === 'function'
-    && typeof candidate['unmuteUser'] === 'function';
-};
-
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
@@ -254,7 +244,7 @@ export class RedditInternalHttpServer {
     this.modmailMedia = media;
     this.modmailReputation = reputation;
     this.modmailCloser = closer;
-    if (reputation !== null && supportsUserModeration(closer)) {
+    if (reputation !== null && closer instanceof RedditMutationClient) {
       this.userModeration = new ManualReputationModeration(
         resolve(process.cwd(), process.env['REDDIT_REPUTATION_STATE_FILE']?.trim() || 'data/reputation.pb'),
         process.env['REDDIT_SOURCE_SUBREDDIT']?.trim() || 'catgirlcoin',
