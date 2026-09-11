@@ -1,4 +1,5 @@
 import type { RedditAuthCfg } from '../env.ts';
+import { assertRedditStateMutationAllowed } from '../reputation/manualOverrideGate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
@@ -273,6 +274,7 @@ export class RedditMutationClient {
     templateId: string,
     customText: string | null,
   ): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     const form = new URLSearchParams({ api_type: 'json', flair_template_id: templateId, name: username });
     add(form, 'text', customText);
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
@@ -291,6 +293,7 @@ export class RedditMutationClient {
     flairText: string | null,
     cssClass: string | null,
   ): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     const form = new URLSearchParams({
       api_type: 'json',
       name: username,
@@ -325,6 +328,7 @@ export class RedditMutationClient {
     reason: string,
     note: string,
   ): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     const form = new URLSearchParams({
       api_type: 'json',
       name: username,
@@ -336,6 +340,7 @@ export class RedditMutationClient {
   }
 
   public async unbanUser(subreddit: string, username: string): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
       api_type: 'json',
       name: username,
@@ -405,6 +410,7 @@ export class RedditMutationClient {
   }
 
   public async muteUser(subreddit: string, username: string, note: string): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     const form = new URLSearchParams({
       api_type: 'json',
       name: username,
@@ -416,6 +422,7 @@ export class RedditMutationClient {
   }
 
   public async unmuteUser(subreddit: string, username: string): Promise<void> {
+    assertRedditStateMutationAllowed(username);
     await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
       api_type: 'json',
       name: username,
@@ -437,7 +444,6 @@ export class RedditMutationClient {
   private async token(force = false): Promise<string> {
     const now = Date.now();
     if (!force && this.tokenCache !== null && this.tokenCache.until > now + 60_000) return this.tokenCache.value;
-
     const body = new URLSearchParams({
       grant_type: 'password',
       username: this.cfg.username,
