@@ -4,6 +4,7 @@ export type CanonicalNativeUserState = {
   readonly username: string;
   readonly banned: boolean;
   readonly muted: boolean;
+  readonly redditMuted: boolean;
 };
 
 const text = (value: Json | undefined): string | null => typeof value === 'string' && value.trim().length > 0 ? value : null;
@@ -27,11 +28,13 @@ export const canonicalNativeUserStates = (raw: Json, nowMs = Date.now()): readon
     const banned = status === 'banned' || status === 'scam';
     const record = discipline[username.trim().toLowerCase()];
     let muted = false;
+    let redditMuted = false;
     if (isMap(record)) {
       const until = integer(record['muteUntil']);
       muted = flag(record['mutePermanent']) || (until !== null && until > nowMs);
+      redditMuted = flag(record['redditMuted']);
     }
-    out.push({ username, banned, muted });
+    out.push({ username, banned, muted, redditMuted });
   }
 
   return out.sort((a, b) => a.username.localeCompare(b.username));
