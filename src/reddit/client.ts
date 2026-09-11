@@ -54,6 +54,8 @@ const json = async (response: Response, context: string): Promise<Json> => {
   }
 };
 
+const sameUsername = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase();
+
 export class RedditReadClient {
   private readonly fetcher: RedditFetch;
   private readonly sleep: RedditSleep;
@@ -98,8 +100,26 @@ export class RedditReadClient {
     return await this.pages(pathFor(name, '/about/banned'), 100, value => decode.relationshipUsers(value, 'banned users'));
   }
 
+  public async bannedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
+    const query = new URLSearchParams({ limit: '1', user: username });
+    const page = decode.relationshipUsers(
+      await this.get(`${pathFor(name, '/about/banned')}?${query}`),
+      'banned user',
+    );
+    return page.items.find(item => sameUsername(item.username, username)) ?? null;
+  }
+
   public async mutedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
     return await this.pages(pathFor(name, '/about/muted'), 100, value => decode.relationshipUsers(value, 'muted users'));
+  }
+
+  public async mutedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
+    const query = new URLSearchParams({ limit: '1', user: username });
+    const page = decode.relationshipUsers(
+      await this.get(`${pathFor(name, '/about/muted')}?${query}`),
+      'muted user',
+    );
+    return page.items.find(item => sameUsername(item.username, username)) ?? null;
   }
 
   public async emojis(name: string): Promise<readonly RedditEmoji[]> {
@@ -127,6 +147,12 @@ export class RedditReadClient {
       after = page.next;
     } while (after !== null);
     return out;
+  }
+
+  public async userFlairAssignment(name: string, username: string): Promise<RedditFlairAssignment | null> {
+    const query = new URLSearchParams({ limit: '1', name: username });
+    const page = decode.flairAssignments(await this.get(`${pathFor(name, '/api/flairlist')}?${query}`));
+    return page.assignments.find(item => sameUsername(item.username, username)) ?? null;
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
