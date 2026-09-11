@@ -1,4 +1,5 @@
-import type { RedditReadClient } from '../reddit/client.ts';
+import { redditConfig } from '../env.ts';
+import { RedditReadClient } from '../reddit/client.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
@@ -35,6 +36,8 @@ type LiveStateReader = Pick<
   RedditReadClient,
   'userFlairAssignments' | 'bannedUsers' | 'mutedUsers'
 >;
+
+const adoptionWireFlair = '__MAE_INTERNAL_ADOPT_REDDIT_STATE_V1__';
 
 const initial = (): JsonMap => ({
   schema: 1,
@@ -212,11 +215,11 @@ export class ManualReputationModeration {
     username: string,
     actor: ManualModerationActor,
   ): Promise<ManualUserActionResult> {
-    if (this.reader === null) throw new Error('Live Reddit state reader is unavailable');
+    const reader = this.reader ?? new RedditReadClient(redditConfig().auth);
     const [assignments, bannedUsers, mutedUsers] = await Promise.all([
-      this.reader.userFlairAssignments(this.subreddit),
-      this.reader.bannedUsers(this.subreddit),
-      this.reader.mutedUsers(this.subreddit),
+      reader.userFlairAssignments(this.subreddit),
+      reader.bannedUsers(this.subreddit),
+      reader.mutedUsers(this.subreddit),
     ]);
     const key = lower(username);
     const assignment = assignments.find(item => lower(item.username) === key);
@@ -302,7 +305,10 @@ export class ManualReputationModeration {
     const username = rawUsername.trim().replace(/^u\//u, '');
     if (!/^[A-Za-z0-9_-]{3,32}$/u.test(username)) throw new Error('Invalid Reddit username');
 
-    if (action.kind === 'adopt-reddit-state') return await this.adoptLiveRedditState(username, actor);
+    if (
+      action.kind === 'adopt-reddit-state'
+      || (action.kind === 'set-flair' && action.flair === adoptionWireFlair)
+    ) return await this.adoptLiveRedditState(username, actor);
 
     if (action.kind === 'set-score') {
       const points = clampReputationPoints(action.points);
