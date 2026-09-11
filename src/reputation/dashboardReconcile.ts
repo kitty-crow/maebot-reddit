@@ -1,5 +1,6 @@
 import { redditConfig } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
+import { safeError } from '../reddit/error.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
@@ -50,7 +51,6 @@ const bool = (value: Json | undefined): boolean => value === true;
 const integer = (value: Json | undefined): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 const key = (value: string): string => value.trim().toLowerCase();
-const safeError = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1) throw new Error('Unsupported reputation store');
