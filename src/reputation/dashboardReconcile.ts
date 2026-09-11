@@ -184,8 +184,7 @@ export class DashboardRedditReconciler {
     },
   ): Promise<void> {
     if (redditStateAdoptionInProgress(desired.username)) {
-      this.pending.add(key(desired.username));
-      return;
+      throw new Error(`Live Reddit state adoption is in progress for u/${desired.username}`);
     }
 
     const state = live ?? {
@@ -208,6 +207,7 @@ export class DashboardRedditReconciler {
         console.log(`[Dashboard moderation] Reddit unbanned u/${desired.username}.`);
       }
     }
+    if (desired.banned) return;
 
     if (desired.muted !== state.muted) {
       if (desired.muted) {
@@ -248,7 +248,8 @@ export class DashboardRedditReconciler {
         } catch (error) {
           console.error(`[Dashboard moderation] Reddit reconcile failed for u/${username}: ${safeError(error)}`);
           this.pending.add(username);
-          setTimeout(() => void this.drain(), 5_000).unref?.();
+          const retry = setTimeout(() => void this.drain(), 5_000);
+          retry.unref?.();
           break;
         }
       }
