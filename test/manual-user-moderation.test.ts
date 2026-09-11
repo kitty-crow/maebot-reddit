@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ManualReputationModeration } from '../src/reputation/manualModeration.ts';
+import type { RedditFlairAssignment } from '../src/reddit/types.ts';
 import { Store } from '../src/store/store.ts';
 import type { Json, JsonMap } from '../src/types/json.ts';
 
@@ -42,6 +43,8 @@ const initial = (): JsonMap => ({
   coverage: {},
 });
 
+type Relationship = { username: string; note: string | null; date: number | null };
+
 const fixture = async () => {
   const root = await mkdtemp(join(tmpdir(), 'mae-manual-user-mod-'));
   roots.push(root);
@@ -58,17 +61,39 @@ const fixture = async () => {
     muteUser: async (_subreddit: string, username: string) => { calls.push(`mute:${username}`); },
     unmuteUser: async (_subreddit: string, username: string) => { calls.push(`unmute:${username}`); },
   };
-  const service = new ManualReputationModeration(stateFile, 'catgirlcoin', writer);
-  return { store, service, calls };
+  const live: {
+    assignments: RedditFlairAssignment[];
+    banned: Relationship[];
+    muted: Relationship[];
+  } = { assignments: [], banned: [], muted: [] };
+  const reader = {
+    userFlairAssignments: async (_subreddit: string) => live.assignments,
+    bannedUsers: async (_subreddit: string) => live.banned,
+    mutedUsers: async (_subreddit: string) => live.muted,
+  };
+  const service = new ManualReputationModeration(stateFile, 'catgirlcoin', writer, reader);
+  return { store, service, calls, live };
 };
 
 const actor = { platform: 'discord' as const, userId: '7', userName: 'kitty' };
-const user = (root: Json): JsonMap => {
-  if (typeof root !== 'object' || root === null || Array.isArray(root)) throw new Error('bad root');
+const rootMap = (raw: Json): JsonMap => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('bad root');
+  return raw;
+};
+const user = (raw: Json): JsonMap => {
+  const root = rootMap(raw);
   const users = root['users'];
   if (typeof users !== 'object' || users === null || Array.isArray(users)) throw new Error('bad users');
   const alice = users['alice'];
   if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad alice');
+  return alice;
+};
+const discipline = (raw: Json): JsonMap => {
+  const root = rootMap(raw);
+  const records = root['discipline'];
+  if (typeof records !== 'object' || records === null || Array.isArray(records)) throw new Error('bad discipline');
+  const alice = records['alice'];
+  if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad discipline record');
   return alice;
 };
 
@@ -105,22 +130,95 @@ describe('manual Reddit user moderation', () => {
   test('mute and unmute call Reddit and persist discipline reconciliation state', async () => {
     const { store, service, calls } = await fixture();
     await service.apply('alice', { kind: 'mute' }, actor);
-    let root = await store.read();
-    if (typeof root !== 'object' || root === null || Array.isArray(root)) throw new Error('bad root');
-    const discipline = root['discipline'];
-    if (typeof discipline !== 'object' || discipline === null || Array.isArray(discipline)) throw new Error('bad discipline');
-    const record = discipline['alice'];
-    if (typeof record !== 'object' || record === null || Array.isArray(record)) throw new Error('bad record');
-    expect(record['redditMuted']).toBe(true);
+    expect(discipline(await store.read())['redditMuted']).toBe(true);
 
     await service.apply('alice', { kind: 'unmute' }, actor);
-    root = await store.read();
-    if (typeof root !== 'object' || root === null || Array.isArray(root)) throw new Error('bad root');
-    const afterDiscipline = root['discipline'];
-    if (typeof afterDiscipline !== 'object' || afterDiscipline === null || Array.isArray(afterDiscipline)) throw new Error('bad discipline');
-    const after = afterDiscipline['alice'];
-    if (typeof after !== 'object' || after === null || Array.isArray(after)) throw new Error('bad record');
-    expect(after['redditMuted']).toBe(false);
+    expect(discipline(await store.read())['redditMuted']).toBe(false);
     expect(calls).toEqual(['mute:alice', 'unmute:alice']);
+  });
+
+  test('adopts live canonical Reddit ban, mute and flair for one user without writing to Reddit', async () => {
+    const { store, service, calls, live } = await fixture();
+    const startedAt = Math.floor(Date.now() / 1_000) - 60;
+    live.assignments.push({
+      username: 'Alice',
+      templateId: 'trusted-id',
+      text: 'Trusted Member',
+      cssClass: 'trusted',
+    });
+    live.banned.push({ username: 'ALICE', note: 'human moderation', date: startedAt });
+    live.muted.push({ username: 'alice', note: 'human moderation', date: startedAt });
+
+    const result = await service.apply('alice', { kind: 'adopt-reddit-state' }, actor);
+    const raw = await store.read();
+    const alice = user(raw);
+    const mute = discipline(raw);
+
+    expect(result.detail).toContain('adopted live r/catgirlcoin state');
+    expect(alice['status']).toBe('banned');
+    expect(alice['currentFlairTemplateId']).toBe('trusted-id');
+    expect(alice['desiredFlairTemplateId']).toBe('trusted-id');
+    expect(alice['needsFlair']).toBe(false);
+    expect(mute['redditMuted']).toBe(true);
+    expect(typeof mute['muteUntil']).toBe('number');
+    expect(calls).toEqual([]);
+  });
+
+  test('adopting live unbanned/unmuted/no-flair state neutralises only that user old pending enforcement', async () => {
+    const { store, service, calls } = await fixture();
+    await store.edit(current => {
+      const value = rootMap(current);
+      const alice = user(value);
+      alice['status'] = 'banned';
+      alice['currentFlairTemplateId'] = 'trusted-id';
+      alice['currentFlairText'] = 'Trusted Member';
+      alice['desiredFlairTemplateId'] = 'trusted-id';
+      alice['desiredFlairText'] = 'Trusted Member';
+      const records = value['discipline'];
+      if (typeof records !== 'object' || records === null || Array.isArray(records)) throw new Error('bad discipline');
+      records['alice'] = {
+        muteUntil: null,
+        mutePermanent: true,
+        redditMuted: true,
+        muteAppliedAt: Date.now(),
+      };
+      const contributions = value['contributions'];
+      if (typeof contributions !== 'object' || contributions === null || Array.isArray(contributions)) throw new Error('bad contributions');
+      contributions['t1_old'] = {
+        fullname: 't1_old',
+        author: 'alice',
+        banRequired: true,
+        banApplied: false,
+      };
+      contributions['t1_other'] = {
+        fullname: 't1_other',
+        author: 'bob',
+        banRequired: true,
+        banApplied: false,
+      };
+      return value;
+    });
+
+    await service.apply('alice', { kind: 'adopt-reddit-state' }, actor);
+    const raw = await store.read();
+    const alice = user(raw);
+    const mute = discipline(raw);
+    const value = rootMap(raw);
+    const contributions = value['contributions'];
+    if (typeof contributions !== 'object' || contributions === null || Array.isArray(contributions)) throw new Error('bad contributions');
+    const old = contributions['t1_old'];
+    const other = contributions['t1_other'];
+    if (typeof old !== 'object' || old === null || Array.isArray(old)) throw new Error('bad old contribution');
+    if (typeof other !== 'object' || other === null || Array.isArray(other)) throw new Error('bad other contribution');
+
+    expect(alice['status']).toBe('ordinary');
+    expect(alice['currentFlairTemplateId']).toBeNull();
+    expect(alice['desiredFlairTemplateId']).toBeNull();
+    expect(alice['needsFlair']).toBe(false);
+    expect(mute['mutePermanent']).toBe(false);
+    expect(mute['redditMuted']).toBe(false);
+    expect(old['banApplied']).toBe(true);
+    expect(other['banApplied']).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
