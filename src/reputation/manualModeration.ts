@@ -38,6 +38,22 @@ type LiveStateReader = Pick<
   'userFlairAssignment' | 'bannedUser' | 'mutedUser'
 >;
 
+type CanonicalFlair = {
+  readonly id: string;
+  readonly text: string;
+  readonly css: string | null;
+};
+
+type AdoptedLiveFlair = {
+  readonly currentId: string | null;
+  readonly currentText: string | null;
+  readonly currentCss: string | null;
+  readonly desiredId: string | null;
+  readonly desiredText: string | null;
+  readonly description: string;
+  readonly managed: boolean;
+};
+
 const adoptionWireFlair = '__MAE_INTERNAL_ADOPT_REDDIT_STATE_V1__';
 
 const initial = (): JsonMap => ({
@@ -112,51 +128,105 @@ const statusForPoints = (points: number): 'ordinary' | 'warned' | 'uncivil' => {
   return 'warned';
 };
 
-const flairTemplate = (value: JsonMap, selector: string): { readonly id: string; readonly text: string; readonly css: string | null } => {
+const flairCatalogue = (value: JsonMap): readonly CanonicalFlair[] => {
   const catalog = value['flairCatalog'];
   if (!isMap(catalog) || !Array.isArray(catalog['user'])) throw new Error('Reputation user flair catalogue is unavailable');
+  return catalog['user'].flatMap(raw => {
+    if (!isMap(raw)) return [];
+    const id = text(raw['id']);
+    if (id.length === 0) return [];
+    return [{
+      id,
+      text: text(raw['text']),
+      css: raw['cssClass'] === null || typeof raw['cssClass'] !== 'string' ? null : raw['cssClass'],
+    }];
+  });
+};
+
+const flairTemplate = (value: JsonMap, selector: string): CanonicalFlair => {
   const wanted = selector.trim();
   if (wanted.length === 0) throw new Error('Flair cannot be empty');
   const folded = wanted.toLocaleLowerCase();
-  const matches = catalog['user'].flatMap(raw => {
-    if (!isMap(raw)) return [];
-    const id = text(raw['id']);
-    const label = text(raw['text']);
-    const css = raw['cssClass'] === null || typeof raw['cssClass'] !== 'string' ? null : raw['cssClass'];
-    if (id.length === 0) return [];
-    return id === wanted || label.toLocaleLowerCase() === folded || (css ?? '').toLocaleLowerCase() === folded
-      ? [{ id, text: label, css }]
-      : [];
-  });
+  const matches = flairCatalogue(value).filter(item =>
+    item.id === wanted
+    || item.text.toLocaleLowerCase() === folded
+    || (item.css ?? '').toLocaleLowerCase() === folded);
   if (matches.length === 0) throw new Error(`Reddit flair '${wanted}' was not found`);
   if (matches.length > 1) throw new Error(`Reddit flair '${wanted}' is ambiguous; use its template ID`);
-  return matches[0] as { readonly id: string; readonly text: string; readonly css: string | null };
+  return matches[0] as CanonicalFlair;
 };
 
-const liveFlairTemplate = (
-  value: JsonMap,
-  assignment: RedditFlairAssignment | undefined,
-): { readonly id: string; readonly text: string; readonly css: string | null } | null => {
-  if (assignment === undefined) return null;
-  const catalog = value['flairCatalog'];
-  if (!isMap(catalog) || !Array.isArray(catalog['user'])) throw new Error('Reputation user flair catalogue is unavailable');
-  const candidates = catalog['user'].flatMap(raw => {
-    if (!isMap(raw)) return [];
-    const id = text(raw['id']);
-    const label = text(raw['text']);
-    const css = raw['cssClass'] === null || typeof raw['cssClass'] !== 'string' ? null : raw['cssClass'];
-    if (id.length === 0) return [];
-    const byId = assignment.templateId !== null && assignment.templateId === id;
-    const byText = assignment.templateId === null && assignment.text !== null && assignment.text === label;
-    const byCss = assignment.templateId === null && assignment.cssClass !== null && assignment.cssClass === css;
-    return byId || byText || byCss ? [{ id, text: assignment.text ?? label, css: assignment.cssClass ?? css }] : [];
-  });
-  if (candidates.length === 0) {
-    const description = assignment.templateId ?? assignment.text ?? assignment.cssClass ?? 'unknown flair';
-    throw new Error(`Live Reddit flair '${description}' is not in Mae's canonical flair catalogue`);
+const adoptLiveFlair = (value: JsonMap, assignment: RedditFlairAssignment | null): AdoptedLiveFlair => {
+  if (assignment === null) {
+    return {
+      currentId: null,
+      currentText: null,
+      currentCss: null,
+      desiredId: null,
+      desiredText: null,
+      description: 'none',
+      managed: true,
+    };
   }
-  if (candidates.length > 1) throw new Error('Live Reddit flair is ambiguous in Mae\'s canonical flair catalogue');
-  return candidates[0] as { readonly id: string; readonly text: string; readonly css: string | null };
+
+  const catalogue = flairCatalogue(value);
+  const currentId = assignment.templateId;
+  const currentText = assignment.text;
+  const currentCss = assignment.cssClass;
+
+  if (currentId !== null) {
+    const exact = catalogue.find(item => item.id === currentId);
+    if (exact !== undefined) {
+      const visible = currentText ?? exact.text;
+      return {
+        currentId,
+        currentText: visible,
+        currentCss: currentCss ?? exact.css,
+        desiredId: exact.id,
+        desiredText: visible,
+        description: visible || exact.id,
+        managed: true,
+      };
+    }
+    return {
+      currentId,
+      currentText,
+      currentCss,
+      desiredId: null,
+      desiredText: null,
+      description: currentText ?? currentId,
+      managed: false,
+    };
+  }
+
+  const matches = catalogue.filter(item => {
+    const textMatch = currentText !== null && currentText === item.text;
+    const cssMatch = currentCss !== null && currentCss === item.css;
+    return textMatch || cssMatch;
+  });
+  if (matches.length === 1) {
+    const selected = matches[0] as CanonicalFlair;
+    const visible = currentText ?? selected.text;
+    return {
+      currentId: null,
+      currentText: visible,
+      currentCss: currentCss ?? selected.css,
+      desiredId: selected.id,
+      desiredText: visible,
+      description: visible || selected.id,
+      managed: true,
+    };
+  }
+
+  return {
+    currentId: null,
+    currentText,
+    currentCss,
+    desiredId: null,
+    desiredText: null,
+    description: currentText ?? currentCss ?? 'custom/unknown',
+    managed: false,
+  };
 };
 
 const discipline = (value: JsonMap, username: string): JsonMap => {
@@ -206,9 +276,10 @@ export class ManualReputationModeration {
   public constructor(
     stateFile: string,
     private readonly subreddit: string,
-    private readonly writer: MutationWriter,
+    writer: MutationWriter,
     private readonly reader: LiveStateReader | null = null,
   ) {
+    void writer;
     this.store = new Store(stateFile, initial());
   }
 
@@ -216,15 +287,10 @@ export class ManualReputationModeration {
     username: string,
     actor: ManualModerationActor,
   ): Promise<ManualUserActionResult> {
-    // This is an explicit operator override, not part of Mae's normal polling
-    // workload. Use one-user reads outside the background rate-budget and bound
-    // the real network boundary so this administrative action cannot hang.
     const boundedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
       await fetch(input, { ...init, signal: AbortSignal.timeout(10_000) });
     const reader = this.reader ?? new RedditReadClient(redditConfig().auth, { fetcher: boundedFetch, maxAttempts: 1 });
 
-    // Sequential reads deliberately share one OAuth token instead of starting
-    // three concurrent token requests on a fresh administrative reader.
     const assignment = await reader.userFlairAssignment(this.subreddit, username);
     const bannedUser = await reader.bannedUser(this.subreddit, username);
     const liveMute = await reader.mutedUser(this.subreddit, username);
@@ -232,6 +298,7 @@ export class ManualReputationModeration {
     const liveMuted = liveMute !== null;
     const now = Date.now();
     let flairDescription = 'none';
+    let managedFlair = true;
     let clearedBanEffects = 0;
 
     await this.store.edit(current => {
@@ -240,23 +307,16 @@ export class ManualReputationModeration {
       assertMutableMember(user);
       const beforeStatus = text(user['status']);
       const beforeFlairId = nullableText(user['desiredFlairTemplateId']);
-      const adoptedFlair = liveFlairTemplate(value, assignment ?? undefined);
-      if (adoptedFlair === null) {
-        user['currentFlairTemplateId'] = null;
-        user['currentFlairText'] = null;
-        user['currentFlairCssClass'] = null;
-        user['desiredFlairTemplateId'] = null;
-        user['desiredFlairText'] = null;
-        user['needsFlair'] = false;
-      } else {
-        flairDescription = adoptedFlair.text || adoptedFlair.id;
-        user['currentFlairTemplateId'] = adoptedFlair.id;
-        user['currentFlairText'] = adoptedFlair.text;
-        user['currentFlairCssClass'] = adoptedFlair.css;
-        user['desiredFlairTemplateId'] = adoptedFlair.id;
-        user['desiredFlairText'] = adoptedFlair.text;
-        user['needsFlair'] = false;
-      }
+      const adopted = adoptLiveFlair(value, assignment);
+      flairDescription = adopted.description;
+      managedFlair = adopted.managed;
+
+      user['currentFlairTemplateId'] = adopted.currentId;
+      user['currentFlairText'] = adopted.currentText;
+      user['currentFlairCssClass'] = adopted.currentCss;
+      user['desiredFlairTemplateId'] = adopted.desiredId;
+      user['desiredFlairText'] = adopted.desiredText;
+      user['needsFlair'] = false;
       user['needsReview'] = false;
 
       const afterStatus = statusAdoptedFromLive(user, liveBanned, liveMuted);
@@ -286,7 +346,9 @@ export class ManualReputationModeration {
         beforeStatus,
         afterStatus,
         beforeFlairTemplateId: beforeFlairId,
-        afterFlairTemplateId: adoptedFlair?.id ?? null,
+        afterFlairTemplateId: adopted.desiredId,
+        liveFlairTemplateId: adopted.currentId,
+        liveFlairManaged: adopted.managed,
         liveBanned,
         liveMuted,
         clearedPendingBanEffects: clearedBanEffects,
@@ -297,7 +359,7 @@ export class ManualReputationModeration {
     return {
       username,
       kind: 'adopt-reddit-state',
-      detail: `adopted live r/${this.subreddit} state: ${liveBanned ? 'banned' : 'not banned'}, ${liveMuted ? 'muted' : 'not muted'}, flair ${flairDescription}; cleared ${clearedBanEffects} pending historical ban effect(s)`,
+      detail: `adopted live r/${this.subreddit} state: ${liveBanned ? 'banned' : 'not banned'}, ${liveMuted ? 'muted' : 'not muted'}, flair ${flairDescription}${managedFlair ? '' : ' (native/custom)'}; cleared ${clearedBanEffects} pending historical ban effect(s)`,
     };
   }
 
@@ -328,38 +390,26 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'set-score', { beforePoints: before, afterPoints: points });
         return value;
       });
-      return { username, kind: action.kind, detail: `score set to ${points}` };
+      return { username, kind: action.kind, detail: `canonical score set to ${points}` };
     }
 
     if (action.kind === 'set-flair') {
-      const value = root(await this.store.read());
-      const user = userMap(value, username);
-      assertMutableMember(user);
-      const template = flairTemplate(value, action.flair);
-      await this.writer.setUserFlairTemplate(this.subreddit, username, template.id, null);
       await this.store.edit(current => {
-        const next = root(current);
-        const stored = userMap(next, username);
-        assertMutableMember(stored);
-        stored['currentFlairTemplateId'] = template.id;
-        stored['currentFlairText'] = template.text;
-        stored['currentFlairCssClass'] = template.css;
-        stored['desiredFlairTemplateId'] = template.id;
-        stored['desiredFlairText'] = template.text;
-        stored['needsFlair'] = false;
-        journal(next, username, actor, 'set-flair', { templateId: template.id, flairText: template.text });
-        return next;
+        const value = root(current);
+        const user = userMap(value, username);
+        assertMutableMember(user);
+        const template = flairTemplate(value, action.flair);
+        user['desiredFlairTemplateId'] = template.id;
+        user['desiredFlairText'] = template.text;
+        user['needsFlair'] = nullableText(user['currentFlairTemplateId']) !== template.id
+          || nullableText(user['currentFlairText']) !== template.text;
+        journal(value, username, actor, 'set-flair', { templateId: template.id, flairText: template.text });
+        return value;
       });
-      return { username, kind: action.kind, detail: `flair set to ${template.text || template.id}` };
+      return { username, kind: action.kind, detail: 'canonical flair intent stored; Mae will reconcile Reddit' };
     }
 
     if (action.kind === 'ban') {
-      await this.writer.banUser(
-        this.subreddit,
-        username,
-        'Moderator action from Mae Dashboard',
-        `Mae Dashboard: ${actorText(actor)}`,
-      );
       await this.store.edit(current => {
         const value = root(current);
         const user = userMap(value, username);
@@ -369,11 +419,11 @@ export class ManualReputationModeration {
         journal(value, username, actor, 'ban', { beforeStatus: before, afterStatus: 'banned' });
         return value;
       });
-      return { username, kind: action.kind, detail: 'user banned' };
+      return { username, kind: action.kind, detail: 'canonical ban intent stored; Mae will reconcile Reddit' };
     }
 
     if (action.kind === 'unban') {
-      await this.writer.unbanUser(this.subreddit, username);
+      let cleared = 0;
       await this.store.edit(current => {
         const value = root(current);
         const user = userMap(value, username);
@@ -381,14 +431,18 @@ export class ManualReputationModeration {
         const before = text(user['status']);
         const after = statusForPoints(integer(user['points']));
         user['status'] = after;
-        journal(value, username, actor, 'unban', { beforeStatus: before, afterStatus: after });
+        cleared = clearHistoricalBanEffects(value, username);
+        journal(value, username, actor, 'unban', {
+          beforeStatus: before,
+          afterStatus: after,
+          clearedPendingBanEffects: cleared,
+        });
         return value;
       });
-      return { username, kind: action.kind, detail: 'user unbanned' };
+      return { username, kind: action.kind, detail: `canonical unban intent stored; cleared ${cleared} pending historical ban effect(s)` };
     }
 
     if (action.kind === 'mute') {
-      await this.writer.muteUser(this.subreddit, username, `Mae Dashboard: ${actorText(actor)}`);
       await this.store.edit(current => {
         const value = root(current);
         userMap(value, username);
@@ -396,26 +450,21 @@ export class ManualReputationModeration {
         const now = Date.now();
         record['muteUntil'] = now + (28 * 24 * 60 * 60 * 1_000);
         record['mutePermanent'] = false;
-        record['redditMuted'] = true;
-        record['muteAppliedAt'] = now;
         journal(value, username, actor, 'mute', { durationDays: 28 });
         return value;
       });
-      return { username, kind: action.kind, detail: 'user muted for 28 days' };
+      return { username, kind: action.kind, detail: 'canonical 28-day mute intent stored; Mae will reconcile Reddit' };
     }
 
-    await this.writer.unmuteUser(this.subreddit, username);
     await this.store.edit(current => {
       const value = root(current);
       userMap(value, username);
       const record = discipline(value, username);
       record['muteUntil'] = null;
       record['mutePermanent'] = false;
-      record['redditMuted'] = false;
-      record['muteAppliedAt'] = Date.now();
       journal(value, username, actor, 'unmute');
       return value;
     });
-    return { username, kind: action.kind, detail: 'user unmuted' };
+    return { username, kind: action.kind, detail: 'canonical unmute intent stored; Mae will reconcile Reddit' };
   }
 }
