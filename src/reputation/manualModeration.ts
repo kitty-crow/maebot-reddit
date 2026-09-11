@@ -4,6 +4,7 @@ import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
+import { withRedditStateAdoption } from './manualOverrideGate.ts';
 import { clampReputationPoints, tierForPoints } from './policy.ts';
 
 export type ManualModerationActor = {
@@ -309,7 +310,9 @@ export class ManualReputationModeration {
     if (
       action.kind === 'adopt-reddit-state'
       || (action.kind === 'set-flair' && action.flair === adoptionWireFlair)
-    ) return await this.adoptLiveRedditState(username, actor);
+    ) {
+      return await withRedditStateAdoption(username, async () => await this.adoptLiveRedditState(username, actor));
+    }
 
     if (action.kind === 'set-score') {
       const points = clampReputationPoints(action.points);
