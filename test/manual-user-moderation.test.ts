@@ -137,7 +137,7 @@ describe('manual Reddit user moderation', () => {
     expect(calls).toEqual(['mute:alice', 'unmute:alice']);
   });
 
-  test('adopts live canonical Reddit ban, mute and flair for one user without writing to Reddit', async () => {
+  test('adopts live canonical Reddit ban, mute and flair through the internal API wire sentinel without writing to Reddit', async () => {
     const { store, service, calls, live } = await fixture();
     const startedAt = Math.floor(Date.now() / 1_000) - 60;
     live.assignments.push({
@@ -149,11 +149,16 @@ describe('manual Reddit user moderation', () => {
     live.banned.push({ username: 'ALICE', note: 'human moderation', date: startedAt });
     live.muted.push({ username: 'alice', note: 'human moderation', date: startedAt });
 
-    const result = await service.apply('alice', { kind: 'adopt-reddit-state' }, actor);
+    const result = await service.apply(
+      'alice',
+      { kind: 'set-flair', flair: '__MAE_INTERNAL_ADOPT_REDDIT_STATE_V1__' },
+      actor,
+    );
     const raw = await store.read();
     const alice = user(raw);
     const mute = discipline(raw);
 
+    expect(result.kind).toBe('adopt-reddit-state');
     expect(result.detail).toContain('adopted live r/catgirlcoin state');
     expect(alice['status']).toBe('banned');
     expect(alice['currentFlairTemplateId']).toBe('trusted-id');
