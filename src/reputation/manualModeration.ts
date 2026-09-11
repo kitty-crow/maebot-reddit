@@ -1,4 +1,6 @@
+import type { RedditReadClient } from '../reddit/client.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
+import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { clampReputationPoints, tierForPoints } from './policy.ts';
@@ -15,7 +17,8 @@ export type ManualUserAction =
   | { readonly kind: 'ban' }
   | { readonly kind: 'unban' }
   | { readonly kind: 'mute' }
-  | { readonly kind: 'unmute' };
+  | { readonly kind: 'unmute' }
+  | { readonly kind: 'adopt-reddit-state' };
 
 export type ManualUserActionResult = {
   readonly username: string;
@@ -26,6 +29,11 @@ export type ManualUserActionResult = {
 type MutationWriter = Pick<
   RedditMutationClient,
   'setUserFlairTemplate' | 'banUser' | 'unbanUser' | 'muteUser' | 'unmuteUser'
+>;
+
+type LiveStateReader = Pick<
+  RedditReadClient,
+  'userFlairAssignments' | 'bannedUsers' | 'mutedUsers'
 >;
 
 const initial = (): JsonMap => ({
@@ -51,9 +59,11 @@ const root = (value: Json): JsonMap => {
 };
 
 const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
+const nullableText = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
 const bool = (value: Json | undefined): boolean => value === true;
 const integer = (value: Json | undefined, fallback = 0): number =>
   typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback;
+const lower = (value: string): string => value.trim().toLowerCase();
 
 const userMap = (value: JsonMap, username: string): JsonMap => {
   const users = value['users'];
@@ -119,6 +129,32 @@ const flairTemplate = (value: JsonMap, selector: string): { readonly id: string;
   return matches[0] as { readonly id: string; readonly text: string; readonly css: string | null };
 };
 
+const liveFlairTemplate = (
+  value: JsonMap,
+  assignment: RedditFlairAssignment | undefined,
+): { readonly id: string; readonly text: string; readonly css: string | null } | null => {
+  if (assignment === undefined) return null;
+  const catalog = value['flairCatalog'];
+  if (!isMap(catalog) || !Array.isArray(catalog['user'])) throw new Error('Reputation user flair catalogue is unavailable');
+  const candidates = catalog['user'].flatMap(raw => {
+    if (!isMap(raw)) return [];
+    const id = text(raw['id']);
+    const label = text(raw['text']);
+    const css = raw['cssClass'] === null || typeof raw['cssClass'] !== 'string' ? null : raw['cssClass'];
+    if (id.length === 0) return [];
+    const byId = assignment.templateId !== null && assignment.templateId === id;
+    const byText = assignment.templateId === null && assignment.text !== null && assignment.text === label;
+    const byCss = assignment.templateId === null && assignment.cssClass !== null && assignment.cssClass === css;
+    return byId || byText || byCss ? [{ id, text: assignment.text ?? label, css: assignment.cssClass ?? css }] : [];
+  });
+  if (candidates.length === 0) {
+    const description = assignment.templateId ?? assignment.text ?? assignment.cssClass ?? 'unknown flair';
+    throw new Error(`Live Reddit flair '${description}' is not in Mae's canonical flair catalogue`);
+  }
+  if (candidates.length > 1) throw new Error('Live Reddit flair is ambiguous in Mae\'s canonical flair catalogue');
+  return candidates[0] as { readonly id: string; readonly text: string; readonly css: string | null };
+};
+
 const discipline = (value: JsonMap, username: string): JsonMap => {
   const records = value['discipline'];
   if (!isMap(records)) throw new Error('Reputation discipline map is unavailable');
@@ -135,6 +171,31 @@ const discipline = (value: JsonMap, username: string): JsonMap => {
   return created;
 };
 
+const clearHistoricalBanEffects = (value: JsonMap, username: string): number => {
+  const contributions = value['contributions'];
+  if (!isMap(contributions)) return 0;
+  const wanted = lower(username);
+  let changed = 0;
+  for (const raw of Object.values(contributions)) {
+    if (!isMap(raw) || lower(text(raw['author'])) !== wanted || !bool(raw['banRequired']) || bool(raw['banApplied'])) continue;
+    raw['banApplied'] = true;
+    changed += 1;
+  }
+  return changed;
+};
+
+const statusAdoptedFromLive = (user: JsonMap, liveBanned: boolean, liveMuted: boolean): string => {
+  if (liveBanned) return 'banned';
+  const current = text(user['status']);
+  if (current === 'moderator') return current;
+  if (current === 'banned' || current === 'scam' || current === 'unmapped') {
+    const derived = statusForPoints(integer(user['points']));
+    return !liveMuted && derived === 'uncivil' ? 'warned' : derived;
+  }
+  if (!liveMuted && current === 'uncivil') return 'warned';
+  return current;
+};
+
 export class ManualReputationModeration {
   private readonly store: Store;
 
@@ -142,8 +203,95 @@ export class ManualReputationModeration {
     stateFile: string,
     private readonly subreddit: string,
     private readonly writer: MutationWriter,
+    private readonly reader: LiveStateReader | null = null,
   ) {
     this.store = new Store(stateFile, initial());
+  }
+
+  private async adoptLiveRedditState(
+    username: string,
+    actor: ManualModerationActor,
+  ): Promise<ManualUserActionResult> {
+    if (this.reader === null) throw new Error('Live Reddit state reader is unavailable');
+    const [assignments, bannedUsers, mutedUsers] = await Promise.all([
+      this.reader.userFlairAssignments(this.subreddit),
+      this.reader.bannedUsers(this.subreddit),
+      this.reader.mutedUsers(this.subreddit),
+    ]);
+    const key = lower(username);
+    const assignment = assignments.find(item => lower(item.username) === key);
+    const liveBanned = bannedUsers.some(item => lower(item.username) === key);
+    const liveMute = mutedUsers.find(item => lower(item.username) === key);
+    const liveMuted = liveMute !== undefined;
+    const now = Date.now();
+    let flairDescription = 'none';
+    let clearedBanEffects = 0;
+
+    await this.store.edit(current => {
+      const value = root(current);
+      const user = userMap(value, username);
+      assertMutableMember(user);
+      const beforeStatus = text(user['status']);
+      const beforeFlairId = nullableText(user['desiredFlairTemplateId']);
+      const adoptedFlair = liveFlairTemplate(value, assignment);
+      if (adoptedFlair === null) {
+        user['currentFlairTemplateId'] = null;
+        user['currentFlairText'] = null;
+        user['currentFlairCssClass'] = null;
+        user['desiredFlairTemplateId'] = null;
+        user['desiredFlairText'] = null;
+        user['needsFlair'] = false;
+      } else {
+        flairDescription = adoptedFlair.text || adoptedFlair.id;
+        user['currentFlairTemplateId'] = adoptedFlair.id;
+        user['currentFlairText'] = adoptedFlair.text;
+        user['currentFlairCssClass'] = adoptedFlair.css;
+        user['desiredFlairTemplateId'] = adoptedFlair.id;
+        user['desiredFlairText'] = adoptedFlair.text;
+        user['needsFlair'] = false;
+      }
+      user['needsReview'] = false;
+
+      const afterStatus = statusAdoptedFromLive(user, liveBanned, liveMuted);
+      user['status'] = afterStatus;
+
+      const record = discipline(value, username);
+      if (liveMute === undefined) {
+        record['muteUntil'] = null;
+        record['mutePermanent'] = false;
+        record['redditMuted'] = false;
+        record['muteAppliedAt'] = null;
+      } else {
+        const observedStart = typeof liveMute.date === 'number' && Number.isFinite(liveMute.date)
+          ? Math.floor(liveMute.date * 1_000)
+          : now;
+        const start = Number.isSafeInteger(observedStart) && observedStart > 0 && observedStart <= now ? observedStart : now;
+        const observedUntil = start + (28 * 24 * 60 * 60 * 1_000);
+        record['muteUntil'] = observedUntil > now ? observedUntil : now + (28 * 24 * 60 * 60 * 1_000);
+        record['mutePermanent'] = false;
+        record['redditMuted'] = true;
+        record['muteAppliedAt'] = start;
+      }
+
+      clearedBanEffects = clearHistoricalBanEffects(value, username);
+      journal(value, username, actor, 'adopt-reddit-state', {
+        subreddit: this.subreddit,
+        beforeStatus,
+        afterStatus,
+        beforeFlairTemplateId: beforeFlairId,
+        afterFlairTemplateId: adoptedFlair?.id ?? null,
+        liveBanned,
+        liveMuted,
+        clearedPendingBanEffects: clearedBanEffects,
+      });
+      return value;
+    });
+
+    return {
+      username,
+      kind: 'adopt-reddit-state',
+      detail: `adopted live r/${this.subreddit} state: ${liveBanned ? 'banned' : 'not banned'}, ${liveMuted ? 'muted' : 'not muted'}, flair ${flairDescription}; cleared ${clearedBanEffects} pending historical ban effect(s)`,
+    };
   }
 
   public async apply(
@@ -153,6 +301,8 @@ export class ManualReputationModeration {
   ): Promise<ManualUserActionResult> {
     const username = rawUsername.trim().replace(/^u\//u, '');
     if (!/^[A-Za-z0-9_-]{3,32}$/u.test(username)) throw new Error('Invalid Reddit username');
+
+    if (action.kind === 'adopt-reddit-state') return await this.adoptLiveRedditState(username, actor);
 
     if (action.kind === 'set-score') {
       const points = clampReputationPoints(action.points);
