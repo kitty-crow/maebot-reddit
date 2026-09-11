@@ -93,7 +93,7 @@ const journal = (
 };
 
 const statusForPoints = (points: number): 'ordinary' | 'warned' | 'uncivil' => {
-  if (points >= 0) return 'ordinary';
+  if (points >= 1) return 'ordinary';
   if (points <= -4) return 'uncivil';
   return 'warned';
 };
