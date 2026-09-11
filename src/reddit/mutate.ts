@@ -335,6 +335,14 @@ export class RedditMutationClient {
     await this.form(pathFor(subreddit, '/api/friend'), form);
   }
 
+  public async unbanUser(subreddit: string, username: string): Promise<void> {
+    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
+      api_type: 'json',
+      name: username,
+      type: 'banned',
+    }));
+  }
+
   public async sendPrivateMessage(username: string, subject: string, body: string): Promise<void> {
     const form = new URLSearchParams({
       api_type: 'json',

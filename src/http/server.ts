@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import type { ModerationReviewStore } from '../mod/review.ts';
 import type { ModmailMediaService } from '../modmail/media/service.ts';
 import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
@@ -5,8 +6,13 @@ import type { ModmailReplyAttachment, ModmailReplyOutbox } from '../modmail/outb
 import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
+import {
+  ManualReputationModeration,
+  type ManualModerationActor,
+  type ManualUserAction,
+} from '../reputation/manualModeration.ts';
 import type { ReputationStore } from '../reputation/store.ts';
-import type { RedditMutationClient } from '../reddit/mutate.ts';
+import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 
@@ -180,6 +186,35 @@ const legacyAttachment = (attachment: ModmailMediaAttachment): ModmailReplyAttac
   expiresAt: attachment.createdAt + (24 * 60 * 60),
 });
 
+const manualAction = (value: Json | undefined): ManualUserAction | null => {
+  if (!isMap(value)) return null;
+  const kind = value['kind'];
+  if (kind === 'ban' || kind === 'unban' || kind === 'mute' || kind === 'unmute') return { kind };
+  if (kind === 'set-score') {
+    const points = integer(value['points']);
+    return points === null ? null : { kind, points };
+  }
+  if (kind === 'set-flair') {
+    const flair = nonEmptyText(value['flair'], 256);
+    return flair === null ? null : { kind, flair };
+  }
+  return null;
+};
+
+const moderationFailureStatus = (message: string): number => {
+  const lower = message.toLowerCase();
+  if (lower.includes('not found')) return 404;
+  if (
+    lower.includes('invalid')
+    || lower.includes('immutable')
+    || lower.includes('ambiguous')
+    || lower.includes('cannot')
+    || lower.includes('empty')
+    || lower.includes('safe integer')
+  ) return 400;
+  return 503;
+};
+
 export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
@@ -187,6 +222,7 @@ export class RedditInternalHttpServer {
   private modmailMedia: ModmailMediaService | null = null;
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
+  private userModeration: ManualReputationModeration | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -208,6 +244,18 @@ export class RedditInternalHttpServer {
     this.modmailMedia = media;
     this.modmailReputation = reputation;
     this.modmailCloser = closer;
+    if (reputation !== null && closer instanceof RedditMutationClient) {
+      this.userModeration = new ManualReputationModeration(
+        resolve(process.cwd(), process.env['REDDIT_REPUTATION_STATE_FILE']?.trim() || 'data/reputation.pb'),
+        process.env['REDDIT_SOURCE_SUBREDDIT']?.trim() || 'catgirlcoin',
+        closer,
+      );
+    }
+  }
+
+  public useUserModeration(service: ManualReputationModeration): void {
+    if (this.server !== null) throw new Error('User moderation must be attached before the Reddit internal API starts');
+    this.userModeration = service;
   }
 
   public start(): void {
@@ -350,6 +398,47 @@ export class RedditInternalHttpServer {
     }
   }
 
+  private async moderateUser(req: Request, url: URL): Promise<Response> {
+    if (this.userModeration === null) {
+      return this.record(req, url, json({ error: 'user moderation unavailable' }, 503));
+    }
+    const body = await bodyMap(req);
+    if (!isMap(body)) return this.record(req, url, json({ error: 'invalid user moderation body' }, 400));
+    const username = nonEmptyText(body['username'], 32);
+    const action = manualAction(body['action']);
+    const source = platform(body['platform']);
+    const userId = nonEmptyText(body['userId'], 128);
+    const userName = nonEmptyText(body['userName'], 128);
+    if (
+      username === null
+      || !/^[A-Za-z0-9_-]{3,32}$/u.test(username.replace(/^u\//u, ''))
+      || action === null
+      || source === null
+      || userId === null
+      || userName === null
+    ) {
+      return this.record(req, url, json({ error: 'invalid user moderation body' }, 400));
+    }
+    const actor: ManualModerationActor = { platform: source, userId, userName };
+    try {
+      const result = await this.userModeration.apply(username, action, actor);
+      return this.record(
+        req,
+        url,
+        json({ ok: true, user: result.username, action: result.kind, detail: result.detail }),
+        `user=${result.username} action=${result.kind}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'user moderation failed';
+      return this.record(
+        req,
+        url,
+        json({ error: message }, moderationFailureStatus(message)),
+        `user=${username} action=${action.kind}`,
+      );
+    }
+  }
+
   private async route(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -456,6 +545,10 @@ export class RedditInternalHttpServer {
       });
       if (result === null) return this.record(req, url, json({ error: 'review not found' }, 404), `review=${key}`);
       return this.record(req, url, json(result), `review=${key} won=${result.won ? 'yes' : 'no'}`);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/moderation/users/action') {
+      return await this.moderateUser(req, url);
     }
 
     return this.record(req, url, json({ error: 'not found' }, 404));
