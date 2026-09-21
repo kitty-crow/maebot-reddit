@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "this-is-the-mae",
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  },
+  "permissions": {
+    "reddit": {
+      "enable": true
+    },
+    "http": {
+      "enable": true,
+      "domains": [
+        "mae.kittycrow.dev"
+      ]
+    }
+  },
+  "settings": {
+    "global": {
+      "maeBridgeSecret": {
+        "type": "string",
+        "label": "Mae bridge secret",
+        "isSecret": true
+      }
+    }
+  },
+  "scheduler": {
+    "tasks": {
+      "mae-reddit-rpc": {
+        "endpoint": "/internal/scheduler/mae-reddit-rpc",
+        "cron": "*/5 * * * * *"
+      }
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  }
+}
