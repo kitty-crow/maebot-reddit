@@ -4,10 +4,16 @@ import { decode, execute, validate, wire, type Command } from './controller.ts';
 describe('generic Devvit controller', () => {
   test('calls arbitrary methods and serialises returned model getters', async () => {
     class Model {
-      public constructor(private readonly value: string) {}
-      public get id(): string {
-        return this.value;
+      readonly #value: string;
+
+      public constructor(value: string) {
+        this.#value = value;
       }
+
+      public get id(): string {
+        return this.#value;
+      }
+
       public toJSON(): { readonly label: string } {
         return { label: 'model' };
       }
