@@ -275,9 +275,9 @@ export class RedditReadClient {
       title: wireText(raw['title'], 'Devvit subreddit title', ''),
       subscribers: wireMaybeNumber(raw['subscribersCount']),
       userIsModerator: moderators.some(mod => mod.name.toLowerCase() === this.cfg.username.toLowerCase()),
-      userFlairEnabled: authorFlair === null ? null : wireMaybeBoolean(authorFlair['enabled']),
-      userFlairSelfAssign: authorFlair === null ? null : wireMaybeBoolean(authorFlair['usersCanAssign']),
-      linkFlairEnabled: postFlair === null ? null : wireMaybeBoolean(postFlair['enabled']),
+      userFlairEnabled: authorFlair === null ? null : wireMaybeBoolean(authorFlair['isEnabled']),
+      userFlairSelfAssign: authorFlair === null ? null : wireMaybeBoolean(authorFlair['isSelfAssignabled']),
+      linkFlairEnabled: postFlair === null ? null : wireMaybeBoolean(postFlair['isEnabled']),
       over18: wireMaybeBoolean(raw['isNsfw']),
       submissionType: null,
     };
