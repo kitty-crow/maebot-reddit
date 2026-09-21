@@ -10,9 +10,10 @@ test('Reddit Modmail transport is not gated by the LLM moderation feature flag',
   expect(source).not.toContain('const modmail = moderationReader === null || moderationWriter === null');
 });
 
-test('Modmail archive uses the canonical Reddit mutation client', async () => {
+test('Modmail archive stays behind the canonical Reddit mutation client', async () => {
   const source = await readFile('src/reddit/mutate.ts', 'utf8');
   expect(source).toContain('public async archiveModmail(conversationId: string): Promise<void>');
-  expect(source).toContain('`/api/mod/conversations/${encodeURIComponent(id)}/archive`');
-  expect(source).not.toContain('fetch(`https://oauth.reddit.com/api/mod/conversations');
+  expect(source).toContain("{ kind: 'get', name: 'modMail' }");
+  expect(source).toContain("{ kind: 'call', name: 'archiveConversation'");
+  expect(source).not.toContain('oauth.reddit.com');
 });
