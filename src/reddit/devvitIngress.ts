@@ -1,3 +1,5 @@
+import type { Json } from '../types/json.ts';
+import { isMap, parseJson } from '../types/json.ts';
 import type { DevvitRpcResult } from './devvitRpc.ts';
 import { DevvitRpcSpool } from './devvitRpc.ts';
 
@@ -12,17 +14,16 @@ const json = (value: object, status = 200): Response => new Response(JSON.string
   headers: { 'content-type': 'application/json; charset=utf-8' },
 });
 
-const result = (value: unknown): DevvitRpcResult | null => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const id = record['id'];
-  const ok = record['ok'];
+const result = (value: Json): DevvitRpcResult | null => {
+  if (!isMap(value)) return null;
+  const id = value['id'];
+  const ok = value['ok'];
   if (typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/u.test(id) || typeof ok !== 'boolean') return null;
-  const error = record['error'];
+  const error = value['error'];
   return {
     id,
     ok,
-    ...(record['value'] === undefined ? {} : { value: record['value'] as DevvitRpcResult['value'] }),
+    ...(value['value'] === undefined ? {} : { value: value['value'] }),
     ...(typeof error === 'string' ? { error } : {}),
   };
 };
@@ -73,9 +74,9 @@ export class RedditDevvitIngressServer {
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/devvit/result') {
-      let parsed: unknown;
+      let parsed: Json;
       try {
-        parsed = await req.json();
+        parsed = parseJson(await req.text());
       } catch {
         return json({ error: 'invalid json' }, 400);
       }
