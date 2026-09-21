@@ -268,17 +268,25 @@ export class RedditMutationClient {
   }
 
   public async userFlairSelection(subreddit: string, username: string): Promise<RedditSelectedUserFlair> {
-    const value = await redditChain(this.rpc, [
-      { kind: 'call', name: 'getSubredditByName', args: [subreddit] },
-      { kind: 'call', name: 'getUserFlair', args: [{ usernames: [username] }] },
-    ]);
-    const raw = wireMap(value, 'Devvit user flair selection');
-    const users = raw['users'];
-    if (!Array.isArray(users) || users.length === 0) return { templateId: null, text: null };
-    const selected = wireMap(users[0] ?? null, 'Devvit selected user flair');
+    if (this.legacy === null) {
+      throw new Error('Reddit user-flair selection requires legacy Reddit OAuth fallback');
+    }
+    const value = await this.legacy.form(
+      `/r/${encodeURIComponent(subreddit)}/api/flairselector`,
+      new URLSearchParams({ api_type: 'json', name: username }),
+    );
+    if (!isMap(value) || !isMap(value['current'])) {
+      throw new RedditError(
+        `Reddit flair selector did not return current flair for u/${username}`,
+        'invalid_response',
+      );
+    }
+    const current = value['current'];
+    const text = (raw: Json | undefined): string | null =>
+      typeof raw === 'string' && raw.length > 0 ? raw : null;
     return {
-      templateId: wireMaybeText(selected['flairTemplateId']) ?? wireMaybeText(selected['templateId']),
-      text: wireMaybeText(selected['flairText']) ?? wireMaybeText(selected['text']),
+      templateId: text(current['flair_template_id']),
+      text: text(current['flair_text']) ?? text(current['text']),
     };
   }
 
