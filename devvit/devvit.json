@@ -29,8 +29,7 @@
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/app-install",
-    "onAppUpgrade": "/internal/triggers/app-upgrade",
-    "onCommentSubmit": "/internal/triggers/comment-submit"
+    "onAppUpgrade": "/internal/triggers/app-upgrade"
   },
   "scheduler": {
     "tasks": {
