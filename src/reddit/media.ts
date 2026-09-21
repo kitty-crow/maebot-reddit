@@ -92,8 +92,14 @@ export class RedditMediaClient {
   }
 
   public async uploadMedia(name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
-    if (this.legacy !== null) return await this.legacy.uploadMedia(name, mimeType, bytes);
-    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+      return await this.legacy.uploadMedia(name, mimeType, bytes);
+    }
+    if (mimeType === 'video/mp4') {
+      if (this.legacy === null) throw new Error('Reddit video upload requires legacy Reddit OAuth fallback');
+      return await this.legacy.uploadMedia(name, mimeType, bytes);
+    }
     const value = await mediaCall(this.rpc, 'upload', [{
       url: dataUrl(mimeType, bytes),
       type: uploadType(mimeType),
@@ -112,7 +118,10 @@ export class RedditMediaClient {
     bytes: Uint8Array,
     videoPosterUrl: string | null = null,
   ): Promise<RedditMediaCreatedPost> {
-    if (this.legacy !== null) {
+    if (this.forceLegacy || body.trim().length > 0 || mimeType === 'video/mp4') {
+      if (this.legacy === null) {
+        throw new Error('This Reddit media submission requires the legacy Reddit OAuth fallback');
+      }
       return await this.legacy.submitMedia(
         subreddit,
         title,
@@ -123,10 +132,6 @@ export class RedditMediaClient {
         bytes,
         videoPosterUrl,
       );
-    }
-    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
-    if (body.trim().length > 0 || mimeType === 'video/mp4') {
-      throw new Error('This Reddit media submission requires the legacy Reddit OAuth fallback');
     }
     const mediaUrl = await this.uploadMedia(name, mimeType, bytes);
     const kind = 'image';
@@ -146,9 +151,27 @@ export class RedditMediaClient {
     flairTemplateId: string | null,
     media: readonly RedditGalleryMedia[],
   ): Promise<RedditMediaCreatedPost> {
-    if (this.legacy !== null) {
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
       return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
     }
-    throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
+    const imageUrls: string[] = [];
+    for (const item of media) {
+      if (!item.mimeType.startsWith('image/')) {
+        if (this.legacy === null) {
+          throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
+        }
+        return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
+      }
+      imageUrls.push(await this.uploadMedia(item.name, item.mimeType, item.bytes));
+    }
+    return createdPost(await redditCall(this.rpc, 'submitPost', [{
+      subredditName: subreddit,
+      title,
+      kind: 'image',
+      imageUrls,
+      sendreplies: true,
+      ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
+    }]));
   }
 }
