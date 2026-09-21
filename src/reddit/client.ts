@@ -65,6 +65,26 @@ const flairTemplate = (value: DevvitWire): RedditFlairTemplate => {
   };
 };
 
+const devvitMediaUrls = (value: DevvitWire): readonly string[] => {
+  const out = new Set<string>();
+  const mediaPattern = /(?:i\.redd\.it|preview\.redd\.it|external-preview\.redd\.it|\.gif(?:v)?(?:$|[?#])|\.(?:avif|jpe?g|png|webp)(?:$|[?#]))/iu;
+  const visit = (current: DevvitWire, depth: number): void => {
+    if (depth > 8) return;
+    if (typeof current === 'string') {
+      if (mediaPattern.test(current)) out.add(current.replace(/&amp;/gu, '&'));
+      return;
+    }
+    if (current === null || typeof current !== 'object') return;
+    if (Array.isArray(current)) {
+      for (const child of current) visit(child, depth + 1);
+      return;
+    }
+    for (const child of Object.values(current)) visit(child, depth + 1);
+  };
+  visit(value, 0);
+  return [...out].slice(0, 12);
+};
+
 const flairAssignment = (value: DevvitWire): RedditFlairAssignment => {
   const raw = wireMap(value, 'Devvit user flair');
   return {
@@ -79,12 +99,7 @@ const post = (value: DevvitWire): RedditPost => {
   const raw = wireMap(value, 'Devvit post');
   const rawId = wireText(raw['id'], 'Devvit post id');
   const flair = raw['flair'] === undefined ? null : wireMap(raw['flair'], 'Devvit post flair');
-  const gallery = Array.isArray(raw['gallery']) ? raw['gallery'] : [];
-  const mediaUrls = gallery.flatMap(item => {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
-    const url = wireMaybeText(item['url']) ?? wireMaybeText(item['outboundUrl']);
-    return url === null ? [] : [url];
-  });
+  const mediaUrls = devvitMediaUrls(raw);
   return {
     id: bareId(rawId, 't3_'),
     fullname: fullname(rawId, 't3_'),
