@@ -255,6 +255,7 @@ export class DevvitRpcSpool {
       });
       return value;
     });
+    this.signal();
   }
 
   public async take(id: string): Promise<DevvitRpcResult | null> {
@@ -269,6 +270,17 @@ export class DevvitRpcSpool {
       return value;
     });
     return out;
+  }
+
+  public async waitForResult(id: string, timeoutMs: number): Promise<DevvitRpcResult | null> {
+    const deadline = Date.now() + Math.max(1, Math.floor(timeoutMs));
+    while (true) {
+      const current = await this.take(id);
+      if (current !== null) return current;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return null;
+      await this.wait(remaining);
+    }
   }
 
   public async cancel(id: string): Promise<void> {
@@ -349,7 +361,6 @@ export class DevvitRpcClient {
   public constructor(
     private readonly spool: DevvitRpcSpool,
     private readonly timeoutMs = 120_000,
-    private readonly pollMs = 100,
   ) {}
 
   public async call(
@@ -357,17 +368,11 @@ export class DevvitRpcClient {
     steps: readonly DevvitRpcStep[],
   ): Promise<DevvitWire> {
     const id = await this.spool.enqueue(rootName, steps);
-    const deadline = Date.now() + this.timeoutMs;
     try {
-      while (Date.now() < deadline) {
-        const value = await this.spool.take(id);
-        if (value !== null) {
-          if (!value.ok) throw new Error(value.error ?? 'Devvit Reddit RPC failed');
-          return value.value ?? null;
-        }
-        await Bun.sleep(this.pollMs);
-      }
-      throw new Error(`Devvit Reddit RPC ${id} timed out`);
+      const value = await this.spool.waitForResult(id, this.timeoutMs);
+      if (value === null) throw new Error(`Devvit Reddit RPC ${id} timed out`);
+      if (!value.ok) throw new Error(value.error ?? 'Devvit Reddit RPC failed');
+      return value.value ?? null;
     } finally {
       await this.spool.cancel(id);
     }
