@@ -135,9 +135,7 @@ export class RedditMediaClient {
       title,
       kind,
       imageUrls: [mediaUrl],
-      text: body,
       sendreplies: true,
-      ...(videoPosterUrl === null ? {} : { videoPosterUrl }),
       ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
     }]));
   }
@@ -151,25 +149,6 @@ export class RedditMediaClient {
     if (this.legacy !== null) {
       return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
     }
-    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
     throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
-    if (media.length < 2 || media.length > 20) {
-      throw new Error('Reddit galleries require between 2 and 20 images');
-    }
-    const imageUrls: string[] = [];
-    for (const item of media) {
-      if (!item.mimeType.startsWith('image/')) {
-        throw new Error(`Unsupported Reddit gallery media type ${item.mimeType}`);
-      }
-      imageUrls.push(await this.uploadMedia(item.name, item.mimeType, item.bytes));
-    }
-    return createdPost(await redditCall(this.rpc, 'submitPost', [{
-      subredditName: subreddit,
-      title,
-      kind: 'image',
-      imageUrls,
-      sendreplies: true,
-      ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
-    }]));
   }
 }
