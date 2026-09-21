@@ -60,9 +60,14 @@ const wire = (value: unknown): Wire => {
     return { $map: [...value.entries()].map(([key, child]) => [wire(key), wire(child)]) };
   }
   if (typeof value === 'object') {
-    const toJSON = Reflect.get(value, 'toJSON');
-    if (typeof toJSON === 'function') return wire(Reflect.apply(toJSON, value, []));
     const out: { [key: string]: Wire } = {};
+    const toJSON = Reflect.get(value, 'toJSON');
+    if (typeof toJSON === 'function') {
+      const encoded = wire(Reflect.apply(toJSON, value, []));
+      if (typeof encoded === 'object' && encoded !== null && !Array.isArray(encoded)) {
+        Object.assign(out, encoded);
+      }
+    }
     for (const [key, child] of Object.entries(value)) {
       if (child !== undefined && typeof child !== 'function') out[key] = wire(child);
     }
