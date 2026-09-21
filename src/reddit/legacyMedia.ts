@@ -2,9 +2,9 @@ import { isMap, parseJson, type Json } from '../types/json.ts';
 import { RedditError, statusKind } from './error.ts';
 import { rateLimitedRedditFetch } from './rateBudget.ts';
 
-export type LegacyLegacyRedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+export type LegacyRedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-export type LegacyLegacyRedditMediaSocket = {
+export type LegacyRedditMediaSocket = {
   listen(
     onMessage: (data: string) => void,
     onError: () => void,
@@ -13,15 +13,15 @@ export type LegacyLegacyRedditMediaSocket = {
   close(): void;
 };
 
-export type LegacyLegacyRedditMediaSocketFactory = (url: string) => LegacyRedditMediaSocket;
+export type LegacyRedditMediaSocketFactory = (url: string) => LegacyRedditMediaSocket;
 
-export type LegacyLegacyRedditMediaCreatedPost = {
+export type LegacyRedditMediaCreatedPost = {
   readonly id: string;
   readonly fullname: string;
   readonly url: string;
 };
 
-export type LegacyLegacyRedditGalleryMedia = {
+export type LegacyRedditGalleryMedia = {
   readonly name: string;
   readonly mimeType: string;
   readonly bytes: Uint8Array;
@@ -134,7 +134,7 @@ const postFromRedirect = (raw: string): LegacyRedditMediaCreatedPost => {
   return { id, fullname: `t3_${id}`, url: parsed.toString() };
 };
 
-const defaultSocketFactory: LegacyLegacyRedditMediaSocketFactory = url => {
+const defaultSocketFactory: LegacyRedditMediaSocketFactory = url => {
   const socket = new WebSocket(url);
   return {
     listen(onMessage, onError, onClose): void {
@@ -153,7 +153,7 @@ const defaultSocketFactory: LegacyLegacyRedditMediaSocketFactory = url => {
 
 const awaitMediaPost = async (
   url: string,
-  socketFactory: LegacyLegacyRedditMediaSocketFactory,
+  socketFactory: LegacyRedditMediaSocketFactory,
 ): Promise<LegacyRedditMediaCreatedPost> => await new Promise((resolve, reject) => {
   let settled = false;
   let socket: LegacyRedditMediaSocket;
@@ -255,13 +255,13 @@ export type LegacyRedditMediaAuth = {
 export class LegacyRedditMediaClient {
   private tokenCache: Token | null = null;
   private readonly fetcher: LegacyRedditMediaFetch;
-  private readonly socketFactory: LegacyLegacyRedditMediaSocketFactory;
+  private readonly socketFactory: LegacyRedditMediaSocketFactory;
 
   public constructor(
     private readonly cfg: LegacyRedditMediaAuth,
     fetcher?: LegacyRedditMediaFetch,
     rateReserve = 10,
-    socketFactory: LegacyLegacyRedditMediaSocketFactory = defaultSocketFactory,
+    socketFactory: LegacyRedditMediaSocketFactory = defaultSocketFactory,
   ) {
     const rawFetcher = fetcher ?? fetch;
     this.fetcher = fetcher === undefined
