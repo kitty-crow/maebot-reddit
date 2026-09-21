@@ -174,7 +174,7 @@ const execute = async (command: Command): Promise<Wire> => {
   return wire(current);
 };
 
-const request = async (path: '/work' | '/result', init?: RequestInit): Promise<Response> => {
+const request = async (path: string, init?: RequestInit): Promise<Response> => {
   const token = await secret();
   return await fetch(`${ingress}${path}`, {
     ...init,
@@ -256,7 +256,7 @@ app.post('/internal/scheduler/mae-reddit-rpc', async c => {
   const requestBody = await c.req.json<TaskRequest<{ generation: string }>>();
   const generation = requestBody.data?.generation;
   if (typeof generation !== 'string') {
-    return c.json<TaskResponse>({ status: 'ignored' });
+    return c.json<TaskResponse>({ status: 'ok' });
   }
   if (await redis.get(rpcGenerationKey) !== generation) {
     return c.json<TaskResponse>({ status: 'ignored' });
