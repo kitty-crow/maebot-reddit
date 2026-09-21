@@ -1,6 +1,8 @@
 import type { RedditAuthCfg } from '../env.ts';
 import { assertRedditStateMutationAllowed } from '../reputation/manualOverrideGate.ts';
-import type { RedditEmoji } from './emoji.ts';
+import { isMap, type Json } from '../types/json.ts';
+import { RedditError, statusKind } from './error.ts';
+import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
 import type { RedditRate } from './rate.ts';
 import type { RedditFlairTemplate } from './types.ts';
 import {
@@ -13,6 +15,8 @@ import {
   wireText,
 } from './devvitCompat.ts';
 import { DevvitRpcClient } from './devvitRpc.ts';
+import { legacyRedditApi, type LegacyRedditApi } from './legacyApi.ts';
+import { retryAfterMs } from './rate.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RedditMutationSleep = (ms: number) => Promise<void>;
@@ -55,6 +59,48 @@ const post = (value: Awaited<ReturnType<typeof redditCall>>): RedditCreatedPost 
     url: wireText(raw['url'], 'Devvit created post url', ''),
   };
 };
+const legacyCreatedPost = (value: Json): RedditCreatedPost => {
+  if (!isMap(value) || !isMap(value['json']) || !isMap(value['json']['data'])) {
+    throw new RedditError('Reddit legacy submit response did not contain post data', 'invalid_response');
+  }
+  const data = value['json']['data'];
+  const id = data['id'];
+  if (typeof id !== 'string' || id.length === 0) {
+    throw new RedditError('Reddit legacy submit response did not contain a post id', 'invalid_response');
+  }
+  const fullname = typeof data['name'] === 'string' && data['name'].length > 0
+    ? data['name']
+    : `t3_${id}`;
+  const url = typeof data['url'] === 'string' ? data['url'] : '';
+  return { id, fullname, url };
+};
+
+const emojiName = (name: string): string => {
+  const value = name.trim();
+  if (!/^[A-Za-z0-9_-]{1,24}$/u.test(value)) throw new Error(`Invalid Reddit emoji name ${name}`);
+  return value;
+};
+
+const emojiFile = (media: RedditEmojiMedia): RedditEmojiMedia => {
+  const filename = media.filename.trim();
+  const mimeType = media.mimeType.trim().toLowerCase();
+  if (filename.length === 0 || filename.length > 255 || filename.includes('/') || filename.includes('\\')) {
+    throw new Error(`Invalid Reddit emoji filename ${media.filename}`);
+  }
+  if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') {
+    throw new Error(`Unsupported Reddit emoji MIME type ${media.mimeType}`);
+  }
+  if (media.bytes.byteLength === 0) throw new Error('Reddit emoji image is empty');
+  return { bytes: media.bytes, filename, mimeType };
+};
+
+const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchParams({
+  mod_flair_only: String(emoji.modFlairOnly),
+  name: emojiName(emoji.name),
+  post_flair_allowed: String(emoji.postFlairAllowed),
+  user_flair_allowed: String(emoji.userFlairAllowed),
+});
+
 
 const validModmailId = (id: string): string => {
   const value = id.trim().replace(/^ModmailConversation_/u, '');
@@ -64,12 +110,16 @@ const validModmailId = (id: string): string => {
 
 export class RedditMutationClient {
   private readonly rpc: DevvitRpcClient;
+  private readonly legacy: LegacyRedditApi | null;
+  private readonly forceLegacy: boolean;
 
   public constructor(
     cfg: RedditAuthCfg,
     options: RedditMutationOptions = {},
   ) {
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
+    this.legacy = legacyRedditApi(cfg, options.fetcher);
+    this.forceLegacy = cfg.transport === 'legacy';
   }
 
   public rate(): RedditRate {
@@ -82,6 +132,20 @@ export class RedditMutationClient {
     body: string,
     flairTemplateId: string | null = null,
   ): Promise<RedditCreatedPost> {
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit transport is not configured');
+      const form = new URLSearchParams({
+        api_type: 'json',
+        kind: 'self',
+        resubmit: 'true',
+        sendreplies: 'true',
+        sr: subreddit,
+        text: body,
+        title,
+      });
+      if (flairTemplateId !== null) form.set('flair_id', flairTemplateId);
+      return legacyCreatedPost(await this.legacy.form('/api/submit', form));
+    }
     return post(await redditCall(this.rpc, 'submitPost', [{
       subredditName: subreddit,
       title,
@@ -98,6 +162,20 @@ export class RedditMutationClient {
     flairTemplateId: string | null = null,
   ): Promise<RedditCreatedPost> {
     const postId = sourcePostId.startsWith('t3_') ? sourcePostId : `t3_${sourcePostId}`;
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit transport is not configured');
+      const form = new URLSearchParams({
+        api_type: 'json',
+        crosspost_fullname: postId,
+        kind: 'crosspost',
+        resubmit: 'true',
+        sendreplies: 'true',
+        sr: subreddit,
+        title,
+      });
+      if (flairTemplateId !== null) form.set('flair_id', flairTemplateId);
+      return legacyCreatedPost(await this.legacy.form('/api/submit', form));
+    }
     return post(await redditCall(this.rpc, 'crosspost', [{
       subredditName: subreddit,
       postId,
@@ -132,15 +210,47 @@ export class RedditMutationClient {
   }
 
   public async uploadEmoji(
-    _subreddit: string,
-    _emoji: RedditEmoji,
-    _input: RedditEmojiMedia,
+    subreddit: string,
+    emoji: RedditEmoji,
+    input: RedditEmojiMedia,
   ): Promise<void> {
-    throw new Error('Reddit Devvit 0.14.4 does not expose emoji asset upload through the Reddit client');
+    if (this.legacy === null) {
+      throw new Error('Reddit custom emoji upload requires legacy Reddit OAuth fallback');
+    }
+    const media = emojiFile(input);
+    const name = emojiName(emoji.name);
+    const lease = redditEmojiUploadLease(await this.legacy.form(
+      `/api/v1/${encodeURIComponent(subreddit)}/emoji_asset_upload_s3.json`,
+      new URLSearchParams({ filepath: media.filename, mimetype: media.mimeType }),
+    ));
+
+    const upload = new FormData();
+    for (const [field, value] of lease.fields) upload.append(field, value);
+    upload.append('file', new Blob([media.bytes], { type: media.mimeType }), media.filename);
+
+    const response = await this.legacy.upload(lease.uploadUrl, upload);
+    if (!response.ok) {
+      throw new RedditError(
+        `Reddit emoji S3 upload failed for ${name}`,
+        statusKind(response.status),
+        response.status,
+        retryAfterMs(response.headers),
+      );
+    }
+
+    const form = permissionForm({ ...emoji, name });
+    form.set('s3_key', lease.key);
+    await this.legacy.form(`/api/v1/${encodeURIComponent(subreddit)}/emoji.json`, form);
   }
 
-  public async updateEmojiPermissions(_subreddit: string, _emoji: RedditEmoji): Promise<void> {
-    throw new Error('Reddit Devvit 0.14.4 does not expose emoji permission management through the Reddit client');
+  public async updateEmojiPermissions(subreddit: string, emoji: RedditEmoji): Promise<void> {
+    if (this.legacy === null) {
+      throw new Error('Reddit custom emoji permission management requires legacy Reddit OAuth fallback');
+    }
+    await this.legacy.form(
+      `/api/v1/${encodeURIComponent(subreddit)}/emoji_permissions`,
+      permissionForm(emoji),
+    );
   }
 
   public async setUserFlairTemplate(
