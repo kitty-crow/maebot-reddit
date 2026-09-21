@@ -86,16 +86,6 @@ const devvitMediaUrls = (value: DevvitWire): readonly string[] => {
   return [...out].slice(0, 12);
 };
 
-const flairAssignment = (value: DevvitWire): RedditFlairAssignment => {
-  const raw = wireMap(value, 'Devvit user flair');
-  return {
-    username: wireText(raw['user'], 'Devvit user flair username'),
-    templateId: wireMaybeText(raw['flairTemplateId']) ?? wireMaybeText(raw['templateId']),
-    text: wireMaybeText(raw['flairText']) ?? wireMaybeText(raw['text']),
-    cssClass: wireMaybeText(raw['flairCssClass']) ?? wireMaybeText(raw['cssClass']),
-  };
-};
-
 const post = (value: DevvitWire): RedditPost => {
   const raw = wireMap(value, 'Devvit post');
   const rawId = wireText(raw['id'], 'Devvit post id');
