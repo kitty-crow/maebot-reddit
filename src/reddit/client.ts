@@ -383,20 +383,12 @@ export class RedditReadClient {
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
-    const value = wireArray(await redditCall(this.rpc, 'getRules', [name]), 'Devvit subreddit rules');
-    return {
-      rules: value.map(item => {
-        const raw = wireMap(item, 'Devvit subreddit rule');
-        return {
-          shortName: wireText(raw['shortName'], 'Devvit rule shortName'),
-          description: wireText(raw['description'], 'Devvit rule description', ''),
-          violationReason: wireMaybeText(raw['violationReason']),
-          kind: wireMaybeText(raw['kind']),
-          priority: wireMaybeNumber(raw['priority']),
-        };
-      }),
-      siteRules: [],
-    };
+    if (this.legacy === null) {
+      throw new Error('Complete Reddit rule inventory requires legacy Reddit OAuth fallback');
+    }
+    return decode.rules(await this.legacy.get(
+      `/r/${encodeURIComponent(name)}/about/rules`,
+    ));
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
