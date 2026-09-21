@@ -347,7 +347,14 @@ export class RedditMutationClient {
     if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
       throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
     }
-    await redditCall(this.rpc, 'submitComment', [{ id: fullname, text: body }]);
+    if (this.legacy === null) {
+      throw new Error('Reddit private-message replies require legacy Reddit OAuth fallback');
+    }
+    await this.legacy.form('/api/comment', new URLSearchParams({
+      api_type: 'json',
+      thing_id: fullname,
+      text: body,
+    }));
   }
 
   public async markPrivateMessageRead(fullname: string): Promise<void> {
