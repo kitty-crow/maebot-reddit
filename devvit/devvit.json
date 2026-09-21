@@ -10,6 +10,7 @@
       "enable": true
     },
     "redis": true,
+    "media": true,
     "http": {
       "enable": true,
       "domains": [
