@@ -68,9 +68,19 @@ export class RedditDevvitIngressServer {
 
     if (req.method === 'GET' && url.pathname === '/v1/devvit/work') {
       const rawLimit = url.searchParams.get('limit');
+      const rawWait = url.searchParams.get('wait');
       const limit = rawLimit === null ? 25 : Number(rawLimit);
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return json({ error: 'invalid limit' }, 400);
-      return json({ commands: await this.spool.lease(limit) });
+      const waitMs = rawWait === null ? 0 : Number(rawWait);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        return json({ error: 'invalid limit' }, 400);
+      }
+      if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 25_000) {
+        return json({ error: 'invalid wait' }, 400);
+      }
+      const commands = waitMs === 0
+        ? await this.spool.lease(limit)
+        : await this.spool.waitForWork(limit, waitMs);
+      return json({ commands });
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/devvit/event/comment') {
