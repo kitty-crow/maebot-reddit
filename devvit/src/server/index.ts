@@ -7,7 +7,7 @@ import {
   type TaskRequest,
   type TaskResponse,
 } from '@devvit/web/server';
-import type { OnCommentSubmitRequest, TriggerResponse } from '@devvit/web/shared';
+import type { TriggerResponse } from '@devvit/web/shared';
 import { Hono } from 'hono';
 import { execute, type Command, type Wire } from './controller.ts';
 
