@@ -2,7 +2,7 @@ import type { RedditAuthCfg } from '../env.ts';
 import type { RedditDirectMessage } from '../dm/types.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 import * as decode from './decode.ts';
-import type { RedditEmoji } from './emoji.ts';
+import { redditEmojis, type RedditEmoji } from './emoji.ts';
 import type { RedditRate } from './rate.ts';
 import type {
   RedditAccount,
@@ -31,6 +31,7 @@ import {
   wireText,
 } from './devvitCompat.ts';
 import { DevvitRpcClient, DevvitRpcSpool, type DevvitWire } from './devvitRpc.ts';
+import { legacyRedditApi, type LegacyRedditApi } from './legacyApi.ts';
 
 export type RedditFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RedditSleep = (ms: number) => Promise<void>;
@@ -284,6 +285,7 @@ const modmailConversationFrom = (value: DevvitWire): ModmailConversation => {
 export class RedditReadClient {
   private readonly rpc: DevvitRpcClient;
   private readonly spool: DevvitRpcSpool;
+  private readonly legacy: LegacyRedditApi | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
@@ -291,6 +293,7 @@ export class RedditReadClient {
   ) {
     this.spool = options.spool ?? new DevvitRpcSpool(cfg.devvitRpcStateFile);
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
+    this.legacy = legacyRedditApi(cfg, options.fetcher);
   }
 
   public rate(): RedditRate {
@@ -381,8 +384,11 @@ export class RedditReadClient {
     return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
-  public async emojis(_name: string): Promise<readonly RedditEmoji[]> {
-    throw new Error('Reddit Devvit 0.14.4 does not expose custom emoji inventory through the Reddit client');
+  public async emojis(name: string): Promise<readonly RedditEmoji[]> {
+    if (this.legacy === null) {
+      throw new Error('Reddit custom emoji inventory requires legacy Reddit OAuth fallback');
+    }
+    return redditEmojis(await this.legacy.get(`/api/v1/${encodeURIComponent(name)}/emojis/all`));
   }
 
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
