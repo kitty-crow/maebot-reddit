@@ -1,8 +1,7 @@
 import { expect, test } from 'bun:test';
-import type { RedditAuthCfg } from '../src/env.ts';
-import { LegacyLegacyRedditMediaClient, type LegacyLegacyRedditMediaFetch } from '../src/reddit/legacyMedia.ts';
+import { LegacyRedditMediaClient, type LegacyRedditMediaAuth, type LegacyRedditMediaFetch } from '../src/reddit/legacyMedia.ts';
 
-const cfg: RedditAuthCfg = {
+const cfg: LegacyRedditMediaAuth = {
   clientId: 'client',
   clientSecret: 'secret',
   username: 'mae',
