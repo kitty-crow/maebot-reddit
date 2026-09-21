@@ -3,12 +3,12 @@ set -euo pipefail
 umask 077
 
 platform='reddit'
-default_ref='feature/reddit-reputation-bootstrap'
+default_ref='feat/devvit-migration'
 ref="${1:-$default_ref}"
 live="${MAE_LIVE_DIR:-/home/kitty/server/mae/reddit}"
 remote="${MAE_CI_REMOTE:-}"
 
-for command in git bun; do
+for command in git bun curl tar sha256sum; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 2; }
 done
 [ -d "$live" ] || { echo "Live Reddit directory not found: $live" >&2; exit 2; }
@@ -25,6 +25,17 @@ tmp="$root/tmp"
 ephemeral="ci/${platform}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$tmp"
 
+node_version='24.18.0'
+case "$(uname -m)" in
+  x86_64|amd64) node_arch='x64' ;;
+  aarch64|arm64) node_arch='arm64' ;;
+  *) echo "Unsupported CI host architecture for Devvit Node runtime: $(uname -m)" >&2; exit 2 ;;
+esac
+node_name="node-v${node_version}-linux-${node_arch}"
+node_archive="$root/${node_name}.tar.xz"
+node_sums="$root/SHASUMS256.txt"
+node_home="$root/$node_name"
+
 cleanup() {
   status=$?
   chmod -R u+w "$root" 2>/dev/null || true
@@ -33,15 +44,32 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+curl -fsSLo "$node_archive" "https://nodejs.org/dist/v${node_version}/${node_name}.tar.xz"
+curl -fsSLo "$node_sums" "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
+expected_node_sha="$(awk -v file="${node_name}.tar.xz" '$2 == file { print $1 }' "$node_sums")"
+[ -n "$expected_node_sha" ] || { echo 'Could not find Node archive checksum.' >&2; exit 2; }
+actual_node_sha="$(sha256sum "$node_archive" | awk '{ print $1 }')"
+[ "$actual_node_sha" = "$expected_node_sha" ] || { echo 'Node archive checksum mismatch.' >&2; exit 2; }
+tar -xJf "$node_archive" -C "$root"
+PATH="$node_home/bin:$PATH"
+export PATH
+
 run_clean() {
-  env -i \
-    HOME="${HOME:-/tmp}" \
-    PATH="$PATH" \
-    USER="${USER:-mae-ci}" \
-    LANG="${LANG:-C.UTF-8}" \
-    CI=1 \
-    TMPDIR="$tmp" \
-    "$@"
+  env -i     HOME="${HOME:-/tmp}"     PATH="$PATH"     USER="${USER:-mae-ci}"     LANG="${LANG:-C.UTF-8}"     CI=1     TMPDIR="$tmp"     NPM_CONFIG_CACHE="$tmp/npm-cache"     NPM_CONFIG_UPDATE_NOTIFIER=false     NPM_CONFIG_AUDIT=false     NPM_CONFIG_FUND=false     NODE_OPTIONS="--throw-deprecation"     "$@"
+}
+
+run_no_warnings() {
+  label="$1"
+  shift
+  log="$tmp/${label}.log"
+  if ! run_clean "$@" > >(tee "$log") 2> >(tee -a "$log" >&2); then
+    return 1
+  fi
+  if grep -Eqi '(^|[[:space:]])(npm[[:space:]]+warn|warning:|deprecationwarning|experimentalwarning|module_typeless_package_json)' "$log"; then
+    echo "Warning-free CI gate failed in ${label}." >&2
+    grep -Ein '(^|[[:space:]])(npm[[:space:]]+warn|warning:|deprecationwarning|experimentalwarning|module_typeless_package_json)' "$log" >&2 || true
+    return 1
+  fi
 }
 
 printf 'Mae %s host CI\n' "$platform"
@@ -57,19 +85,19 @@ git -C "$repo" submodule update --init --recursive
 
 cd "$repo"
 printf '  candidate SHA: %s\n' "$(git rev-parse HEAD)"
-# Install exactly the dependency graph committed in bun.lock.
-bun ci
+printf '  node: %s\n' "$(node --version)"
+printf '  npm: %s\n' "$(npm --version)"
 
-# The TypeScript Reddit runtime is self-contained. Legacy Python/common state is
-# migration evidence only and is deliberately not a prerequisite for host CI.
-# Production reputation.pb is never opened or copied by this script: validation
-# runs only inside the disposable clone with test-owned temporary stores.
-run_clean bun run ci
+run_no_warnings bun-install bun ci
+run_no_warnings mae-ci bun run ci
+
+run_no_warnings devvit-install npm --prefix devvit install --no-package-lock --no-audit --no-fund
+run_no_warnings devvit-ci npm --prefix devvit run ci
+
 mkdir -p "$build"
-run_clean bun build ./src/main.ts --target=bun --outdir "$build"
+run_no_warnings bun-build bun build ./src/main.ts --target=bun --outdir "$build"
 test -s "$build/main.js"
 
-# CI must not alter source, create tracked candidates, or move submodules.
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
   echo 'Disposable CI checkout was modified by validation.' >&2
   git status --short >&2
