@@ -206,11 +206,14 @@ const directMessage = (value: DevvitWire): RedditDirectMessage => {
 };
 
 const modmailState = (value: string | null): ModmailConversation['state'] => {
-  if (value === 'archived') return 'archived';
-  if (value === 'highlighted') return 'highlighted';
-  if (value === 'mod') return 'mod';
-  if (value === 'new') return 'new';
-  if (value === 'inprogress') return 'inprogress';
+  if (
+    value === 'new'
+    || value === 'inprogress'
+    || value === 'archived'
+    || value === 'appeals'
+    || value === 'join_requests'
+    || value === 'filtered'
+  ) return value;
   return 'unknown';
 };
 
