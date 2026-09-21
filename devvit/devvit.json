@@ -25,6 +25,9 @@
       }
     }
   },
+  "triggers": {
+    "onCommentSubmit": "/internal/triggers/comment-submit"
+  },
   "scheduler": {
     "tasks": {
       "mae-reddit-rpc": {
