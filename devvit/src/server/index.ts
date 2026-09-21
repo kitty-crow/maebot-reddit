@@ -1,5 +1,16 @@
-import { media, reddit, settings, type TaskResponse } from '@devvit/web/server';
-import type { OnCommentSubmitRequest, TriggerResponse } from '@devvit/web/shared';
+import {
+  media,
+  reddit,
+  redis,
+  scheduler,
+  settings,
+  type TaskRequest,
+  type TaskResponse,
+} from '@devvit/web/server';
+import type {
+  OnCommentSubmitRequest,
+  TriggerResponse,
+} from '@devvit/web/shared';
 import { Hono } from 'hono';
 
 type Wire =
@@ -175,7 +186,7 @@ const request = async (path: '/work' | '/result', init?: RequestInit): Promise<R
 };
 
 const poll = async (): Promise<void> => {
-  const response = await request('/work');
+  const response = await request('/work?wait=25000');
   if (!response.ok) throw new Error(`Mae ingress work request failed with HTTP ${response.status}`);
   const work = await response.json() as Work;
   if (!Array.isArray(work.commands)) throw new Error('Mae ingress returned invalid work');
@@ -215,8 +226,49 @@ app.post('/internal/triggers/comment-submit', async c => {
   return c.json<TriggerResponse>({ status: 'ok' });
 });
 
+const rpcGenerationKey = 'mae:reddit-rpc:generation';
+
+const armRpcWait = async (generation: string): Promise<void> => {
+  await scheduler.runJob({
+    name: 'mae-reddit-rpc',
+    data: { generation },
+    runAt: new Date(Date.now() + 100),
+  });
+};
+
+const startRpcWaitLoop = async (): Promise<void> => {
+  const generation = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  await redis.set(rpcGenerationKey, generation);
+  await armRpcWait(generation);
+};
+
+app.post('/internal/triggers/app-install', async c => {
+  await startRpcWaitLoop();
+  return c.json<TriggerResponse>({ status: 'ok' });
+});
+
+app.post('/internal/triggers/app-upgrade', async c => {
+  await startRpcWaitLoop();
+  return c.json<TriggerResponse>({ status: 'ok' });
+});
+
 app.post('/internal/scheduler/mae-reddit-rpc', async c => {
-  await poll();
+  const requestBody = await c.req.json<TaskRequest<{ generation: string }>>();
+  const generation = requestBody.data?.generation;
+  if (typeof generation !== 'string') {
+    return c.json<TaskResponse>({ status: 'ignored' });
+  }
+  if (await redis.get(rpcGenerationKey) !== generation) {
+    return c.json<TaskResponse>({ status: 'ignored' });
+  }
+
+  try {
+    await poll();
+  } finally {
+    if (await redis.get(rpcGenerationKey) === generation) {
+      await armRpcWait(generation);
+    }
+  }
   return c.json<TaskResponse>({ status: 'ok' });
 });
 
