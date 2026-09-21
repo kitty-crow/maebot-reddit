@@ -14,8 +14,6 @@ const maybe = (name: string): string | null => {
 };
 
 const opt = (name: string, fallback: string): string => process.env[name]?.trim() || fallback;
-const alias = (name: string, legacy: string): string => maybe(name) ?? req(legacy);
-
 const community = (name: string, fallback: string): string => {
   const value = opt(name, fallback).replace(/^r\//iu, '').trim();
   if (!/^[A-Za-z0-9_]{2,21}$/u.test(value)) throw new Error(`${name} is not a valid subreddit name`);
@@ -59,11 +57,15 @@ const effort = (name: string, fallback: ModerationAiCfg['effort']): ModerationAi
 };
 
 export type RedditAuthCfg = {
-  readonly clientId: string;
-  readonly clientSecret: string;
   readonly username: string;
-  readonly password: string;
-  readonly userAgent: string;
+  readonly devvitRpcStateFile: string;
+  readonly devvitRpcTimeoutMs: number;
+};
+
+export type RedditDevvitIngressCfg = {
+  readonly host: string;
+  readonly port: number;
+  readonly secret: string;
 };
 
 export type RedditCfg = {
@@ -101,17 +103,19 @@ export type InternalApiCfg = {
 
 export const redditConfig = (): RedditCfg => ({
   auth: {
-    // Preserve the production Python deployment's credential names so the
-    // cutover does not require copying secrets into Git or re-entering them.
-    clientId: maybe('REDDIT_CLIENT_ID') ?? 'GPs6wxXUncfEVH6wAn2KSQ',
-    clientSecret: alias('REDDIT_CLIENT_SECRET', 'GPs6wxXUncfEVH6wAn2KSQ'),
-    username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
-    password: alias('REDDIT_PASSWORD', 'this_is_the_mae'),
-    userAgent: maybe('REDDIT_USER_AGENT') ?? 'linux:com.kittycrow.maebot-reddit:0.1.0 (by /u/this_is_the_mae)',
+    username: 'this_is_the_mae',
+    devvitRpcStateFile: resolve(process.cwd(), opt('REDDIT_DEVVIT_RPC_STATE_FILE', 'data/devvitRpc.pb')),
+    devvitRpcTimeoutMs: positive('REDDIT_DEVVIT_RPC_TIMEOUT_MS', '120000'),
   },
   sourceSubreddit: community('REDDIT_SOURCE_SUBREDDIT', 'catgirlcoin'),
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
   stateFile: resolve(process.cwd(), opt('REDDIT_STATE_FILE', 'data/reddit.pb')),
+});
+
+export const redditDevvitIngressConfig = (): RedditDevvitIngressCfg => ({
+  host: loopbackHost('REDDIT_DEVVIT_INGRESS_HOST'),
+  port: port('REDDIT_DEVVIT_INGRESS_PORT', req('REDDIT_DEVVIT_INGRESS_PORT')),
+  secret: req('REDDIT_DEVVIT_BRIDGE_SECRET'),
 });
 
 export const redditModerationConfig = (): RedditModerationCfg | null => {
