@@ -91,19 +91,6 @@ const startRpcWaitLoop = async (): Promise<void> => {
   await armRpcWait(generation);
 };
 
-app.post('/internal/triggers/comment-submit', async c => {
-  const input = await c.req.json<OnCommentSubmitRequest>();
-  const submitted = await request('/event/comment', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(input),
-  });
-  if (!submitted.ok) {
-    throw new Error(`Mae ingress comment submission failed with HTTP ${submitted.status}`);
-  }
-  return c.json<TriggerResponse>({ status: 'ok' });
-});
-
 app.post('/internal/triggers/app-install', async c => {
   await startRpcWaitLoop();
   return c.json<TriggerResponse>({ status: 'ok' });
