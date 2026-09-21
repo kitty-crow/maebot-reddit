@@ -66,6 +66,21 @@ const wire = (value: unknown): Wire => {
     for (const [key, child] of Object.entries(value)) {
       if (child !== undefined && typeof child !== 'function') out[key] = wire(child);
     }
+    let prototype = Object.getPrototypeOf(value) as object | null;
+    while (prototype !== null && prototype !== Object.prototype) {
+      for (const key of Object.getOwnPropertyNames(prototype)) {
+        if (key === 'constructor' || out[key] !== undefined) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
+        if (descriptor?.get === undefined) continue;
+        try {
+          const child = Reflect.get(value, key);
+          if (child !== undefined && typeof child !== 'function') out[key] = wire(child);
+        } catch {
+          // A generic bridge must not fail because one optional model getter is unavailable.
+        }
+      }
+      prototype = Object.getPrototypeOf(prototype) as object | null;
+    }
     return out;
   }
   throw new Error(`Unsupported bridge value: ${typeof value}`);
