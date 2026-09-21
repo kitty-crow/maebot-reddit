@@ -57,7 +57,7 @@ describe('Devvit generic Reddit controller parity', () => {
     expect(command).toEqual({
       id: command.id,
       root: 'reddit',
-      steps: [{ kind: 'call', name: 'getCurrentUser', args: [] }],
+      steps: [{ kind: 'call', name: 'getAppUser', args: [] }],
     });
     await succeed(spool, command, {
       id: 't2_mae',
