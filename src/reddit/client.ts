@@ -30,7 +30,7 @@ import {
   wireNumber,
   wireText,
 } from './devvitCompat.ts';
-import { DevvitRpcClient, DevvitRpcSpool, type DevvitWire } from './devvitRpc.ts';
+import { DevvitRpcClient, type DevvitWire } from './devvitRpc.ts';
 import { legacyRedditApi, type LegacyRedditApi } from './legacyApi.ts';
 
 export type RedditFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -43,7 +43,6 @@ export type RedditClientOptions = {
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
   readonly rpc?: DevvitRpcClient;
-  readonly spool?: DevvitRpcSpool;
 };
 
 const emptyRate: RedditRate = { used: null, remaining: null, resetMs: null };
@@ -218,14 +217,12 @@ const modmailConversationFrom = (value: DevvitWire): ModmailConversation => {
 
 export class RedditReadClient {
   private readonly rpc: DevvitRpcClient;
-  private readonly spool: DevvitRpcSpool;
   private readonly legacy: LegacyRedditApi | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
     options: RedditClientOptions = {},
   ) {
-    this.spool = options.spool ?? new DevvitRpcSpool(cfg.devvitRpcStateFile);
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
     this.legacy = legacyRedditApi(cfg, options.fetcher);
   }
