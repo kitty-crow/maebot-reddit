@@ -103,7 +103,7 @@ export type InternalApiCfg = {
 
 export const redditConfig = (): RedditCfg => ({
   auth: {
-    username: 'this_is_the_mae',
+    username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
     devvitRpcStateFile: resolve(process.cwd(), opt('REDDIT_DEVVIT_RPC_STATE_FILE', 'data/devvitRpc.pb')),
     devvitRpcTimeoutMs: positive('REDDIT_DEVVIT_RPC_TIMEOUT_MS', '120000'),
   },
