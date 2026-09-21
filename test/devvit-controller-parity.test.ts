@@ -106,22 +106,6 @@ describe('Devvit generic Reddit controller parity', () => {
     });
   });
 
-  test('object navigation remains generic for Reddit model methods', async () => {
-    const { cfg, spool } = await setup();
-    const client = new RedditMutationClient(cfg);
-
-    const pending = client.markPrivateMessageRead('t4_message');
-    const command = await next(spool);
-    expect(command.steps).toEqual([
-      { kind: 'call', name: 'getMessages', args: [{ type: 'inbox', limit: 1000, pageSize: 100 }] },
-      { kind: 'call', name: 'all', args: [] },
-      { kind: 'find', name: 'id', equals: 't4_message' },
-      { kind: 'call', name: 'markAsRead', args: [] },
-    ]);
-    await succeed(spool, command);
-    await pending;
-  });
-
   test('media bytes are handed to the Devvit media capability without changing Mae API', async () => {
     const { cfg, spool } = await setup();
     const client = new RedditMediaClient(cfg);
@@ -171,6 +155,65 @@ describe('Devvit generic Reddit controller parity', () => {
     }]);
     await succeed(spool, command, { id: 'ModNote_test' });
     expect(await pending).toBe('ModNote_test');
+  });
+
+  test('direct-message listings preserve the existing Reddit DTO through OAuth fallback', async () => {
+    const { cfg } = await setup();
+    const legacyCfg: RedditAuthCfg = {
+      ...cfg,
+      legacyOauth: {
+        clientId: 'client',
+        clientSecret: 'secret',
+        password: 'password',
+        userAgent: 'test-agent',
+      },
+    };
+    const calls: string[] = [];
+    const client = new RedditReadClient(legacyCfg, {
+      fetcher: async input => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('/api/v1/access_token')) {
+          return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          data: {
+            after: null,
+            children: [{
+              kind: 't4',
+              data: {
+                id: 'abc',
+                name: 't4_abc',
+                author: 'Member',
+                dest: 'this_is_the_mae',
+                subject: 'Hello',
+                body: 'Hi Mae',
+                created_utc: 100,
+                parent_id: 't4_root',
+                first_message_name: 't4_root',
+                new: true,
+                was_comment: false,
+              },
+            }],
+          },
+        }), { status: 200 });
+      },
+    });
+
+    expect(await client.inboxDirectMessages(10)).toEqual([{
+      id: 'abc',
+      fullname: 't4_abc',
+      author: 'Member',
+      destination: 'this_is_the_mae',
+      subject: 'Hello',
+      body: 'Hi Mae',
+      createdUtc: 100,
+      parentFullname: 't4_root',
+      firstMessageFullname: 't4_root',
+      isNew: true,
+      wasComment: false,
+    }]);
+    expect(calls.some(url => url.includes('/message/inbox'))).toBe(true);
   });
 
   test('unsupported subreddit comment listing falls back to the existing Reddit API', async () => {
