@@ -369,12 +369,10 @@ export class RedditMutationClient {
     if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
       throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
     }
-    await redditChain(this.rpc, [
-      { kind: 'call', name: 'getMessages', args: [{ type: 'inbox', limit: 1000, pageSize: 100 }] },
-      { kind: 'call', name: 'all', args: [] },
-      { kind: 'find', name: 'id', equals: fullname },
-      { kind: 'call', name: 'markAsRead', args: [] },
-    ]);
+    if (this.legacy === null) {
+      throw new Error('Reddit private-message read state requires legacy Reddit OAuth fallback');
+    }
+    await this.legacy.form('/api/read_message', new URLSearchParams({ id: fullname }));
   }
 
   public async replyModmail(
