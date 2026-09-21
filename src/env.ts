@@ -68,6 +68,7 @@ export type RedditAuthCfg = {
   readonly devvitRpcStateFile: string;
   readonly devvitRpcTimeoutMs: number;
   readonly legacyOauth?: RedditLegacyOauthCfg | null;
+  readonly transport?: 'devvit' | 'legacy';
 };
 
 export type RedditDevvitIngressCfg = {
