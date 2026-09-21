@@ -107,72 +107,6 @@ const post = (value: DevvitWire): RedditPost => {
   };
 };
 
-const comment = (value: DevvitWire): RedditComment => {
-  const raw = wireMap(value, 'Devvit comment');
-  const rawId = wireText(raw['id'], 'Devvit comment id');
-  const postId = wireText(raw['postId'], 'Devvit comment postId');
-  const parent = wireMaybeText(raw['parentId']);
-  return {
-    id: bareId(rawId, 't1_'),
-    fullname: fullname(rawId, 't1_'),
-    subreddit: wireText(raw['subredditName'], 'Devvit comment subreddit', ''),
-    submissionFullname: fullname(postId, 't3_'),
-    parentFullname: parent,
-    author: wireMaybeText(raw['authorName']),
-    body: wireText(raw['body'], 'Devvit comment body', ''),
-    permalink: wireText(raw['permalink'], 'Devvit comment permalink', ''),
-    createdUtc: wireDateSeconds(raw['createdAt'], 'Devvit comment createdAt'),
-    distinguished: wireMaybeText(raw['distinguishedBy']),
-    stickied: wireBoolean(raw['stickied'], 'Devvit comment stickied', false),
-    removedByCategory: wireBoolean(raw['removed'], 'Devvit comment removed', false) ? 'moderator' : null,
-    score: wireNumber(raw['score'], 'Devvit comment score', 0),
-    mediaUrls: [],
-  };
-};
-
-const triggeredComment = (value: DevvitWire): RedditComment => {
-  const event = wireMap(value, 'Devvit comment event');
-  const raw = wireMap(event['comment'] ?? null, 'Devvit comment event comment');
-  const subreddit = event['subreddit'] === undefined ? null : wireMap(event['subreddit'], 'Devvit comment event subreddit');
-  const postRaw = event['post'] === undefined || event['post'] === null
-    ? null
-    : wireMap(event['post'], 'Devvit comment event post');
-  const author = event['author'] === undefined || event['author'] === null
-    ? null
-    : wireMap(event['author'], 'Devvit comment event author');
-  const rawId = wireText(raw['id'], 'Devvit triggered comment id');
-  const rawPostId = wireText(raw['postId'], 'Devvit triggered comment post id');
-  const created = raw['createdAt'];
-  const createdUtc = typeof created === 'number' && Number.isFinite(created)
-    ? (created > 10_000_000_000 ? Math.floor(created / 1_000) : Math.floor(created))
-    : wireDateSeconds(created, 'Devvit triggered comment createdAt');
-  const media = Array.isArray(raw['mediaUrls'])
-    ? raw['mediaUrls'].filter((item): item is string => typeof item === 'string')
-    : [];
-  return {
-    id: bareId(rawId, 't1_'),
-    fullname: fullname(rawId, 't1_'),
-    subreddit: subreddit === null ? '' : wireText(subreddit['name'], 'Devvit triggered comment subreddit', ''),
-    submissionFullname: fullname(rawPostId, 't3_'),
-    parentFullname: wireMaybeText(raw['parentId']),
-    submissionTitle: postRaw === null ? null : wireMaybeText(postRaw['title']),
-    submissionAuthor: postRaw === null ? null : wireMaybeText(postRaw['authorName']),
-    submissionPermalink: postRaw === null ? null : wireMaybeText(postRaw['permalink']),
-    submissionFlairText: postRaw === null || postRaw['linkFlair'] === undefined
-      ? null
-      : wireMaybeText(wireMap(postRaw['linkFlair'], 'Devvit triggered post flair')['text']),
-    author: author === null ? wireMaybeText(raw['authorName']) : wireMaybeText(author['name']),
-    body: wireText(raw['body'], 'Devvit triggered comment body', ''),
-    permalink: wireText(raw['permalink'], 'Devvit triggered comment permalink', ''),
-    createdUtc,
-    distinguished: wireMaybeText(raw['distinguished']),
-    stickied: wireBoolean(raw['stickied'], 'Devvit triggered comment stickied', false),
-    removedByCategory: wireMaybeText(raw['removedByCategory']),
-    score: wireNumber(raw['score'], 'Devvit triggered comment score', 0),
-    mediaUrls: media,
-  };
-};
-
 const relationship = (value: DevvitWire): decode.RedditRelationshipUser => {
   const raw = wireMap(value, 'Devvit relationship user');
   return {
@@ -477,9 +411,13 @@ export class RedditReadClient {
   }
 
   public async newComments(name: string, limit = 25): Promise<readonly RedditComment[]> {
-    return (await this.spool.recentCommentEvents(name, limit))
-      .map(event => triggeredComment(event as DevvitWire))
-      .sort((left, right) => right.createdUtc - left.createdUtc || right.fullname.localeCompare(left.fullname));
+    if (this.legacy === null) {
+      throw new Error('Subreddit comment listings require legacy Reddit OAuth fallback');
+    }
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    return decode.comments(await this.legacy.get(
+      `/r/${encodeURIComponent(name)}/comments?limit=${safeLimit}`,
+    )).items;
   }
 
   public async newPostsHistory(name: string, maxItems = 1000): Promise<readonly RedditPost[]> {
@@ -487,7 +425,24 @@ export class RedditReadClient {
   }
 
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
-    return await this.newComments(name, Math.max(1, Math.min(1000, Math.floor(maxItems))));
+    if (this.legacy === null) {
+      throw new Error('Subreddit comment history requires legacy Reddit OAuth fallback');
+    }
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    const out: RedditComment[] = [];
+    let after: string | null = null;
+    while (out.length < max) {
+      const limit = Math.min(100, max - out.length);
+      const query = new URLSearchParams({ limit: String(limit), count: String(out.length) });
+      if (after !== null) query.set('after', after);
+      const page = decode.comments(await this.legacy.get(
+        `/r/${encodeURIComponent(name)}/comments?${query.toString()}`,
+      ));
+      out.push(...page.items.slice(0, max - out.length));
+      if (page.after === null || page.items.length === 0) break;
+      after = page.after;
+    }
+    return out;
   }
 
   public async inboxDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
