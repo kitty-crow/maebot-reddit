@@ -141,6 +141,7 @@ const commands = (value: JsonMap): JsonMap => {
 
 export class DevvitRpcSpool {
   private static readonly waiters = new Map<string, Set<() => void>>();
+  private static readonly generations = new Map<string, number>();
   private readonly store: Store;
   private readonly file: string;
 
@@ -149,28 +150,38 @@ export class DevvitRpcSpool {
     this.store = new Store(this.file, initial());
   }
 
+  private generation(): number {
+    return DevvitRpcSpool.generations.get(this.file) ?? 0;
+  }
+
   private signal(): void {
+    DevvitRpcSpool.generations.set(this.file, this.generation() + 1);
     const waiting = DevvitRpcSpool.waiters.get(this.file);
     if (waiting === undefined) return;
     DevvitRpcSpool.waiters.delete(this.file);
     for (const wake of waiting) wake();
   }
 
-  private async wait(timeoutMs: number): Promise<void> {
+  private async wait(timeoutMs: number, observedGeneration: number): Promise<void> {
     await new Promise<void>(resolveWait => {
       const waiting = DevvitRpcSpool.waiters.get(this.file) ?? new Set<() => void>();
       let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
       const finish = (): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer !== null) clearTimeout(timer);
         waiting.delete(finish);
         if (waiting.size === 0) DevvitRpcSpool.waiters.delete(this.file);
         resolveWait();
       };
       waiting.add(finish);
       DevvitRpcSpool.waiters.set(this.file, waiting);
-      const timer = setTimeout(finish, timeoutMs);
+      if (this.generation() !== observedGeneration) {
+        finish();
+        return;
+      }
+      timer = setTimeout(finish, timeoutMs);
     });
   }
 
@@ -222,9 +233,13 @@ export class DevvitRpcSpool {
     limit = 25,
     timeoutMs = 25_000,
   ): Promise<readonly DevvitRpcCommand[]> {
+    const observedGeneration = this.generation();
     const first = await this.lease(limit);
     if (first.length > 0) return first;
-    await this.wait(Math.max(1, Math.min(25_000, Math.floor(timeoutMs))));
+    await this.wait(
+      Math.max(1, Math.min(25_000, Math.floor(timeoutMs))),
+      observedGeneration,
+    );
     return await this.lease(limit);
   }
 
@@ -262,11 +277,12 @@ export class DevvitRpcSpool {
   public async waitForResult(id: string, timeoutMs: number): Promise<DevvitRpcResult | null> {
     const deadline = Date.now() + Math.max(1, Math.floor(timeoutMs));
     while (true) {
+      const observedGeneration = this.generation();
       const current = await this.take(id);
       if (current !== null) return current;
       const remaining = deadline - Date.now();
       if (remaining <= 0) return null;
-      await this.wait(remaining);
+      await this.wait(remaining, observedGeneration);
     }
   }
 
