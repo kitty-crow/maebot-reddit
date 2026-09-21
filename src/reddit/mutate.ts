@@ -9,7 +9,6 @@ import {
   devvitRpcClient,
   redditCall,
   redditChain,
-  wireArray,
   wireMap,
   wireMaybeText,
   wireText,
