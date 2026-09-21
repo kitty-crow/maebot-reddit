@@ -1,4 +1,5 @@
 import type { RedditAuthCfg } from '../env.ts';
+import { directMessages } from '../dm/decode.ts';
 import type { RedditDirectMessage } from '../dm/types.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 import * as decode from './decode.ts';
@@ -129,28 +130,6 @@ const relationship = (value: DevvitWire): decode.RedditRelationshipUser => {
     date: raw['date'] === undefined && raw['createdAt'] === undefined
       ? null
       : wireDateSeconds(raw['date'] ?? raw['createdAt'], 'Devvit relationship date'),
-  };
-};
-
-const directMessage = (value: DevvitWire): RedditDirectMessage => {
-  const raw = wireMap(value, 'Devvit private message');
-  const from = raw['from'] === undefined || raw['from'] === null ? null : wireMap(raw['from'], 'Devvit message sender');
-  const to = raw['to'] === undefined || raw['to'] === null ? null : wireMap(raw['to'], 'Devvit message destination');
-  const rawId = wireText(raw['id'], 'Devvit private message id');
-  const parent = wireMaybeText(raw['parentId']) ?? wireMaybeText(raw['parent']);
-  const root = wireMaybeText(raw['firstMessageId']) ?? wireMaybeText(raw['firstMessageName']);
-  return {
-    id: bareId(rawId, 't4_'),
-    fullname: fullname(rawId, 't4_'),
-    author: from === null ? wireMaybeText(raw['authorName']) : wireMaybeText(from['name']) ?? wireMaybeText(from['username']),
-    destination: to === null ? wireMaybeText(raw['destination']) : wireMaybeText(to['name']) ?? wireMaybeText(to['username']),
-    subject: wireText(raw['subject'], 'Devvit private message subject', ''),
-    body: wireText(raw['body'], 'Devvit private message body', ''),
-    createdUtc: wireDateSeconds(raw['created'] ?? raw['createdAt'], 'Devvit private message createdAt'),
-    parentFullname: parent,
-    firstMessageFullname: root,
-    isNew: wireBoolean(raw['isNew'], 'Devvit private message isNew', false),
-    wasComment: wireBoolean(raw['wasComment'], 'Devvit private message wasComment', false),
   };
 };
 
@@ -449,26 +428,42 @@ export class RedditReadClient {
     return out;
   }
 
+  private async legacyDirectMessages(
+    path: '/message/inbox' | '/message/unread' | '/message/sent',
+    context: string,
+    maxItems: number,
+  ): Promise<readonly RedditDirectMessage[]> {
+    if (this.legacy === null) {
+      throw new Error('Reddit direct-message listings require legacy Reddit OAuth fallback');
+    }
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    const out: RedditDirectMessage[] = [];
+    let after: string | null = null;
+    while (out.length < max) {
+      const limit = Math.min(100, max - out.length);
+      const query = new URLSearchParams({ limit: String(limit), count: String(out.length) });
+      if (after !== null) query.set('after', after);
+      const page = directMessages(
+        await this.legacy.get(`${path}?${query.toString()}`),
+        context,
+      );
+      out.push(...page.messages.slice(0, max - out.length));
+      if (page.after === null || page.messages.length === 0) break;
+      after = page.after;
+    }
+    return out;
+  }
+
   public async inboxDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const safeLimit = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    const value = await redditChain(this.rpc, [
-      { kind: 'call', name: 'getMessages', args: [{ type: 'inbox', limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
-      { kind: 'call', name: 'all', args: [] },
-    ]);
-    return wireArray(value, 'Devvit inbox messages').map(directMessage);
+    return await this.legacyDirectMessages('/message/inbox', 'private message inbox', maxItems);
   }
 
   public async unreadDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    return (await this.inboxDirectMessages(maxItems)).filter(message => message.isNew);
+    return await this.legacyDirectMessages('/message/unread', 'unread private messages', maxItems);
   }
 
   public async sentDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const safeLimit = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    const value = await redditChain(this.rpc, [
-      { kind: 'call', name: 'getMessages', args: [{ type: 'sent', limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
-      { kind: 'call', name: 'all', args: [] },
-    ]);
-    return wireArray(value, 'Devvit sent messages').map(directMessage);
+    return await this.legacyDirectMessages('/message/sent', 'sent private messages', maxItems);
   }
 
   public async modmailConversations(name: string, limit = 100): Promise<ModmailConversationPage> {
