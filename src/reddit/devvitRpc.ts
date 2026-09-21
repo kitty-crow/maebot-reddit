@@ -13,7 +13,8 @@ export type DevvitWire =
 
 export type DevvitRpcStep =
   | { readonly kind: 'get'; readonly name: string }
-  | { readonly kind: 'call'; readonly name: string; readonly args: readonly DevvitWire[] };
+  | { readonly kind: 'call'; readonly name: string; readonly args: readonly DevvitWire[] }
+  | { readonly kind: 'find'; readonly name: string; readonly equals: DevvitWire };
 
 export type DevvitRpcCommand = {
   readonly id: string;
@@ -74,6 +75,10 @@ const step = (value: Json | undefined): DevvitRpcStep | null => {
   const kind = text(value['kind']);
   const name = text(value['name']);
   if (kind === 'get') return { kind, name };
+  if (kind === 'find') {
+    if (value['equals'] === undefined) return null;
+    return { kind, name, equals: wire(value['equals']) };
+  }
   if (kind !== 'call' || !Array.isArray(value['args'])) return null;
   return { kind, name, args: value['args'].map(item => wire(item)) };
 };
@@ -111,9 +116,11 @@ const stored = (id: string, value: Json | undefined): StoredCommand | null => {
   };
 };
 
-const stepJson = (value: DevvitRpcStep): JsonMap => value.kind === 'get'
-  ? { kind: value.kind, name: value.name }
-  : { kind: value.kind, name: value.name, args: [...value.args] };
+const stepJson = (value: DevvitRpcStep): JsonMap => {
+  if (value.kind === 'get') return { kind: value.kind, name: value.name };
+  if (value.kind === 'find') return { kind: value.kind, name: value.name, equals: value.equals };
+  return { kind: value.kind, name: value.name, args: [...value.args] };
+};
 
 const resultJson = (value: DevvitRpcResult): JsonMap => ({
   id: value.id,
