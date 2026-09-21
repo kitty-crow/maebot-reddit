@@ -9,6 +9,7 @@ import {
   dailyReviewApiConfig,
   internalApiConfig,
   redditConfig,
+  redditDevvitIngressConfig,
   redditDmConfig,
   redditModerationConfig,
   twitterApiConfig,
@@ -40,6 +41,8 @@ import { CommunityProjectionStore } from './reputation/communityProjectionStore.
 import { ReputationPostMirrorGate } from './reputation/mirrorGate.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
+import { RedditDevvitIngressServer } from './reddit/devvitIngress.ts';
+import { DevvitRpcSpool } from './reddit/devvitRpc.ts';
 import { safeError } from './reddit/error.ts';
 import { RedditMediaClient } from './reddit/media.ts';
 import { RedditMutationClient } from './reddit/mutate.ts';
@@ -57,6 +60,7 @@ const dmCfg = redditDmConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
+const devvitIngressCfg = redditDevvitIngressConfig();
 if (dmCfg !== null && moderationCfg === null) {
   throw new Error('REDDIT_DM_ENABLED requires REDDIT_MODERATION_ENABLED so private moderation stays canonical');
 }
@@ -82,6 +86,11 @@ const moderationCommunities = moderationCfg === null
     ? [redditCfg.sourceSubreddit]
     : [redditCfg.sourceSubreddit, redditCfg.primarySubreddit]
   : [canonicalSourceSubreddit, canonicalTargetSubreddit];
+
+const devvitRpc = new DevvitRpcSpool(redditCfg.auth.devvitRpcStateFile);
+const devvitIngress = new RedditDevvitIngressServer(devvitIngressCfg, devvitRpc);
+devvitIngress.start();
+console.log(`Reddit Devvit ingress listening on ${devvitIngress.address()}.`);
 
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
@@ -547,6 +556,7 @@ const stop = (): void => {
   clearInterval(timer);
   stopMemberModNotes();
   internal?.stop();
+  devvitIngress.stop();
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
