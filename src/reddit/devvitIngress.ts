@@ -83,21 +83,6 @@ export class RedditDevvitIngressServer {
       return json({ commands });
     }
 
-    if (req.method === 'POST' && url.pathname === '/v1/devvit/event/comment') {
-      let parsed: Json;
-      try {
-        parsed = parseJson(await req.text());
-      } catch {
-        return json({ error: 'invalid json' }, 400);
-      }
-      try {
-        await this.spool.recordComment(parsed);
-      } catch (error) {
-        return json({ error: error instanceof Error ? error.message : 'invalid comment event' }, 400);
-      }
-      return json({ ok: true });
-    }
-
     if (req.method === 'POST' && url.pathname === '/v1/devvit/result') {
       let parsed: Json;
       try {
