@@ -9,6 +9,7 @@
     "reddit": {
       "enable": true
     },
+    "redis": true,
     "http": {
       "enable": true,
       "domains": [
@@ -26,14 +27,13 @@
     }
   },
   "triggers": {
+    "onAppInstall": "/internal/triggers/app-install",
+    "onAppUpgrade": "/internal/triggers/app-upgrade",
     "onCommentSubmit": "/internal/triggers/comment-submit"
   },
   "scheduler": {
     "tasks": {
-      "mae-reddit-rpc": {
-        "endpoint": "/internal/scheduler/mae-reddit-rpc",
-        "cron": "*/5 * * * * *"
-      }
+      "mae-reddit-rpc": "/internal/scheduler/mae-reddit-rpc"
     }
   },
   "scripts": {
