@@ -298,7 +298,7 @@ export class RedditReadClient {
   }
 
   public async me(): Promise<RedditAccount> {
-    const raw = wireMap(await redditCall(this.rpc, 'getCurrentUser'), 'Devvit current user');
+    const raw = wireMap(await redditCall(this.rpc, 'getAppUser'), 'Devvit current user');
     return {
       id: bareId(wireText(raw['id'], 'Devvit current user id'), 't2_'),
       name: wireText(raw['username'], 'Devvit current username', this.cfg.username),
@@ -381,18 +381,8 @@ export class RedditReadClient {
     return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
-  public async emojis(name: string): Promise<readonly RedditEmoji[]> {
-    const value = await redditChain(this.rpc, [
-      { kind: 'call', name: 'getSubredditByName', args: [name] },
-      { kind: 'call', name: 'getEmojis', args: [] },
-    ]);
-    return mapArray(value, 'Devvit subreddit emojis').map(raw => ({
-      name: wireText(raw['name'], 'Devvit emoji name'),
-      url: wireText(raw['url'], 'Devvit emoji url'),
-      modFlairOnly: wireBoolean(raw['modFlairOnly'], 'Devvit emoji modFlairOnly', false),
-      postFlairAllowed: wireBoolean(raw['postFlairAllowed'], 'Devvit emoji postFlairAllowed', true),
-      userFlairAllowed: wireBoolean(raw['userFlairAllowed'], 'Devvit emoji userFlairAllowed', true),
-    }));
+  public async emojis(_name: string): Promise<readonly RedditEmoji[]> {
+    throw new Error('Reddit Devvit 0.14.4 does not expose custom emoji inventory through the Reddit client');
   }
 
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
