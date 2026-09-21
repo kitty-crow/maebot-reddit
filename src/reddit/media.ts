@@ -43,12 +43,11 @@ const dataUrl = (mimeType: string, bytes: Uint8Array): string => {
   return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`;
 };
 
-const uploadType = (mimeType: string): 'image' | 'gif' | 'video' => {
+const uploadType = (mimeType: string): 'image' | 'gif' => {
   const type = mimeType.trim().toLowerCase();
   if (type === 'image/gif') return 'gif';
   if (type.startsWith('image/')) return 'image';
-  if (type === 'video/mp4') return 'video';
-  throw new Error(`Unsupported Reddit media type ${mimeType}`);
+  throw new Error(`Devvit media upload does not support ${mimeType}`);
 };
 
 const createdPost = (value: Awaited<ReturnType<typeof redditCall>>): RedditMediaCreatedPost => {
@@ -93,10 +92,8 @@ export class RedditMediaClient {
   }
 
   public async uploadMedia(name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
-    if (this.forceLegacy) {
-      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
-      return await this.legacy.uploadMedia(name, mimeType, bytes);
-    }
+    if (this.legacy !== null) return await this.legacy.uploadMedia(name, mimeType, bytes);
+    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
     const value = await mediaCall(this.rpc, 'upload', [{
       url: dataUrl(mimeType, bytes),
       type: uploadType(mimeType),
@@ -115,8 +112,7 @@ export class RedditMediaClient {
     bytes: Uint8Array,
     videoPosterUrl: string | null = null,
   ): Promise<RedditMediaCreatedPost> {
-    if (this.forceLegacy) {
-      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+    if (this.legacy !== null) {
       return await this.legacy.submitMedia(
         subreddit,
         title,
@@ -128,8 +124,12 @@ export class RedditMediaClient {
         videoPosterUrl,
       );
     }
+    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
+    if (body.trim().length > 0 || mimeType === 'video/mp4') {
+      throw new Error('This Reddit media submission requires the legacy Reddit OAuth fallback');
+    }
     const mediaUrl = await this.uploadMedia(name, mimeType, bytes);
-    const kind = mimeType === 'video/mp4' ? 'video' : 'image';
+    const kind = 'image';
     return createdPost(await redditCall(this.rpc, 'submitPost', [{
       subredditName: subreddit,
       title,
@@ -148,10 +148,11 @@ export class RedditMediaClient {
     flairTemplateId: string | null,
     media: readonly RedditGalleryMedia[],
   ): Promise<RedditMediaCreatedPost> {
-    if (this.forceLegacy) {
-      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+    if (this.legacy !== null) {
       return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
     }
+    if (this.forceLegacy) throw new Error('Legacy Reddit media transport is not configured');
+    throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
     if (media.length < 2 || media.length > 20) {
       throw new Error('Reddit galleries require between 2 and 20 images');
     }
