@@ -1,12 +1,18 @@
 import type { RedditAuthCfg } from '../env.ts';
 import { assertRedditStateMutationAllowed } from '../reputation/manualOverrideGate.ts';
-import type { Json } from '../types/json.ts';
-import { isMap, parseJson } from '../types/json.ts';
-import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
-import { RedditError, statusKind } from './error.ts';
-import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
-import { rateLimitedRedditFetch } from './rateBudget.ts';
+import type { RedditEmoji } from './emoji.ts';
+import type { RedditRate } from './rate.ts';
 import type { RedditFlairTemplate } from './types.ts';
+import {
+  devvitRpcClient,
+  redditCall,
+  redditChain,
+  wireArray,
+  wireMap,
+  wireMaybeText,
+  wireText,
+} from './devvitCompat.ts';
+import { DevvitRpcClient } from './devvitRpc.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RedditMutationSleep = (ms: number) => Promise<void>;
@@ -18,6 +24,7 @@ export type RedditMutationOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
+  readonly rpc?: DevvitRpcClient;
 };
 
 export type RedditCreatedPost = {
@@ -37,129 +44,36 @@ export type RedditEmojiMedia = {
   readonly mimeType: string;
 };
 
-type Token = {
-  readonly value: string;
-  readonly until: number;
-};
+const emptyRate: RedditRate = { used: null, remaining: null, resetMs: null };
 
-const api = 'https://oauth.reddit.com';
-const tokenApi = 'https://www.reddit.com/api/v1/access_token';
-const defaultSleep: RedditMutationSleep = async ms => await new Promise(resolve => setTimeout(resolve, ms));
-
-const pathFor = (subreddit: string, suffix: string): string =>
-  `/r/${encodeURIComponent(subreddit)}${suffix}`;
-
-const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
-const optionalText = (value: Json | undefined): string | null => typeof value === 'string' ? value : null;
-
-const jsonPayload = (raw: string, context: string): Json => {
-  if (raw.trim().length === 0) return null;
-  try {
-    return parseJson(raw);
-  } catch {
-    throw new RedditError(`${context} returned invalid JSON`, 'invalid_response');
-  }
-};
-
-const firstApiError = (value: Json): string | null => {
-  if (!isMap(value)) return null;
-  const envelope = value['json'];
-  if (!isMap(envelope)) return null;
-  const errors = envelope['errors'];
-  if (!Array.isArray(errors) || errors.length === 0) return null;
-  const first = errors[0];
-  if (!Array.isArray(first)) return 'Reddit API returned an application error';
-  const parts = first.filter(part => typeof part === 'string').map(part => String(part));
-  return parts.length === 0 ? 'Reddit API returned an application error' : parts.join(': ');
-};
-
-const createdPost = (value: Json): RedditCreatedPost => {
-  if (!isMap(value)) throw new RedditError('Reddit submit response was not an object', 'invalid_response');
-  const envelope = value['json'];
-  if (!isMap(envelope)) throw new RedditError('Reddit submit response did not contain json', 'invalid_response');
-  const data = envelope['data'];
-  if (!isMap(data)) throw new RedditError('Reddit submit response did not contain data', 'invalid_response');
-  const id = text(data['id']);
-  if (id.length === 0) throw new RedditError('Reddit submit response did not contain a post id', 'invalid_response');
-  const fullname = text(data['name']) || `t3_${id}`;
-  return { id, fullname, url: text(data['url']) };
-};
-
-const selectedUserFlair = (value: Json, username: string): RedditSelectedUserFlair => {
-  if (!isMap(value) || !isMap(value['current'])) {
-    throw new RedditError(`Reddit flair selector did not return current flair for u/${username}`, 'invalid_response');
-  }
-  const current = value['current'];
+const post = (value: Awaited<ReturnType<typeof redditCall>>): RedditCreatedPost => {
+  const raw = wireMap(value, 'Devvit created post');
+  const id = wireText(raw['id'], 'Devvit created post id');
   return {
-    templateId: optionalText(current['flair_template_id']),
-    text: optionalText(current['flair_text']) ?? optionalText(current['text']),
+    id: id.startsWith('t3_') ? id.slice(3) : id,
+    fullname: id.startsWith('t3_') ? id : `t3_${id}`,
+    url: wireText(raw['url'], 'Devvit created post url', ''),
   };
 };
 
-const add = (form: URLSearchParams, name: string, value: string | null): void => {
-  if (value !== null && value.length > 0) form.set(name, value);
-};
-
-const modmailConversationId = (id: string): string => {
+const validModmailId = (id: string): string => {
   const value = id.trim().replace(/^ModmailConversation_/u, '');
   if (!/^[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit modmail conversation id ${id}`);
   return value;
 };
 
-const emojiName = (name: string): string => {
-  const value = name.trim();
-  if (!/^[A-Za-z0-9_-]{1,24}$/u.test(value)) throw new Error(`Invalid Reddit emoji name ${name}`);
-  return value;
-};
-
-const emojiFile = (media: RedditEmojiMedia): RedditEmojiMedia => {
-  const filename = media.filename.trim();
-  const mimeType = media.mimeType.trim().toLowerCase();
-  if (filename.length === 0 || filename.length > 255 || filename.includes('/') || filename.includes('\\')) {
-    throw new Error(`Invalid Reddit emoji filename ${media.filename}`);
-  }
-  if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') {
-    throw new Error(`Unsupported Reddit emoji MIME type ${media.mimeType}`);
-  }
-  if (media.bytes.byteLength === 0) throw new Error('Reddit emoji image is empty');
-  return { bytes: media.bytes, filename, mimeType };
-};
-
-const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchParams({
-  mod_flair_only: String(emoji.modFlairOnly),
-  name: emojiName(emoji.name),
-  post_flair_allowed: String(emoji.postFlairAllowed),
-  user_flair_allowed: String(emoji.userFlairAllowed),
-});
-
 export class RedditMutationClient {
-  private readonly fetcher: RedditMutationFetch;
-  private readonly uploadFetcher: RedditMutationFetch;
-  private readonly sleep: RedditMutationSleep;
-  private readonly random: () => number;
-  private readonly maxAttempts: number;
-  private tokenCache: Token | null = null;
-  private latestRate: RedditRate = { used: null, remaining: null, resetMs: null };
+  private readonly rpc: DevvitRpcClient;
 
   public constructor(
-    private readonly cfg: RedditAuthCfg,
+    cfg: RedditAuthCfg,
     options: RedditMutationOptions = {},
   ) {
-    this.sleep = options.sleep ?? defaultSleep;
-    const rawFetcher = options.fetcher ?? fetch;
-    this.fetcher = options.fetcher === undefined
-      ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, {
-          reserve: options.rateReserve,
-          sleep: this.sleep,
-        })
-      : rawFetcher;
-    this.uploadFetcher = options.uploadFetcher ?? fetch;
-    this.random = options.random ?? Math.random;
-    this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
+    this.rpc = options.rpc ?? devvitRpcClient(cfg);
   }
 
   public rate(): RedditRate {
-    return this.latestRate;
+    return emptyRate;
   }
 
   public async submitSelf(
@@ -168,17 +82,13 @@ export class RedditMutationClient {
     body: string,
     flairTemplateId: string | null = null,
   ): Promise<RedditCreatedPost> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      kind: 'self',
-      resubmit: 'true',
-      sendreplies: 'true',
-      sr: subreddit,
-      text: body,
+    return post(await redditCall(this.rpc, 'submitPost', [{
+      subredditName: subreddit,
       title,
-    });
-    add(form, 'flair_id', flairTemplateId);
-    return createdPost(await this.form('/api/submit', form));
+      text: body,
+      sendreplies: true,
+      ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
+    }]));
   }
 
   public async crosspost(
@@ -187,18 +97,14 @@ export class RedditMutationClient {
     title: string,
     flairTemplateId: string | null = null,
   ): Promise<RedditCreatedPost> {
-    const fullname = sourcePostId.startsWith('t3_') ? sourcePostId : `t3_${sourcePostId}`;
-    const form = new URLSearchParams({
-      api_type: 'json',
-      crosspost_fullname: fullname,
-      kind: 'crosspost',
-      nsfw: 'false',
-      sendreplies: 'true',
-      sr: subreddit,
+    const postId = sourcePostId.startsWith('t3_') ? sourcePostId : `t3_${sourcePostId}`;
+    return post(await redditCall(this.rpc, 'crosspost', [{
+      subredditName: subreddit,
+      postId,
       title,
-    });
-    add(form, 'flair_id', flairTemplateId);
-    return createdPost(await this.form('/api/submit', form));
+      sendreplies: true,
+      ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
+    }]));
   }
 
   public async createFlairTemplate(
@@ -206,66 +112,35 @@ export class RedditMutationClient {
     kind: 'user' | 'post',
     template: RedditFlairTemplate,
   ): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      flair_type: kind === 'user' ? 'USER_FLAIR' : 'LINK_FLAIR',
-      mod_only: String(template.modOnly),
+    const options = {
+      subredditName: subreddit,
       text: template.text,
-      text_editable: String(template.textEditable),
-    });
-    add(form, 'css_class', template.cssClass);
-    add(form, 'background_color', template.backgroundColour);
-    if (template.textColour === 'light' || template.textColour === 'dark') form.set('text_color', template.textColour);
-    if (template.allowableContent === 'all' || template.allowableContent === 'emoji' || template.allowableContent === 'text') {
-      form.set('allowable_content', template.allowableContent);
-    }
-    if (template.maxEmojis !== null && Number.isSafeInteger(template.maxEmojis) && template.maxEmojis >= 1 && template.maxEmojis <= 10) {
-      form.set('max_emojis', String(template.maxEmojis));
-    }
-    await this.form(pathFor(subreddit, '/api/flairtemplate_v2'), form);
+      modOnly: template.modOnly,
+      allowUserEdits: template.textEditable,
+      ...(template.backgroundColour === null ? {} : { backgroundColor: template.backgroundColour }),
+      ...(template.textColour === 'light' || template.textColour === 'dark'
+        ? { textColor: template.textColour }
+        : {}),
+      ...(template.allowableContent === 'all'
+        || template.allowableContent === 'emoji'
+        || template.allowableContent === 'text'
+        ? { allowableContent: template.allowableContent }
+        : {}),
+      ...(template.maxEmojis === null ? {} : { maxEmojis: template.maxEmojis }),
+    };
+    await redditCall(this.rpc, kind === 'user' ? 'createUserFlairTemplate' : 'createPostFlairTemplate', [options]);
   }
 
   public async uploadEmoji(
-    subreddit: string,
-    emoji: RedditEmoji,
-    input: RedditEmojiMedia,
+    _subreddit: string,
+    _emoji: RedditEmoji,
+    _input: RedditEmojiMedia,
   ): Promise<void> {
-    const media = emojiFile(input);
-    const name = emojiName(emoji.name);
-    const lease = redditEmojiUploadLease(await this.form(
-      `/api/v1/${encodeURIComponent(subreddit)}/emoji_asset_upload_s3.json`,
-      new URLSearchParams({ filepath: media.filename, mimetype: media.mimeType }),
-    ));
-
-    const upload = new FormData();
-    for (const [field, value] of lease.fields) upload.append(field, value);
-    upload.append('file', new Blob([media.bytes], { type: media.mimeType }), media.filename);
-
-    let response: Response;
-    try {
-      response = await this.uploadFetcher(lease.uploadUrl, { method: 'POST', body: upload });
-    } catch {
-      throw new RedditError(`Reddit emoji S3 upload failed for ${name}`, 'network');
-    }
-    if (!response.ok) {
-      throw new RedditError(
-        `Reddit emoji S3 upload failed for ${name}`,
-        statusKind(response.status),
-        response.status,
-        retryAfterMs(response.headers),
-      );
-    }
-
-    const form = permissionForm({ ...emoji, name });
-    form.set('s3_key', lease.key);
-    await this.form(`/api/v1/${encodeURIComponent(subreddit)}/emoji.json`, form);
+    throw new Error('Reddit Devvit 0.14.4 does not expose emoji asset upload through the Reddit client');
   }
 
-  public async updateEmojiPermissions(subreddit: string, emoji: RedditEmoji): Promise<void> {
-    await this.form(
-      `/api/v1/${encodeURIComponent(subreddit)}/emoji_permissions`,
-      permissionForm(emoji),
-    );
+  public async updateEmojiPermissions(_subreddit: string, _emoji: RedditEmoji): Promise<void> {
+    throw new Error('Reddit Devvit 0.14.4 does not expose emoji permission management through the Reddit client');
   }
 
   public async setUserFlairTemplate(
@@ -275,16 +150,27 @@ export class RedditMutationClient {
     customText: string | null,
   ): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    const form = new URLSearchParams({ api_type: 'json', flair_template_id: templateId, name: username });
-    add(form, 'text', customText);
-    await this.form(pathFor(subreddit, '/api/selectflair'), form);
+    await redditCall(this.rpc, 'setUserFlair', [{
+      subredditName: subreddit,
+      username,
+      flairTemplateId: templateId,
+      ...(customText === null ? {} : { text: customText }),
+    }]);
   }
 
   public async userFlairSelection(subreddit: string, username: string): Promise<RedditSelectedUserFlair> {
-    return selectedUserFlair(await this.form(
-      pathFor(subreddit, '/api/flairselector'),
-      new URLSearchParams({ api_type: 'json', name: username }),
-    ), username);
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getSubredditByName', args: [subreddit] },
+      { kind: 'call', name: 'getUserFlair', args: [{ usernames: [username] }] },
+    ]);
+    const raw = wireMap(value, 'Devvit user flair selection');
+    const users = raw['users'];
+    if (!Array.isArray(users) || users.length === 0) return { templateId: null, text: null };
+    const selected = wireMap(users[0] ?? null, 'Devvit selected user flair');
+    return {
+      templateId: wireMaybeText(selected['flairTemplateId']) ?? wireMaybeText(selected['templateId']),
+      text: wireMaybeText(selected['flairText']) ?? wireMaybeText(selected['text']),
+    };
   }
 
   public async setUserFlairDirect(
@@ -294,13 +180,12 @@ export class RedditMutationClient {
     cssClass: string | null,
   ): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    const form = new URLSearchParams({
-      api_type: 'json',
-      name: username,
+    await redditCall(this.rpc, 'setUserFlair', [{
+      subredditName: subreddit,
+      username,
       text: flairText ?? '',
-      css_class: cssClass ?? '',
-    });
-    await this.form(pathFor(subreddit, '/api/flair'), form);
+      cssClass: cssClass ?? '',
+    }]);
   }
 
   public async setPostFlairTemplate(
@@ -309,17 +194,16 @@ export class RedditMutationClient {
     templateId: string,
     customText: string | null = null,
   ): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      flair_template_id: templateId,
-      link: postId.startsWith('t3_') ? postId : `t3_${postId}`,
-    });
-    add(form, 'text', customText);
-    await this.form(pathFor(subreddit, '/api/selectflair'), form);
+    await redditCall(this.rpc, 'setPostFlair', [{
+      subredditName: subreddit,
+      postId: postId.startsWith('t3_') ? postId : `t3_${postId}`,
+      flairTemplateId: templateId,
+      ...(customText === null ? {} : { text: customText }),
+    }]);
   }
 
   public async remove(fullname: string): Promise<void> {
-    await this.form('/api/remove', new URLSearchParams({ api_type: 'json', id: fullname, spam: 'false' }));
+    await redditCall(this.rpc, 'remove', [fullname, false]);
   }
 
   public async banUser(
@@ -329,47 +213,44 @@ export class RedditMutationClient {
     note: string,
   ): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    const form = new URLSearchParams({
-      api_type: 'json',
-      name: username,
-      type: 'banned',
-      ban_reason: reason.slice(0, 100),
+    await redditCall(this.rpc, 'banUser', [{
+      subredditName: subreddit,
+      username,
+      reason: reason.slice(0, 100),
       note: note.slice(0, 300),
-    });
-    await this.form(pathFor(subreddit, '/api/friend'), form);
+    }]);
   }
 
   public async unbanUser(subreddit: string, username: string): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
-      api_type: 'json',
-      name: username,
-      type: 'banned',
-    }));
+    await redditCall(this.rpc, 'unbanUser', [username, subreddit]);
   }
 
   public async sendPrivateMessage(username: string, subject: string, body: string): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
+    await redditCall(this.rpc, 'sendPrivateMessage', [{
       to: username,
       subject: subject.slice(0, 100),
       text: body,
-    });
-    await this.form('/api/compose', form);
+    }]);
   }
 
   public async replyToPrivateMessage(fullname: string, body: string): Promise<void> {
-    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
-    await this.form('/api/comment', new URLSearchParams({
-      api_type: 'json',
-      thing_id: fullname,
-      text: body,
-    }));
+    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
+      throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
+    }
+    await redditCall(this.rpc, 'submitComment', [{ id: fullname, text: body }]);
   }
 
   public async markPrivateMessageRead(fullname: string): Promise<void> {
-    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
-    await this.form('/api/read_message', new URLSearchParams({ id: fullname }));
+    if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
+      throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
+    }
+    await redditChain(this.rpc, [
+      { kind: 'call', name: 'getMessages', args: [{ type: 'inbox', limit: 1000, pageSize: 100 }] },
+      { kind: 'call', name: 'all', args: [] },
+      { kind: 'find', name: 'id', equals: fullname },
+      { kind: 'call', name: 'markAsRead', args: [] },
+    ]);
   }
 
   public async replyModmail(
@@ -377,161 +258,67 @@ export class RedditMutationClient {
     body: string,
     options: { readonly hidden?: boolean; readonly internal?: boolean } = {},
   ): Promise<void> {
-    const id = modmailConversationId(conversationId);
-    const textBody = body.trim();
-    if (textBody.length === 0) throw new Error('Reddit modmail reply body cannot be empty');
-    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}`, new URLSearchParams({
-      api_type: 'json',
-      body: textBody,
-      isAuthorHidden: String(options.hidden === true),
-      isInternal: String(options.internal === true),
-    }));
+    const id = validModmailId(conversationId);
+    const text = body.trim();
+    if (text.length === 0) throw new Error('Reddit modmail reply body cannot be empty');
+    await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      {
+        kind: 'call',
+        name: 'reply',
+        args: [{
+          conversationId: id,
+          body: text,
+          isAuthorHidden: options.hidden === true,
+          isInternal: options.internal === true,
+        }],
+      },
+    ]);
   }
 
   public async archiveModmail(conversationId: string): Promise<void> {
-    const id = modmailConversationId(conversationId);
-    await this.form(
-      `/api/mod/conversations/${encodeURIComponent(id)}/archive`,
-      new URLSearchParams({ api_type: 'json' }),
-    );
+    await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'archiveConversation', args: [validModmailId(conversationId)] },
+    ]);
   }
 
   public async muteModmail(conversationId: string, hours: 72 | 168 | 672): Promise<void> {
-    const id = modmailConversationId(conversationId);
-    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}/mute`, new URLSearchParams({
-      api_type: 'json',
-      num_hours: String(hours),
-    }));
+    await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      {
+        kind: 'call',
+        name: 'muteConversation',
+        args: [{ conversationId: validModmailId(conversationId), numHours: hours }],
+      },
+    ]);
   }
 
   public async unmuteModmail(conversationId: string): Promise<void> {
-    const id = modmailConversationId(conversationId);
-    await this.form(`/api/mod/conversations/${encodeURIComponent(id)}/unmute`, new URLSearchParams({ api_type: 'json' }));
+    await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'unmuteConversation', args: [validModmailId(conversationId)] },
+    ]);
   }
 
   public async muteUser(subreddit: string, username: string, note: string): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    const form = new URLSearchParams({
-      api_type: 'json',
-      name: username,
-      type: 'muted',
-      duration: '28',
+    await redditCall(this.rpc, 'muteUser', [{
+      subredditName: subreddit,
+      username,
       note: note.slice(0, 300),
-    });
-    await this.form(pathFor(subreddit, '/api/friend'), form);
+    }]);
   }
 
   public async unmuteUser(subreddit: string, username: string): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
-      api_type: 'json',
-      name: username,
-      type: 'muted',
-    }));
+    await redditCall(this.rpc, 'unmuteUser', [username, subreddit]);
   }
 
   public async sticky(postId: string, slot: 1 | 2): Promise<void> {
-    const form = new URLSearchParams({
-      api_type: 'json',
-      id: postId.startsWith('t3_') ? postId : `t3_${postId}`,
-      num: String(slot),
-      state: 'true',
-      to_profile: 'false',
-    });
-    await this.form('/api/set_subreddit_sticky', form);
-  }
-
-  private async token(force = false): Promise<string> {
-    const now = Date.now();
-    if (!force && this.tokenCache !== null && this.tokenCache.until > now + 60_000) return this.tokenCache.value;
-    const body = new URLSearchParams({
-      grant_type: 'password',
-      username: this.cfg.username,
-      password: this.cfg.password,
-    });
-    const basic = Buffer.from(`${this.cfg.clientId}:${this.cfg.clientSecret}`).toString('base64');
-    let response: Response;
-    try {
-      response = await this.fetcher(tokenApi, {
-        method: 'POST',
-        headers: {
-          authorization: `Basic ${basic}`,
-          'content-type': 'application/x-www-form-urlencoded',
-          'user-agent': this.cfg.userAgent,
-        },
-        body,
-      });
-    } catch {
-      throw new RedditError('OAuth token request failed at the network boundary', 'network');
-    }
-    if (!response.ok) {
-      throw new RedditError('OAuth token request was rejected', statusKind(response.status), response.status, retryAfterMs(response.headers));
-    }
-    const payload = jsonPayload(await response.text(), 'OAuth token request');
-    if (!isMap(payload)) throw new RedditError('OAuth token response was not an object', 'invalid_response', response.status);
-    const value = text(payload['access_token']);
-    const seconds = payload['expires_in'];
-    if (value.length === 0 || typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
-      throw new RedditError('OAuth token response was incomplete', 'invalid_response', response.status);
-    }
-    this.tokenCache = { value, until: now + Math.floor(seconds * 1_000) };
-    return value;
-  }
-
-  private async form(path: string, body: URLSearchParams): Promise<Json> {
-    return await this.request(path, body, false);
-  }
-
-  private async request(path: string, body: URLSearchParams, reauthed: boolean): Promise<Json> {
-    const url = new URL(`${api}${path}`);
-    if (!url.searchParams.has('raw_json')) url.searchParams.set('raw_json', '1');
-
-    let last: RedditError | null = null;
-    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const token = await this.token(reauthed && attempt === 0);
-      let response: Response;
-      try {
-        response = await this.fetcher(url, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'content-type': 'application/x-www-form-urlencoded',
-            'user-agent': this.cfg.userAgent,
-          },
-          body,
-        });
-      } catch {
-        last = new RedditError('Reddit mutation request failed at the network boundary', 'network');
-        if (attempt + 1 < this.maxAttempts) {
-          await this.sleep(backoffMs(attempt, this.random));
-          continue;
-        }
-        throw last;
-      }
-
-      this.latestRate = rateFrom(response.headers);
-      const raw = await response.text();
-      if (response.ok) {
-        const payload = jsonPayload(raw, `POST ${url.pathname}`);
-        const applicationError = firstApiError(payload);
-        if (applicationError !== null) {
-          throw new RedditError(`POST ${url.pathname} rejected: ${applicationError}`, 'invalid_response', response.status);
-        }
-        return payload;
-      }
-
-      if (response.status === 401 && !reauthed) {
-        this.tokenCache = null;
-        return await this.request(path, body, true);
-      }
-
-      const kind = statusKind(response.status);
-      const retry = retryAfterMs(response.headers);
-      last = new RedditError(`POST ${url.pathname} failed`, kind, response.status, retry);
-      const retryable = kind === 'rate_limit' || kind === 'server';
-      if (!retryable || attempt + 1 >= this.maxAttempts) throw last;
-      await this.sleep(retry ?? backoffMs(attempt, this.random));
-    }
-    throw last ?? new RedditError('Reddit mutation request failed', 'unknown');
+    await redditChain(this.rpc, [
+      { kind: 'call', name: 'getPostById', args: [postId.startsWith('t3_') ? postId : `t3_${postId}`] },
+      { kind: 'call', name: 'sticky', args: [slot] },
+    ]);
   }
 }
