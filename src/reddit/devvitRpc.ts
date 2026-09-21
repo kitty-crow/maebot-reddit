@@ -153,10 +153,38 @@ const comments = (value: JsonMap): JsonMap => {
 };
 
 export class DevvitRpcSpool {
+  private static readonly waiters = new Map<string, Set<() => void>>();
   private readonly store: Store;
+  private readonly file: string;
 
   public constructor(file = resolve(process.cwd(), 'data/devvitRpc.pb')) {
-    this.store = new Store(file, initial());
+    this.file = resolve(file);
+    this.store = new Store(this.file, initial());
+  }
+
+  private signal(): void {
+    const waiting = DevvitRpcSpool.waiters.get(this.file);
+    if (waiting === undefined) return;
+    DevvitRpcSpool.waiters.delete(this.file);
+    for (const wake of waiting) wake();
+  }
+
+  private async wait(timeoutMs: number): Promise<void> {
+    await new Promise<void>(resolveWait => {
+      const waiting = DevvitRpcSpool.waiters.get(this.file) ?? new Set<() => void>();
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        waiting.delete(finish);
+        if (waiting.size === 0) DevvitRpcSpool.waiters.delete(this.file);
+        resolveWait();
+      };
+      waiting.add(finish);
+      DevvitRpcSpool.waiters.set(this.file, waiting);
+      const timer = setTimeout(finish, timeoutMs);
+    });
   }
 
   public async enqueue(
@@ -178,6 +206,7 @@ export class DevvitRpcSpool {
       });
       return value;
     });
+    this.signal();
     return id;
   }
 
@@ -200,6 +229,16 @@ export class DevvitRpcSpool {
       return value;
     });
     return out;
+  }
+
+  public async waitForWork(
+    limit = 25,
+    timeoutMs = 25_000,
+  ): Promise<readonly DevvitRpcCommand[]> {
+    const first = await this.lease(limit);
+    if (first.length > 0) return first;
+    await this.wait(Math.max(1, Math.min(25_000, Math.floor(timeoutMs))));
+    return await this.lease(limit);
   }
 
   public async complete(input: DevvitRpcResult): Promise<void> {
