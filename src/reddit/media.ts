@@ -7,6 +7,7 @@ import {
   wireText,
 } from './devvitCompat.ts';
 import { DevvitRpcClient } from './devvitRpc.ts';
+import { LegacyRedditMediaClient } from './legacyMedia.ts';
 
 export type RedditMediaFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -63,17 +64,39 @@ const createdPost = (value: Awaited<ReturnType<typeof redditCall>>): RedditMedia
 
 export class RedditMediaClient {
   private readonly rpc: DevvitRpcClient;
+  private readonly legacy: LegacyRedditMediaClient | null;
+  private readonly forceLegacy: boolean;
 
   public constructor(
     cfg: RedditAuthCfg,
-    _fetcher?: RedditMediaFetch,
-    _rateReserve = 10,
-    _socketFactory?: RedditMediaSocketFactory,
+    fetcher?: RedditMediaFetch,
+    rateReserve = 10,
+    socketFactory?: RedditMediaSocketFactory,
   ) {
     this.rpc = devvitRpcClient(cfg);
+    this.forceLegacy = cfg.transport === 'legacy';
+    const legacy = cfg.legacyOauth ?? null;
+    this.legacy = legacy === null
+      ? null
+      : new LegacyRedditMediaClient(
+          {
+            clientId: legacy.clientId,
+            clientSecret: legacy.clientSecret,
+            username: cfg.username,
+            password: legacy.password,
+            userAgent: legacy.userAgent,
+          },
+          fetcher,
+          rateReserve,
+          socketFactory,
+        );
   }
 
-  public async uploadMedia(_name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
+  public async uploadMedia(name: string, mimeType: string, bytes: Uint8Array): Promise<string> {
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+      return await this.legacy.uploadMedia(name, mimeType, bytes);
+    }
     const value = await mediaCall(this.rpc, 'upload', [{
       url: dataUrl(mimeType, bytes),
       type: uploadType(mimeType),
@@ -92,6 +115,19 @@ export class RedditMediaClient {
     bytes: Uint8Array,
     videoPosterUrl: string | null = null,
   ): Promise<RedditMediaCreatedPost> {
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+      return await this.legacy.submitMedia(
+        subreddit,
+        title,
+        body,
+        flairTemplateId,
+        name,
+        mimeType,
+        bytes,
+        videoPosterUrl,
+      );
+    }
     const mediaUrl = await this.uploadMedia(name, mimeType, bytes);
     const kind = mimeType === 'video/mp4' ? 'video' : 'image';
     return createdPost(await redditCall(this.rpc, 'submitPost', [{
@@ -112,6 +148,10 @@ export class RedditMediaClient {
     flairTemplateId: string | null,
     media: readonly RedditGalleryMedia[],
   ): Promise<RedditMediaCreatedPost> {
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
+      return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
+    }
     if (media.length < 2 || media.length > 20) {
       throw new Error('Reddit galleries require between 2 and 20 images');
     }
