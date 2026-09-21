@@ -33,9 +33,12 @@ export class LegacyRedditApi {
   public constructor(
     private readonly username: string,
     private readonly cfg: RedditLegacyOauthCfg,
-    fetcher: LegacyRedditFetch = fetch,
+    fetcher?: LegacyRedditFetch,
   ) {
-    this.fetcher = rateLimitedRedditFetch(fetcher, cfg.clientId);
+    const raw = fetcher ?? fetch;
+    this.fetcher = fetcher === undefined
+      ? rateLimitedRedditFetch(raw, cfg.clientId)
+      : raw;
   }
 
   public async get(path: string): Promise<Json> {
