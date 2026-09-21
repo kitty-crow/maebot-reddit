@@ -1,0 +1,277 @@
+import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { isMap, type Json, type JsonMap } from '../types/json.ts';
+import { Store } from '../store/store.ts';
+
+export type DevvitWire =
+  | null
+  | boolean
+  | number
+  | string
+  | DevvitWire[]
+  | { readonly [key: string]: DevvitWire };
+
+export type DevvitRpcStep =
+  | { readonly kind: 'get'; readonly name: string }
+  | { readonly kind: 'call'; readonly name: string; readonly args: readonly DevvitWire[] };
+
+export type DevvitRpcCommand = {
+  readonly id: string;
+  readonly root: 'reddit' | 'media';
+  readonly steps: readonly DevvitRpcStep[];
+};
+
+export type DevvitRpcResult = {
+  readonly id: string;
+  readonly ok: boolean;
+  readonly value?: DevvitWire;
+  readonly error?: string;
+};
+
+type StoredCommand = DevvitRpcCommand & {
+  readonly state: 'queued' | 'leased' | 'done';
+  readonly createdAt: number;
+  readonly leaseUntil: number;
+  readonly result: DevvitRpcResult | null;
+};
+
+const initial = (): JsonMap => ({ schema: 1, commands: {} });
+
+const root = (value: Json): JsonMap => {
+  if (!isMap(value) || value['schema'] !== 1 || !isMap(value['commands'])) {
+    throw new Error('Unsupported Devvit RPC spool');
+  }
+  return value;
+};
+
+const text = (value: Json | undefined): string => typeof value === 'string' ? value : '';
+const number = (value: Json | undefined): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+const wire = (value: Json | undefined): DevvitWire => {
+  if (
+    value === null
+    || typeof value === 'boolean'
+    || typeof value === 'number'
+    || typeof value === 'string'
+  ) return value;
+  if (Array.isArray(value)) return value.map(item => wire(item));
+  if (isMap(value)) {
+    const out: { [key: string]: DevvitWire } = {};
+    for (const [key, child] of Object.entries(value)) out[key] = wire(child);
+    return out;
+  }
+  throw new Error('Invalid Devvit RPC wire value');
+};
+
+const step = (value: Json | undefined): DevvitRpcStep | null => {
+  if (!isMap(value)) return null;
+  const kind = text(value['kind']);
+  const name = text(value['name']);
+  if (kind === 'get') return { kind, name };
+  if (kind !== 'call' || !Array.isArray(value['args'])) return null;
+  return { kind, name, args: value['args'].map(item => wire(item)) };
+};
+
+const result = (value: Json | undefined): DevvitRpcResult | null => {
+  if (!isMap(value)) return null;
+  const id = text(value['id']);
+  const ok = value['ok'];
+  if (id.length === 0 || typeof ok !== 'boolean') return null;
+  const error = text(value['error']);
+  return {
+    id,
+    ok,
+    ...(value['value'] === undefined ? {} : { value: wire(value['value']) }),
+    ...(error.length === 0 ? {} : { error }),
+  };
+};
+
+const stored = (id: string, value: Json | undefined): StoredCommand | null => {
+  if (!isMap(value) || !Array.isArray(value['steps'])) return null;
+  const rootName = value['root'];
+  const state = value['state'];
+  if (rootName !== 'reddit' && rootName !== 'media') return null;
+  if (state !== 'queued' && state !== 'leased' && state !== 'done') return null;
+  const steps = value['steps'].map(item => step(item));
+  if (steps.some(item => item === null)) return null;
+  return {
+    id,
+    root: rootName,
+    steps: steps.filter((item): item is DevvitRpcStep => item !== null),
+    state,
+    createdAt: number(value['createdAt']),
+    leaseUntil: number(value['leaseUntil']),
+    result: value['result'] === null || value['result'] === undefined ? null : result(value['result']),
+  };
+};
+
+const stepJson = (value: DevvitRpcStep): JsonMap => value.kind === 'get'
+  ? { kind: value.kind, name: value.name }
+  : { kind: value.kind, name: value.name, args: [...value.args] };
+
+const resultJson = (value: DevvitRpcResult): JsonMap => ({
+  id: value.id,
+  ok: value.ok,
+  ...(value.value === undefined ? {} : { value: value.value }),
+  ...(value.error === undefined ? {} : { error: value.error }),
+});
+
+const commandJson = (value: StoredCommand): JsonMap => ({
+  root: value.root,
+  steps: value.steps.map(stepJson),
+  state: value.state,
+  createdAt: value.createdAt,
+  leaseUntil: value.leaseUntil,
+  result: value.result === null ? null : resultJson(value.result),
+});
+
+const commands = (value: JsonMap): JsonMap => {
+  const map = value['commands'];
+  if (!isMap(map)) throw new Error('Devvit RPC command map is invalid');
+  return map;
+};
+
+export class DevvitRpcSpool {
+  private readonly store: Store;
+
+  public constructor(file = resolve(process.cwd(), 'data/devvitRpc.pb')) {
+    this.store = new Store(file, initial());
+  }
+
+  public async enqueue(
+    rootName: DevvitRpcCommand['root'],
+    steps: readonly DevvitRpcStep[],
+    at = Date.now(),
+  ): Promise<string> {
+    const id = randomUUID();
+    await this.store.edit(current => {
+      const value = root(current);
+      commands(value)[id] = commandJson({
+        id,
+        root: rootName,
+        steps,
+        state: 'queued',
+        createdAt: at,
+        leaseUntil: 0,
+        result: null,
+      });
+      return value;
+    });
+    return id;
+  }
+
+  public async lease(limit = 25, at = Date.now()): Promise<readonly DevvitRpcCommand[]> {
+    const out: DevvitRpcCommand[] = [];
+    await this.store.edit(current => {
+      const value = root(current);
+      const map = commands(value);
+      const available = Object.entries(map)
+        .map(([id, raw]) => stored(id, raw))
+        .filter((item): item is StoredCommand =>
+          item !== null && (item.state === 'queued' || (item.state === 'leased' && item.leaseUntil <= at)))
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+        .slice(0, Math.max(1, Math.min(100, Math.floor(limit))));
+      for (const item of available) {
+        const leased: StoredCommand = { ...item, state: 'leased', leaseUntil: at + 30_000 };
+        map[item.id] = commandJson(leased);
+        out.push({ id: item.id, root: item.root, steps: item.steps });
+      }
+      return value;
+    });
+    return out;
+  }
+
+  public async complete(input: DevvitRpcResult): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const map = commands(value);
+      const existing = stored(input.id, map[input.id]);
+      if (existing === null) return value;
+      map[input.id] = commandJson({
+        ...existing,
+        state: 'done',
+        leaseUntil: 0,
+        result: input,
+      });
+      return value;
+    });
+  }
+
+  public async take(id: string): Promise<DevvitRpcResult | null> {
+    let out: DevvitRpcResult | null = null;
+    await this.store.edit(current => {
+      const value = root(current);
+      const map = commands(value);
+      const existing = stored(id, map[id]);
+      if (existing?.state !== 'done' || existing.result === null) return value;
+      out = existing.result;
+      delete map[id];
+      return value;
+    });
+    return out;
+  }
+
+  public async cancel(id: string): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      delete commands(value)[id];
+      return value;
+    });
+  }
+}
+
+export const encodeDevvitWire = (value: object | readonly object[] | string | number | boolean | null): DevvitWire => {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value instanceof Uint8Array) return { $bytes: Buffer.from(value).toString('base64') };
+  if (value instanceof ArrayBuffer) return { $bytes: Buffer.from(value).toString('base64') };
+  if (Array.isArray(value)) return value.map(item => encodeDevvitWire(item));
+  const out: { [key: string]: DevvitWire } = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (child !== undefined) out[key] = encodeDevvitWire(child as object | readonly object[] | string | number | boolean | null);
+  }
+  return out;
+};
+
+export const decodeDevvitWire = (value: DevvitWire): Json | Uint8Array => {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(item => decodeDevvitWire(item) as Json);
+  const bytes = value['$bytes'];
+  if (typeof bytes === 'string' && Object.keys(value).length === 1) {
+    return Uint8Array.from(Buffer.from(bytes, 'base64'));
+  }
+  const wide = value['$bigint'];
+  if (typeof wide === 'string' && Object.keys(value).length === 1) return wide;
+  const out: JsonMap = {};
+  for (const [key, child] of Object.entries(value)) out[key] = decodeDevvitWire(child) as Json;
+  return out;
+};
+
+export class DevvitRpcClient {
+  public constructor(
+    private readonly spool: DevvitRpcSpool,
+    private readonly timeoutMs = 120_000,
+    private readonly pollMs = 100,
+  ) {}
+
+  public async call(
+    rootName: DevvitRpcCommand['root'],
+    steps: readonly DevvitRpcStep[],
+  ): Promise<DevvitWire> {
+    const id = await this.spool.enqueue(rootName, steps);
+    const deadline = Date.now() + this.timeoutMs;
+    try {
+      while (Date.now() < deadline) {
+        const value = await this.spool.take(id);
+        if (value !== null) {
+          if (!value.ok) throw new Error(value.error ?? 'Devvit Reddit RPC failed');
+          return value.value ?? null;
+        }
+        await Bun.sleep(this.pollMs);
+      }
+      throw new Error(`Devvit Reddit RPC ${id} timed out`);
+    } finally {
+      await this.spool.cancel(id);
+    }
+  }
+}
