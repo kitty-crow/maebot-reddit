@@ -39,7 +39,7 @@ export class MemberModNotesRedditClient {
     limit = 10,
     maxScanned = 1_000,
   ): Promise<readonly RedditComment[]> {
-    const username = rawUsername.trim().replace(/^u//iu, '').toLowerCase();
+    const username = rawUsername.trim().replace(/^u\//iu, '').toLowerCase();
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const safeMax = Math.max(safeLimit, Math.min(1_000, Math.floor(maxScanned)));
     const batches = await Promise.all(communities.map(async community =>
@@ -58,8 +58,8 @@ export class MemberModNotesRedditClient {
     label: MemberModNoteLabel,
     redditId?: string,
   ): Promise<string> {
-    const subreddit = rawSubreddit.trim().replace(/^r//iu, '');
-    const user = rawUsername.trim().replace(/^u//iu, '');
+    const subreddit = rawSubreddit.trim().replace(/^r\//iu, '');
+    const user = rawUsername.trim().replace(/^u\//iu, '');
     const text = note.trim();
     if (text.length < 1 || text.length > 250) {
       throw new Error('Reddit Mod Note text must be from 1 to 250 characters');
@@ -79,8 +79,8 @@ export class MemberModNotesRedditClient {
     rawUsername: string,
     rawNoteId: string,
   ): Promise<void> {
-    const subreddit = rawSubreddit.trim().replace(/^r//iu, '');
-    const user = rawUsername.trim().replace(/^u//iu, '');
+    const subreddit = rawSubreddit.trim().replace(/^r\//iu, '');
+    const user = rawUsername.trim().replace(/^u\//iu, '');
     const noteId = rawNoteId.trim();
     if (!noteId.startsWith('ModNote_')) throw new Error(`Invalid native Mod Note id ${rawNoteId}`);
     await redditCall(this.rpc, 'deleteModNote', [{ subreddit, user, noteId }]);
