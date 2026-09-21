@@ -33,15 +33,6 @@ export const assertDevvitRedditApiContract = async (): Promise<void> => {
     limit: 1,
     pageSize: 1,
   }).all();
-  const messages = await reddit.getMessages({
-    type: 'inbox',
-    limit: 1,
-    pageSize: 1,
-  });
-  const privateMessages = await messages.all();
-  const firstMessage = privateMessages[0];
-  if (firstMessage !== undefined) void await firstMessage.markAsRead();
-
   void await reddit.submitPost({
     subredditName: 'catgirlcoin',
     title: 'contract',
