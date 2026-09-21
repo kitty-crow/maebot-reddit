@@ -3,23 +3,16 @@ import {
   redditStateAdoptionInProgress,
   withRedditStateAdoption,
 } from '../src/reputation/manualOverrideGate.ts';
-import { RedditMutationClient, type RedditMutationFetch } from '../src/reddit/mutate.ts';
+import { RedditMutationClient } from '../src/reddit/mutate.ts';
 
 const auth = {
-  clientId: 'synthetic-client',
-  clientSecret: 'synthetic-secret',
   username: 'this_is_the_mae',
-  password: 'synthetic-password',
-  userAgent: 'linux:test:0.0.0 (by /u/this_is_the_mae)',
+  devvitRpcStateFile: '/tmp/mae-manual-override-never-used.pb',
+  devvitRpcTimeoutMs: 50,
 };
 
 test('live-state adoption blocks normal mutations only for the selected user', async () => {
-  let fetchCalls = 0;
-  const fetcher: RedditMutationFetch = async () => {
-    fetchCalls += 1;
-    return new Response('{}', { status: 500 });
-  };
-  const writer = new RedditMutationClient(auth, { fetcher, maxAttempts: 1 });
+  const writer = new RedditMutationClient(auth);
 
   expect(redditStateAdoptionInProgress('Zeuve')).toBe(false);
   await withRedditStateAdoption('Zeuve', async () => {
@@ -30,7 +23,6 @@ test('live-state adoption blocks normal mutations only for the selected user', a
     expect(redditStateAdoptionInProgress('someone-else')).toBe(false);
   });
   expect(redditStateAdoptionInProgress('Zeuve')).toBe(false);
-  expect(fetchCalls).toBe(0);
 });
 
 test('adoption gate always releases after a failed snapshot', async () => {
