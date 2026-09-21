@@ -352,34 +352,34 @@ export class RedditReadClient {
   }
 
   public async userFlairAssignments(name: string): Promise<readonly RedditFlairAssignment[]> {
+    if (this.legacy === null) {
+      throw new Error('Complete Reddit user-flair inventory requires legacy Reddit OAuth fallback');
+    }
     const out: RedditFlairAssignment[] = [];
     let after: string | null = null;
+    let count = 0;
     do {
-      const value = await redditChain(this.rpc, [
-        { kind: 'call', name: 'getSubredditByName', args: [name] },
-        {
-          kind: 'call',
-          name: 'getUserFlair',
-          args: [after === null ? {} : { after }],
-        },
-      ]);
-      const raw = wireMap(value, 'Devvit user flair page');
-      const users = raw['users'];
-      if (Array.isArray(users)) out.push(...users.map(flairAssignment));
-      after = wireMaybeText(raw['next']);
+      const query = new URLSearchParams({ limit: '1000', count: String(count) });
+      if (after !== null) query.set('after', after);
+      const page = decode.flairAssignments(await this.legacy.get(
+        `/r/${encodeURIComponent(name)}/api/flairlist?${query.toString()}`,
+      ));
+      out.push(...page.assignments);
+      count = out.length;
+      after = page.next;
     } while (after !== null);
     return out;
   }
 
   public async userFlairAssignment(name: string, username: string): Promise<RedditFlairAssignment | null> {
-    const value = await redditChain(this.rpc, [
-      { kind: 'call', name: 'getSubredditByName', args: [name] },
-      { kind: 'call', name: 'getUserFlair', args: [{ usernames: [username] }] },
-    ]);
-    const raw = wireMap(value, 'Devvit user flair result');
-    const users = raw['users'];
-    if (!Array.isArray(users) || users.length === 0) return null;
-    return flairAssignment(users[0] ?? null);
+    if (this.legacy === null) {
+      throw new Error('Reddit user-flair lookup requires legacy Reddit OAuth fallback');
+    }
+    const query = new URLSearchParams({ limit: '1', name: username });
+    const page = decode.flairAssignments(await this.legacy.get(
+      `/r/${encodeURIComponent(name)}/api/flairlist?${query.toString()}`,
+    ));
+    return page.assignments.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
