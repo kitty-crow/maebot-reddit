@@ -12,7 +12,8 @@ type Wire =
 
 type Step =
   | { readonly kind: 'get'; readonly name: string }
-  | { readonly kind: 'call'; readonly name: string; readonly args: readonly Wire[] };
+  | { readonly kind: 'call'; readonly name: string; readonly args: readonly Wire[] }
+  | { readonly kind: 'find'; readonly name: string; readonly equals: Wire };
 
 type Command = {
   readonly id: string;
@@ -124,7 +125,9 @@ const validate = (command: Command): void => {
     if (!namePattern.test(step.name) || step.name === '__proto__' || step.name === 'prototype' || step.name === 'constructor') {
       throw new Error('Invalid command member');
     }
-    if (step.kind !== 'get' && step.kind !== 'call') throw new Error('Invalid command step');
+    if (step.kind !== 'get' && step.kind !== 'call' && step.kind !== 'find') {
+      throw new Error('Invalid command step');
+    }
     if (step.kind === 'call' && !Array.isArray(step.args)) throw new Error('Invalid command arguments');
   }
 };
@@ -136,6 +139,17 @@ const execute = async (command: Command): Promise<Wire> => {
   for (const step of command.steps) {
     if ((typeof current !== 'object' && typeof current !== 'function') || current === null) {
       throw new Error(`Cannot access ${step.name} on a non-object bridge value`);
+    }
+    if (step.kind === 'find') {
+      if (!Array.isArray(current)) throw new Error('find requires an array bridge value');
+      const expected = decode(step.equals);
+      const found = current.find(item =>
+        (typeof item === 'object' || typeof item === 'function')
+        && item !== null
+        && Object.is(Reflect.get(item, step.name), expected));
+      if (found === undefined) throw new Error(`No bridge item matched ${step.name}`);
+      current = found;
+      continue;
     }
     const member = Reflect.get(current, step.name);
     if (step.kind === 'get') {
