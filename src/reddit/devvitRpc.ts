@@ -36,15 +36,10 @@ type StoredCommand = DevvitRpcCommand & {
   readonly result: DevvitRpcResult | null;
 };
 
-const initial = (): JsonMap => ({ schema: 1, commands: {}, comments: {} });
+const initial = (): JsonMap => ({ schema: 1, commands: {} });
 
 const root = (value: Json): JsonMap => {
-  if (
-    !isMap(value)
-    || value['schema'] !== 1
-    || !isMap(value['commands'])
-    || (value['comments'] !== undefined && !isMap(value['comments']))
-  ) {
+  if (!isMap(value) || value['schema'] !== 1 || !isMap(value['commands'])) {
     throw new Error('Unsupported Devvit RPC spool');
   }
   return value;
@@ -142,14 +137,6 @@ const commands = (value: JsonMap): JsonMap => {
   const map = value['commands'];
   if (!isMap(map)) throw new Error('Devvit RPC command map is invalid');
   return map;
-};
-
-const comments = (value: JsonMap): JsonMap => {
-  const existing = value['comments'];
-  if (isMap(existing)) return existing;
-  const created: JsonMap = {};
-  value['comments'] = created;
-  return created;
 };
 
 export class DevvitRpcSpool {
@@ -291,44 +278,6 @@ export class DevvitRpcSpool {
     });
   }
 
-  public async recordComment(event: Json, at = Date.now()): Promise<void> {
-    if (!isMap(event)) throw new Error('Devvit comment event must be an object');
-    const rawComment = event['comment'];
-    const rawSubreddit = event['subreddit'];
-    if (!isMap(rawComment)) throw new Error('Devvit comment event has no comment');
-    const id = text(rawComment['id']);
-    const subreddit = isMap(rawSubreddit) ? text(rawSubreddit['name']) : '';
-    if (id.length === 0 || subreddit.length === 0) {
-      throw new Error('Devvit comment event is missing id or subreddit');
-    }
-    await this.store.edit(current => {
-      const value = root(current);
-      const map = comments(value);
-      map[id] = { at, subreddit: subreddit.toLowerCase(), event };
-      const ordered = Object.entries(map)
-        .map(([key, raw]) => ({
-          key,
-          at: isMap(raw) ? number(raw['at']) : 0,
-        }))
-        .sort((left, right) => right.at - left.at || left.key.localeCompare(right.key));
-      for (const stale of ordered.slice(2_000)) delete map[stale.key];
-      return value;
-    });
-  }
-
-  public async recentCommentEvents(subreddit: string, limit: number): Promise<readonly Json[]> {
-    const wanted = subreddit.trim().toLowerCase();
-    const safeLimit = Math.max(1, Math.min(1_000, Math.floor(limit)));
-    const value = root(await this.store.read());
-    return Object.values(comments(value))
-      .filter((raw): raw is JsonMap =>
-        isMap(raw)
-        && text(raw['subreddit']) === wanted
-        && isMap(raw['event']))
-      .sort((left, right) => number(right['at']) - number(left['at']))
-      .slice(0, safeLimit)
-      .map(raw => raw['event'] ?? null);
-  }
 }
 
 export const encodeDevvitWire = (value: object | readonly object[] | string | number | boolean | null): DevvitWire => {
