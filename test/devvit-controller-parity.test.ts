@@ -221,6 +221,31 @@ describe('Devvit generic Reddit controller parity', () => {
     expect(calls.some(url => url.includes('/r/catgirlcoin/comments'))).toBe(true);
   });
 
+  test('fallback credentials do not divert supported Mae media away from Devvit', async () => {
+    const { cfg, spool } = await setup();
+    const client = new RedditMediaClient({
+      ...cfg,
+      legacyOauth: {
+        clientId: 'client',
+        clientSecret: 'secret',
+        password: 'password',
+        userAgent: 'test-agent',
+      },
+    });
+
+    const pending = client.uploadMedia('image.png', 'image/png', new Uint8Array([1, 2, 3]));
+    const command = await next(spool);
+    expect(command.root).toBe('media');
+    expect(command.steps[0]?.kind).toBe('call');
+    if (command.steps[0]?.kind !== 'call') throw new Error('Expected Devvit media call');
+    expect(command.steps[0].name).toBe('upload');
+    await succeed(spool, command, {
+      mediaId: 'asset',
+      mediaUrl: 'https://i.redd.it/example.png',
+    });
+    expect(await pending).toBe('https://i.redd.it/example.png');
+  });
+
   test('main-account announcements bypass Devvit and use the existing OAuth transport', async () => {
     const { cfg, spool } = await setup();
     const announcementCfg: RedditAuthCfg = {
