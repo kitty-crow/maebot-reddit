@@ -56,10 +56,18 @@ const effort = (name: string, fallback: ModerationAiCfg['effort']): ModerationAi
   throw new Error(`${name} is not a supported reasoning effort`);
 };
 
+export type RedditLegacyOauthCfg = {
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly password: string;
+  readonly userAgent: string;
+};
+
 export type RedditAuthCfg = {
   readonly username: string;
   readonly devvitRpcStateFile: string;
   readonly devvitRpcTimeoutMs: number;
+  readonly legacyOauth: RedditLegacyOauthCfg | null;
 };
 
 export type RedditDevvitIngressCfg = {
@@ -106,6 +114,22 @@ export const redditConfig = (): RedditCfg => ({
     username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
     devvitRpcStateFile: resolve(process.cwd(), opt('REDDIT_DEVVIT_RPC_STATE_FILE', 'data/devvitRpc.pb')),
     devvitRpcTimeoutMs: positive('REDDIT_DEVVIT_RPC_TIMEOUT_MS', '120000'),
+    legacyOauth: (() => {
+      const clientId = maybe('REDDIT_CLIENT_ID');
+      const clientSecret = maybe('REDDIT_CLIENT_SECRET');
+      const password = maybe('REDDIT_PASSWORD');
+      if (clientId === null && clientSecret === null && password === null) return null;
+      if (clientId === null || clientSecret === null || password === null) {
+        throw new Error('REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, and REDDIT_PASSWORD must be configured together');
+      }
+      return {
+        clientId,
+        clientSecret,
+        password,
+        userAgent: maybe('REDDIT_USER_AGENT')
+          ?? 'linux:com.kittycrow.maebot-reddit:0.1.0 (by /u/this_is_the_mae)',
+      };
+    })(),
   },
   sourceSubreddit: community('REDDIT_SOURCE_SUBREDDIT', 'catgirlcoin'),
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
