@@ -21,7 +21,8 @@ const namePattern = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const idPattern = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 export const wire = (value: unknown): Wire => {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean' || typeof value === 'string') return value;
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new Error('Non-finite number cannot cross the Mae bridge');
     return value;
