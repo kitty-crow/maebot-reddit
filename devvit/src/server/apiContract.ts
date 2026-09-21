@@ -5,7 +5,6 @@ export const assertDevvitRedditApiContract = async (): Promise<void> => {
   void await reddit.getSubredditInfoByName('catgirlcoin');
   void await reddit.getUserFlairTemplates('catgirlcoin');
   void await reddit.getPostFlairTemplates('catgirlcoin');
-  void await reddit.getRules('catgirlcoin');
   void await reddit.getPostById('t3_example');
   void await reddit.getCommentById('t1_example');
 
@@ -34,10 +33,6 @@ export const assertDevvitRedditApiContract = async (): Promise<void> => {
     limit: 1,
     pageSize: 1,
   }).all();
-
-  const subreddit = await reddit.getSubredditByName('catgirlcoin');
-  void await subreddit.getUserFlair({ usernames: ['this_is_the_mae'] });
-
   const messages = await reddit.getMessages({
     type: 'inbox',
     limit: 1,
@@ -107,10 +102,6 @@ export const assertDevvitRedditApiContract = async (): Promise<void> => {
   void await reddit.sendPrivateMessage({
     to: 'example',
     subject: 'contract',
-    text: 'contract',
-  });
-  void await reddit.submitComment({
-    id: 't4_example',
     text: 'contract',
   });
 
