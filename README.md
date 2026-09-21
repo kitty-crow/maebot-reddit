@@ -1,6 +1,6 @@
 # Mae Reddit
 
-Mae's Reddit service owns Reddit credentials, Reddit API access, Reddit-specific durable state, moderation actions, subreddit migrations, Modmail transport, direct-message handling, private moderation context, and Twitter-to-Reddit presentation.
+Mae's Reddit service owns Reddit-specific durable state, moderation actions, subreddit migrations, Modmail transport, direct-message handling, private moderation context, and Twitter-to-Reddit presentation. Reddit access is Devvit-first, with the existing OAuth/Data API transport retained only for capabilities Devvit does not expose and for the existing main-account announcement identity.
 
 The active implementation is TypeScript/Bun under `src/`. The retired Python implementation has been moved to `deprecated/legacy-python/` and is preserved only for historical parity checks, migration evidence, and incident archaeology. It must not be launched by production supervisors, shell launchers, cron jobs, or service definitions.
 
@@ -11,7 +11,7 @@ Mae's canonical member reputation state is the TypeScript reputation store. On t
 The TypeScript runtime includes:
 
 - strict TypeScript/Bun CI and architecture-boundary checks;
-- typed Reddit OAuth/Data API clients and mutation boundaries;
+- typed Reddit client/mutation boundaries backed primarily by the Devvit controller, with narrow legacy OAuth fallback where Devvit lacks parity;
 - persistent protobuf-backed Reddit state through the shared mutex/atomic store;
 - canonical Mae reputation, tier, flair, discipline, score high-water, vote-review and notice state;
 - deterministic moderation consequences driven by structured semantic classification;
@@ -81,6 +81,16 @@ bun install
 ```
 
 Copy `.env.example` to a deployment-local `.env` and provide the required Reddit and internal-service credentials. Never commit populated credentials.
+
+## Devvit controller
+
+The installed Devvit app `this-is-the-mae` is a thin generic Reddit controller for the existing Bun service. Mae keeps its existing stores, schemas, runtime logic and loopback internal API. Devvit owns no canonical Mae state.
+
+Ordinary automated Reddit activity runs as the Devvit app account `u/this_is_the_mae`. The existing main-account announcement path remains on the legacy OAuth transport, as do individual Reddit capabilities that Devvit 0.14.4 does not expose with equivalent semantics.
+
+### Fetch Domains
+
+- `mae.kittycrow.dev` — existing Mae backend ingress used only for the authenticated Devvit controller transport at `/v1/devvit`. This domain is required for the Reddit Data API migration; the existing Mae internal API remains loopback-only and is not exposed through Devvit.
 
 ## Reddit audit
 
