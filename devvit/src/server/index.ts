@@ -50,11 +50,17 @@ const wire = (value: unknown): Wire => {
     return value;
   }
   if (typeof value === 'bigint') return { $bigint: value.toString() };
+  if (value instanceof Date) return { $date: value.toISOString() };
   if (value instanceof Uint8Array) {
     return { $bytes: Buffer.from(value).toString('base64') };
   }
   if (Array.isArray(value)) return value.map(wire);
+  if (value instanceof Map) {
+    return { $map: [...value.entries()].map(([key, child]) => [wire(key), wire(child)]) };
+  }
   if (typeof value === 'object') {
+    const toJSON = Reflect.get(value, 'toJSON');
+    if (typeof toJSON === 'function') return wire(Reflect.apply(toJSON, value, []));
     const out: { [key: string]: Wire } = {};
     for (const [key, child] of Object.entries(value)) {
       if (child !== undefined && typeof child !== 'function') out[key] = wire(child);
@@ -75,6 +81,15 @@ const decode = (value: Wire): unknown => {
   }
   const wide = value['$bigint'];
   if (typeof wide === 'string' && Object.keys(value).length === 1) return BigInt(wide);
+  const date = value['$date'];
+  if (typeof date === 'string' && Object.keys(value).length === 1) return new Date(date);
+  const map = value['$map'];
+  if (Array.isArray(map) && Object.keys(value).length === 1) {
+    return new Map(map.map(entry => {
+      if (!Array.isArray(entry) || entry.length !== 2) throw new Error('Invalid bridge map entry');
+      return [decode(entry[0] as Wire), decode(entry[1] as Wire)];
+    }));
+  }
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, decode(child)]));
 };
 
