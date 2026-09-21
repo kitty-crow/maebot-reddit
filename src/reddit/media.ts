@@ -151,27 +151,9 @@ export class RedditMediaClient {
     flairTemplateId: string | null,
     media: readonly RedditGalleryMedia[],
   ): Promise<RedditMediaCreatedPost> {
-    if (this.forceLegacy) {
-      if (this.legacy === null) throw new Error('Legacy Reddit media transport is not configured');
-      return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
+    if (this.legacy === null) {
+      throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
     }
-    const imageUrls: string[] = [];
-    for (const item of media) {
-      if (!item.mimeType.startsWith('image/')) {
-        if (this.legacy === null) {
-          throw new Error('Reddit gallery submission requires the legacy Reddit OAuth fallback');
-        }
-        return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
-      }
-      imageUrls.push(await this.uploadMedia(item.name, item.mimeType, item.bytes));
-    }
-    return createdPost(await redditCall(this.rpc, 'submitPost', [{
-      subredditName: subreddit,
-      title,
-      kind: 'image',
-      imageUrls,
-      sendreplies: true,
-      ...(flairTemplateId === null ? {} : { flairId: flairTemplateId }),
-    }]));
+    return await this.legacy.submitGallery(subreddit, title, flairTemplateId, media);
   }
 }
