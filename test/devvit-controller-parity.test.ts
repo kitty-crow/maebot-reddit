@@ -173,50 +173,95 @@ describe('Devvit generic Reddit controller parity', () => {
     expect(await pending).toBe('ModNote_test');
   });
 
-  test('CommentSubmit events satisfy Mae newComments without changing Mae callers', async () => {
-    const { cfg, spool } = await setup();
-    await spool.recordComment({
-      comment: {
-        id: 't1_comment',
-        postId: 't3_post',
-        parentId: 't3_post',
-        body: 'hello',
-        permalink: '/r/catgirlcoin/comments/post/title/comment/',
-        createdAt: 1_700_000_000_000,
-        score: 3,
-        stickied: false,
+  test('unsupported subreddit comment listing falls back to the existing Reddit API', async () => {
+    const { cfg } = await setup();
+    const legacyCfg: RedditAuthCfg = {
+      ...cfg,
+      legacyOauth: {
+        clientId: 'client',
+        clientSecret: 'secret',
+        password: 'password',
+        userAgent: 'test-agent',
       },
-      subreddit: { name: 'catgirlcoin' },
-      author: { name: 'Member' },
-      post: {
-        title: 'Title',
-        authorName: 'Poster',
-        permalink: '/r/catgirlcoin/comments/post/title/',
-        linkFlair: { text: 'Question' },
+    };
+    const calls: string[] = [];
+    const client = new RedditReadClient(legacyCfg, {
+      fetcher: async input => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('/api/v1/access_token')) {
+          return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          data: {
+            after: null,
+            children: [{
+              kind: 't1',
+              data: {
+                id: 'comment',
+                name: 't1_comment',
+                subreddit: 'catgirlcoin',
+                link_id: 't3_post',
+                parent_id: 't3_post',
+                author: 'Member',
+                body: 'hello',
+                permalink: '/r/catgirlcoin/comments/post/title/comment/',
+                created_utc: 1_700_000_000,
+                score: 3,
+                stickied: false,
+              },
+            }],
+          },
+        }), { status: 200 });
       },
     });
 
-    const comments = await new RedditReadClient(cfg).newComments('catgirlcoin', 25);
-    expect(comments).toEqual([{
-      id: 'comment',
-      fullname: 't1_comment',
-      subreddit: 'catgirlcoin',
-      submissionFullname: 't3_post',
-      parentFullname: 't3_post',
-      submissionTitle: 'Title',
-      submissionAuthor: 'Poster',
-      submissionPermalink: '/r/catgirlcoin/comments/post/title/',
-      submissionFlairText: 'Question',
-      author: 'Member',
-      body: 'hello',
-      permalink: '/r/catgirlcoin/comments/post/title/comment/',
-      createdUtc: 1_700_000_000,
-      distinguished: null,
-      stickied: false,
-      removedByCategory: null,
-      score: 3,
-      mediaUrls: [],
-    }]);
+    const comments = await client.newComments('catgirlcoin', 25);
+    expect(comments.map(comment => comment.fullname)).toEqual(['t1_comment']);
+    expect(calls.some(url => url.includes('/r/catgirlcoin/comments'))).toBe(true);
+  });
+
+  test('main-account announcements bypass Devvit and use the existing OAuth transport', async () => {
+    const { cfg, spool } = await setup();
+    const announcementCfg: RedditAuthCfg = {
+      ...cfg,
+      username: 'main-user',
+      transport: 'legacy',
+      legacyOauth: {
+        clientId: 'client',
+        clientSecret: 'secret',
+        password: 'main-password',
+        userAgent: 'main-agent',
+      },
+    };
+    const calls: string[] = [];
+    const client = new RedditMutationClient(announcementCfg, {
+      fetcher: async input => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('/api/v1/access_token')) {
+          return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          json: {
+            errors: [],
+            data: {
+              id: 'announcement',
+              name: 't3_announcement',
+              url: 'https://reddit.com/comments/announcement',
+            },
+          },
+        }), { status: 200 });
+      },
+    });
+
+    expect(await client.submitSelf('nyaonearth', 'Announcement', 'Body', 'flair')).toEqual({
+      id: 'announcement',
+      fullname: 't3_announcement',
+      url: 'https://reddit.com/comments/announcement',
+    });
+    expect(calls.some(url => url.includes('/api/submit'))).toBe(true);
+    expect(await spool.lease(1)).toEqual([]);
   });
 
   test('Mae RPC Promise resolves from result arrival rather than interval polling', async () => {
