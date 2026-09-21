@@ -1,17 +1,9 @@
 import type { RedditAuthCfg } from '../env.ts';
-import { directMessages } from '../dm/decode.ts';
 import type { RedditDirectMessage } from '../dm/types.ts';
-import { modmailConversation, modmailConversations } from '../modmail/decode.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
-import type { Json } from '../types/json.ts';
-import { isMap, parseJson } from '../types/json.ts';
-import { numVal, strVal } from '../types/value.ts';
 import * as decode from './decode.ts';
-import { redditEmojis, type RedditEmoji } from './emoji.ts';
-import { RedditError, statusKind } from './error.ts';
-import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
-import { rateLimitedRedditFetch } from './rateBudget.ts';
-import { thingScores } from './scoreDecode.ts';
+import type { RedditEmoji } from './emoji.ts';
+import type { RedditRate } from './rate.ts';
 import type {
   RedditAccount,
   RedditComment,
@@ -22,6 +14,23 @@ import type {
   RedditSubreddit,
   RedditThingScore,
 } from './types.ts';
+import {
+  bareId,
+  devvitRpcClient,
+  fullname,
+  redditCall,
+  redditChain,
+  wireArray,
+  wireBoolean,
+  wireDateSeconds,
+  wireMap,
+  wireMaybeBoolean,
+  wireMaybeNumber,
+  wireMaybeText,
+  wireNumber,
+  wireText,
+} from './devvitCompat.ts';
+import { DevvitRpcClient, DevvitRpcSpool, type DevvitWire } from './devvitRpc.ts';
 
 export type RedditFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RedditSleep = (ms: number) => Promise<void>;
@@ -32,320 +41,523 @@ export type RedditClientOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
+  readonly rpc?: DevvitRpcClient;
+  readonly spool?: DevvitRpcSpool;
 };
 
-type Token = {
-  readonly value: string;
-  readonly until: number;
+const emptyRate: RedditRate = { used: null, remaining: null, resetMs: null };
+
+const mapArray = (value: DevvitWire, context: string): readonly { readonly [key: string]: DevvitWire }[] =>
+  wireArray(value, context).map((item, index) => wireMap(item, `${context}[${index}]`));
+
+const flairTemplate = (value: DevvitWire): RedditFlairTemplate => {
+  const raw = wireMap(value, 'Devvit flair template');
+  return {
+    id: wireText(raw['id'], 'Devvit flair template id'),
+    text: wireText(raw['text'], 'Devvit flair template text', ''),
+    cssClass: wireMaybeText(raw['cssClass']),
+    textColour: wireMaybeText(raw['textColor']),
+    backgroundColour: wireMaybeText(raw['backgroundColor']),
+    modOnly: wireBoolean(raw['modOnly'], 'Devvit flair template modOnly', false),
+    textEditable: wireBoolean(raw['allowUserEdits'], 'Devvit flair template allowUserEdits', false),
+    allowableContent: wireMaybeText(raw['allowableContent']),
+    maxEmojis: wireMaybeNumber(raw['maxEmojis']),
+  };
 };
 
-const defaultSleep: RedditSleep = async ms => await new Promise(resolve => setTimeout(resolve, ms));
-const api = 'https://oauth.reddit.com';
-const tokenApi = 'https://www.reddit.com/api/v1/access_token';
-
-const pathFor = (subreddit: string, suffix: string): string =>
-  `/r/${encodeURIComponent(subreddit)}${suffix}`;
-
-const json = async (response: Response, context: string): Promise<Json> => {
-  try {
-    return parseJson(await response.text());
-  } catch {
-    throw new RedditError(`${context} returned invalid JSON`, 'invalid_response', response.status);
-  }
+const flairAssignment = (value: DevvitWire): RedditFlairAssignment => {
+  const raw = wireMap(value, 'Devvit user flair');
+  return {
+    username: wireText(raw['user'], 'Devvit user flair username'),
+    templateId: wireMaybeText(raw['flairTemplateId']) ?? wireMaybeText(raw['templateId']),
+    text: wireMaybeText(raw['flairText']) ?? wireMaybeText(raw['text']),
+    cssClass: wireMaybeText(raw['flairCssClass']) ?? wireMaybeText(raw['cssClass']),
+  };
 };
 
-const sameUsername = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase();
+const post = (value: DevvitWire): RedditPost => {
+  const raw = wireMap(value, 'Devvit post');
+  const rawId = wireText(raw['id'], 'Devvit post id');
+  const flair = raw['flair'] === undefined ? null : wireMap(raw['flair'], 'Devvit post flair');
+  const gallery = Array.isArray(raw['gallery']) ? raw['gallery'] : [];
+  const mediaUrls = gallery.flatMap(item => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
+    const url = wireMaybeText(item['url']) ?? wireMaybeText(item['outboundUrl']);
+    return url === null ? [] : [url];
+  });
+  return {
+    id: bareId(rawId, 't3_'),
+    fullname: fullname(rawId, 't3_'),
+    subreddit: wireText(raw['subredditName'], 'Devvit post subreddit', ''),
+    title: wireText(raw['title'], 'Devvit post title', ''),
+    author: wireMaybeText(raw['authorName']),
+    permalink: wireText(raw['permalink'], 'Devvit post permalink', ''),
+    createdUtc: wireDateSeconds(raw['createdAt'], 'Devvit post createdAt'),
+    selfText: wireText(raw['body'], 'Devvit post body', ''),
+    url: wireText(raw['url'], 'Devvit post url', ''),
+    flairTemplateId: flair === null ? null : wireMaybeText(flair['templateId']),
+    flairText: flair === null ? null : wireMaybeText(flair['text']),
+    stickied: wireBoolean(raw['stickied'], 'Devvit post stickied', false),
+    locked: wireBoolean(raw['locked'], 'Devvit post locked', false),
+    over18: wireBoolean(raw['nsfw'], 'Devvit post nsfw', false),
+    crosspostParent: wireMaybeText(raw['crosspostParentId']),
+    score: wireNumber(raw['score'], 'Devvit post score', 0),
+    mediaUrls,
+  };
+};
+
+const comment = (value: DevvitWire): RedditComment => {
+  const raw = wireMap(value, 'Devvit comment');
+  const rawId = wireText(raw['id'], 'Devvit comment id');
+  const postId = wireText(raw['postId'], 'Devvit comment postId');
+  const parent = wireMaybeText(raw['parentId']);
+  return {
+    id: bareId(rawId, 't1_'),
+    fullname: fullname(rawId, 't1_'),
+    subreddit: wireText(raw['subredditName'], 'Devvit comment subreddit', ''),
+    submissionFullname: fullname(postId, 't3_'),
+    parentFullname: parent,
+    author: wireMaybeText(raw['authorName']),
+    body: wireText(raw['body'], 'Devvit comment body', ''),
+    permalink: wireText(raw['permalink'], 'Devvit comment permalink', ''),
+    createdUtc: wireDateSeconds(raw['createdAt'], 'Devvit comment createdAt'),
+    distinguished: wireMaybeText(raw['distinguishedBy']),
+    stickied: wireBoolean(raw['stickied'], 'Devvit comment stickied', false),
+    removedByCategory: wireBoolean(raw['removed'], 'Devvit comment removed', false) ? 'moderator' : null,
+    score: wireNumber(raw['score'], 'Devvit comment score', 0),
+    mediaUrls: [],
+  };
+};
+
+const triggeredComment = (value: DevvitWire): RedditComment => {
+  const event = wireMap(value, 'Devvit comment event');
+  const raw = wireMap(event['comment'] ?? null, 'Devvit comment event comment');
+  const subreddit = event['subreddit'] === undefined ? null : wireMap(event['subreddit'], 'Devvit comment event subreddit');
+  const postRaw = event['post'] === undefined || event['post'] === null
+    ? null
+    : wireMap(event['post'], 'Devvit comment event post');
+  const author = event['author'] === undefined || event['author'] === null
+    ? null
+    : wireMap(event['author'], 'Devvit comment event author');
+  const rawId = wireText(raw['id'], 'Devvit triggered comment id');
+  const rawPostId = wireText(raw['postId'], 'Devvit triggered comment post id');
+  const created = raw['createdAt'];
+  const createdUtc = typeof created === 'number' && Number.isFinite(created)
+    ? (created > 10_000_000_000 ? Math.floor(created / 1_000) : Math.floor(created))
+    : wireDateSeconds(created, 'Devvit triggered comment createdAt');
+  const media = Array.isArray(raw['mediaUrls'])
+    ? raw['mediaUrls'].filter((item): item is string => typeof item === 'string')
+    : [];
+  return {
+    id: bareId(rawId, 't1_'),
+    fullname: fullname(rawId, 't1_'),
+    subreddit: subreddit === null ? '' : wireText(subreddit['name'], 'Devvit triggered comment subreddit', ''),
+    submissionFullname: fullname(rawPostId, 't3_'),
+    parentFullname: wireMaybeText(raw['parentId']),
+    submissionTitle: postRaw === null ? null : wireMaybeText(postRaw['title']),
+    submissionAuthor: postRaw === null ? null : wireMaybeText(postRaw['authorName']),
+    submissionPermalink: postRaw === null ? null : wireMaybeText(postRaw['permalink']),
+    submissionFlairText: postRaw === null || postRaw['linkFlair'] === undefined
+      ? null
+      : wireMaybeText(wireMap(postRaw['linkFlair'], 'Devvit triggered post flair')['text']),
+    author: author === null ? wireMaybeText(raw['authorName']) : wireMaybeText(author['name']),
+    body: wireText(raw['body'], 'Devvit triggered comment body', ''),
+    permalink: wireText(raw['permalink'], 'Devvit triggered comment permalink', ''),
+    createdUtc,
+    distinguished: wireMaybeText(raw['distinguished']),
+    stickied: wireBoolean(raw['stickied'], 'Devvit triggered comment stickied', false),
+    removedByCategory: wireMaybeText(raw['removedByCategory']),
+    score: wireNumber(raw['score'], 'Devvit triggered comment score', 0),
+    mediaUrls: media,
+  };
+};
+
+const relationship = (value: DevvitWire): decode.RedditRelationshipUser => {
+  const raw = wireMap(value, 'Devvit relationship user');
+  return {
+    username: wireText(raw['username'], 'Devvit relationship username'),
+    note: wireMaybeText(raw['note']),
+    date: raw['date'] === undefined && raw['createdAt'] === undefined
+      ? null
+      : wireDateSeconds(raw['date'] ?? raw['createdAt'], 'Devvit relationship date'),
+  };
+};
+
+const directMessage = (value: DevvitWire): RedditDirectMessage => {
+  const raw = wireMap(value, 'Devvit private message');
+  const from = raw['from'] === undefined || raw['from'] === null ? null : wireMap(raw['from'], 'Devvit message sender');
+  const to = raw['to'] === undefined || raw['to'] === null ? null : wireMap(raw['to'], 'Devvit message destination');
+  const rawId = wireText(raw['id'], 'Devvit private message id');
+  const parent = wireMaybeText(raw['parentId']) ?? wireMaybeText(raw['parent']);
+  const root = wireMaybeText(raw['firstMessageId']) ?? wireMaybeText(raw['firstMessageName']);
+  return {
+    id: bareId(rawId, 't4_'),
+    fullname: fullname(rawId, 't4_'),
+    author: from === null ? wireMaybeText(raw['authorName']) : wireMaybeText(from['name']) ?? wireMaybeText(from['username']),
+    destination: to === null ? wireMaybeText(raw['destination']) : wireMaybeText(to['name']) ?? wireMaybeText(to['username']),
+    subject: wireText(raw['subject'], 'Devvit private message subject', ''),
+    body: wireText(raw['body'], 'Devvit private message body', ''),
+    createdUtc: wireDateSeconds(raw['created'] ?? raw['createdAt'], 'Devvit private message createdAt'),
+    parentFullname: parent,
+    firstMessageFullname: root,
+    isNew: wireBoolean(raw['isNew'], 'Devvit private message isNew', false),
+    wasComment: wireBoolean(raw['wasComment'], 'Devvit private message wasComment', false),
+  };
+};
+
+const modmailState = (value: string | null): ModmailConversation['state'] => {
+  if (value === 'archived') return 'archived';
+  if (value === 'highlighted') return 'highlighted';
+  if (value === 'mod') return 'mod';
+  if (value === 'new') return 'new';
+  if (value === 'inprogress') return 'inprogress';
+  return 'unknown';
+};
+
+const modmailConversationFrom = (value: DevvitWire): ModmailConversation => {
+  const raw = wireMap(value, 'Devvit modmail conversation');
+  const owner = raw['owner'] === undefined || raw['owner'] === null ? null : wireMap(raw['owner'], 'Devvit modmail owner');
+  const participant = raw['participant'] === undefined || raw['participant'] === null
+    ? owner
+    : wireMap(raw['participant'], 'Devvit modmail participant');
+  const messagesValue = raw['messages'];
+  const messages = messagesValue === undefined
+    ? []
+    : (Array.isArray(messagesValue)
+        ? messagesValue
+        : Object.values(wireMap(messagesValue, 'Devvit modmail messages')))
+      .map((entry, index) => {
+        const message = wireMap(entry, `Devvit modmail message[${index}]`);
+        const author = message['author'] === undefined || message['author'] === null
+          ? null
+          : wireMap(message['author'], 'Devvit modmail message author');
+        return {
+          id: wireText(message['id'], 'Devvit modmail message id'),
+          conversationId: wireText(
+            message['conversationId'],
+            'Devvit modmail message conversation id',
+            wireText(raw['id'], 'Devvit modmail conversation id'),
+          ),
+          author: author === null ? null : {
+            id: wireMaybeText(author['id']),
+            name: wireMaybeText(author['name']),
+            isModerator: wireBoolean(author['isMod'] ?? author['isModerator'], 'Devvit modmail author moderator', false),
+            isAdmin: wireBoolean(author['isAdmin'], 'Devvit modmail author admin', false),
+            isParticipant: wireBoolean(author['isParticipant'], 'Devvit modmail author participant', false),
+            isHidden: wireBoolean(author['isHidden'], 'Devvit modmail author hidden', false),
+            isDeleted: wireBoolean(author['isDeleted'], 'Devvit modmail author deleted', false),
+          },
+          bodyMarkdown: wireText(message['bodyMarkdown'] ?? message['body'], 'Devvit modmail body', ''),
+          createdAt: wireDateSeconds(message['date'] ?? message['createdAt'], 'Devvit modmail message date'),
+          isInternal: wireBoolean(message['isInternal'], 'Devvit modmail message internal', false),
+          participatingAs: wireMaybeText(message['participatingAs']),
+        };
+      });
+  return {
+    id: wireText(raw['id'], 'Devvit modmail conversation id'),
+    subreddit: wireMaybeText(raw['subredditName'])
+      ?? (raw['subreddit'] === undefined || raw['subreddit'] === null
+        ? ''
+        : wireText(wireMap(raw['subreddit'], 'Devvit modmail subreddit')['name'], 'Devvit modmail subreddit name', '')),
+    subject: wireText(raw['subject'], 'Devvit modmail subject', ''),
+    participant: participant === null ? null : {
+      id: wireMaybeText(participant['id']),
+      name: wireMaybeText(participant['name']),
+      isModerator: wireBoolean(participant['isMod'] ?? participant['isModerator'], 'Devvit modmail participant moderator', false),
+      isAdmin: wireBoolean(participant['isAdmin'], 'Devvit modmail participant admin', false),
+      isParticipant: wireBoolean(participant['isParticipant'], 'Devvit modmail participant flag', true),
+      isHidden: wireBoolean(participant['isHidden'], 'Devvit modmail participant hidden', false),
+      isDeleted: wireBoolean(participant['isDeleted'], 'Devvit modmail participant deleted', false),
+    },
+    kind: 'unknown',
+    state: modmailState(wireMaybeText(raw['state'])),
+    isInternal: wireBoolean(raw['isInternal'], 'Devvit modmail internal', false),
+    isAuto: wireBoolean(raw['isAuto'], 'Devvit modmail auto', false),
+    lastUpdatedAt: wireDateSeconds(raw['lastUpdated'] ?? raw['lastUpdatedAt'], 'Devvit modmail updatedAt'),
+    messages,
+  };
+};
 
 export class RedditReadClient {
-  private readonly fetcher: RedditFetch;
-  private readonly sleep: RedditSleep;
-  private readonly random: () => number;
-  private readonly maxAttempts: number;
-  private tokenCache: Token | null = null;
-  private latestRate: RedditRate = { used: null, remaining: null, resetMs: null };
+  private readonly rpc: DevvitRpcClient;
+  private readonly spool: DevvitRpcSpool;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
     options: RedditClientOptions = {},
   ) {
-    this.sleep = options.sleep ?? defaultSleep;
-    const rawFetcher = options.fetcher ?? fetch;
-    this.fetcher = options.fetcher === undefined
-      ? rateLimitedRedditFetch(rawFetcher, cfg.clientId, {
-          reserve: options.rateReserve,
-          sleep: this.sleep,
-        })
-      : rawFetcher;
-    this.random = options.random ?? Math.random;
-    this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
+    this.spool = options.spool ?? new DevvitRpcSpool(cfg.devvitRpcStateFile);
+    this.rpc = options.rpc ?? devvitRpcClient(cfg);
   }
 
   public rate(): RedditRate {
-    return this.latestRate;
+    return emptyRate;
   }
 
   public async me(): Promise<RedditAccount> {
-    return decode.account(await this.get('/api/v1/me'));
+    const raw = wireMap(await redditCall(this.rpc, 'getCurrentUser'), 'Devvit current user');
+    return {
+      id: bareId(wireText(raw['id'], 'Devvit current user id'), 't2_'),
+      name: wireText(raw['username'], 'Devvit current username', this.cfg.username),
+      createdUtc: raw['createdAt'] === undefined ? null : wireDateSeconds(raw['createdAt'], 'Devvit current user createdAt'),
+      linkKarma: wireMaybeNumber(raw['linkKarma']),
+      commentKarma: wireMaybeNumber(raw['commentKarma']),
+    };
   }
 
   public async subreddit(name: string): Promise<RedditSubreddit> {
-    return decode.subreddit(await this.get(pathFor(name, '/about')));
+    const [info, moderators] = await Promise.all([
+      redditCall(this.rpc, 'getSubredditInfoByName', [name]),
+      this.moderators(name),
+    ]);
+    const raw = wireMap(info, 'Devvit subreddit info');
+    const authorFlair = raw['authorFlairSettings'] === undefined || raw['authorFlairSettings'] === null
+      ? null
+      : wireMap(raw['authorFlairSettings'], 'Devvit author flair settings');
+    const postFlair = raw['postFlairSettings'] === undefined || raw['postFlairSettings'] === null
+      ? null
+      : wireMap(raw['postFlairSettings'], 'Devvit post flair settings');
+    return {
+      id: bareId(wireText(raw['id'], 'Devvit subreddit id'), 't5_'),
+      name: wireText(raw['name'], 'Devvit subreddit name', name),
+      title: wireText(raw['title'], 'Devvit subreddit title', ''),
+      subscribers: wireMaybeNumber(raw['subscribersCount']),
+      userIsModerator: moderators.some(mod => mod.name.toLowerCase() === this.cfg.username.toLowerCase()),
+      userFlairEnabled: authorFlair === null ? null : wireMaybeBoolean(authorFlair['enabled']),
+      userFlairSelfAssign: authorFlair === null ? null : wireMaybeBoolean(authorFlair['usersCanAssign']),
+      linkFlairEnabled: postFlair === null ? null : wireMaybeBoolean(postFlair['enabled']),
+      over18: wireMaybeBoolean(raw['isNsfw']),
+      submissionType: null,
+    };
   }
 
   public async moderators(name: string): Promise<readonly RedditModerator[]> {
-    return await this.pages(pathFor(name, '/about/moderators'), 100, decode.moderators);
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getModerators', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return mapArray(value, 'Devvit moderators').map(raw => {
+      const permissionsRaw = raw['modPermissions'];
+      const permissions = Array.isArray(raw['permissions'])
+        ? raw['permissions'].filter((item): item is string => typeof item === 'string')
+        : permissionsRaw !== undefined && typeof permissionsRaw === 'object' && permissionsRaw !== null && !Array.isArray(permissionsRaw)
+          ? Object.values(permissionsRaw).flatMap(item =>
+              Array.isArray(item) ? item.filter((child): child is string => typeof child === 'string') : [])
+          : [];
+      return {
+        name: wireText(raw['username'], 'Devvit moderator username'),
+        id: wireMaybeText(raw['id']),
+        permissions,
+      };
+    });
   }
 
   public async bannedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
-    return await this.pages(pathFor(name, '/about/banned'), 100, value => decode.relationshipUsers(value, 'banned users'));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getBannedUsers', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit banned users').map(relationship);
   }
 
   public async bannedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
-    const query = new URLSearchParams({ limit: '1', user: username });
-    const page = decode.relationshipUsers(
-      await this.get(`${pathFor(name, '/about/banned')}?${query}`),
-      'banned user',
-    );
-    return page.items.find(item => sameUsername(item.username, username)) ?? null;
+    const users = await this.bannedUsers(name);
+    return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
   public async mutedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
-    return await this.pages(pathFor(name, '/about/muted'), 100, value => decode.relationshipUsers(value, 'muted users'));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getMutedUsers', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit muted users').map(relationship);
   }
 
   public async mutedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
-    const query = new URLSearchParams({ limit: '1', user: username });
-    const page = decode.relationshipUsers(
-      await this.get(`${pathFor(name, '/about/muted')}?${query}`),
-      'muted user',
-    );
-    return page.items.find(item => sameUsername(item.username, username)) ?? null;
+    const users = await this.mutedUsers(name);
+    return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
   public async emojis(name: string): Promise<readonly RedditEmoji[]> {
-    return redditEmojis(await this.get(`/api/v1/${encodeURIComponent(name)}/emojis/all`));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getSubredditByName', args: [name] },
+      { kind: 'call', name: 'getEmojis', args: [] },
+    ]);
+    return mapArray(value, 'Devvit subreddit emojis').map(raw => ({
+      name: wireText(raw['name'], 'Devvit emoji name'),
+      url: wireText(raw['url'], 'Devvit emoji url'),
+      modFlairOnly: wireBoolean(raw['modFlairOnly'], 'Devvit emoji modFlairOnly', false),
+      postFlairAllowed: wireBoolean(raw['postFlairAllowed'], 'Devvit emoji postFlairAllowed', true),
+      userFlairAllowed: wireBoolean(raw['userFlairAllowed'], 'Devvit emoji userFlairAllowed', true),
+    }));
   }
 
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
-    return decode.flairTemplates(await this.get(pathFor(name, '/api/user_flair_v2')));
+    return wireArray(
+      await redditCall(this.rpc, 'getUserFlairTemplates', [name]),
+      'Devvit user flair templates',
+    ).map(flairTemplate);
   }
 
   public async postFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
-    return decode.flairTemplates(await this.get(pathFor(name, '/api/link_flair_v2')));
+    return wireArray(
+      await redditCall(this.rpc, 'getPostFlairTemplates', [name]),
+      'Devvit post flair templates',
+    ).map(flairTemplate);
   }
 
   public async userFlairAssignments(name: string): Promise<readonly RedditFlairAssignment[]> {
     const out: RedditFlairAssignment[] = [];
     let after: string | null = null;
-    let count = 0;
     do {
-      const query = new URLSearchParams({ limit: '1000', count: String(count) });
-      if (after !== null) query.set('after', after);
-      const page = decode.flairAssignments(await this.get(`${pathFor(name, '/api/flairlist')}?${query}`));
-      out.push(...page.assignments);
-      count = out.length;
-      after = page.next;
+      const value = await redditChain(this.rpc, [
+        { kind: 'call', name: 'getSubredditByName', args: [name] },
+        {
+          kind: 'call',
+          name: 'getUserFlair',
+          args: [after === null ? {} : { after }],
+        },
+      ]);
+      const raw = wireMap(value, 'Devvit user flair page');
+      const users = raw['users'];
+      if (Array.isArray(users)) out.push(...users.map(flairAssignment));
+      after = wireMaybeText(raw['next']);
     } while (after !== null);
     return out;
   }
 
   public async userFlairAssignment(name: string, username: string): Promise<RedditFlairAssignment | null> {
-    const query = new URLSearchParams({ limit: '1', name: username });
-    const page = decode.flairAssignments(await this.get(`${pathFor(name, '/api/flairlist')}?${query}`));
-    return page.assignments.find(item => sameUsername(item.username, username)) ?? null;
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getSubredditByName', args: [name] },
+      { kind: 'call', name: 'getUserFlair', args: [{ usernames: [username] }] },
+    ]);
+    const raw = wireMap(value, 'Devvit user flair result');
+    const users = raw['users'];
+    if (!Array.isArray(users) || users.length === 0) return null;
+    return flairAssignment(users[0] ?? null);
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
-    return decode.rules(await this.get(pathFor(name, '/about/rules')));
+    const value = wireArray(await redditCall(this.rpc, 'getRules', [name]), 'Devvit subreddit rules');
+    return {
+      rules: value.map(item => {
+        const raw = wireMap(item, 'Devvit subreddit rule');
+        return {
+          shortName: wireText(raw['shortName'], 'Devvit rule shortName'),
+          description: wireText(raw['description'], 'Devvit rule description', ''),
+          violationReason: wireMaybeText(raw['violationReason']),
+          kind: wireMaybeText(raw['kind']),
+          priority: wireMaybeNumber(raw['priority']),
+        };
+      }),
+      siteRules: [],
+    };
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
-    try {
-      return decode.sticky(await this.get(`${pathFor(name, '/sticky')}?num=${slot}`));
-    } catch (error) {
-      if (error instanceof RedditError && error.kind === 'not_found') return null;
-      throw error;
-    }
+    const posts = await this.hotPosts(name, 10);
+    return posts.filter(item => item.stickied)[slot - 1] ?? null;
   }
 
   public async hotPosts(name: string, limit = 100): Promise<readonly RedditPost[]> {
-    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    return decode.posts(await this.get(`${pathFor(name, '/hot')}?limit=${safeLimit}`), 'hot posts').items;
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getHotPosts', args: [{ subredditName: name, limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit hot posts').map(post);
   }
 
   public async newPosts(name: string, limit = 25): Promise<readonly RedditPost[]> {
-    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    return decode.posts(await this.get(`${pathFor(name, '/new')}?limit=${safeLimit}`)).items;
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getNewPosts', args: [{ subredditName: name, limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit new posts').map(post);
   }
 
   public async newComments(name: string, limit = 25): Promise<readonly RedditComment[]> {
-    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    return decode.comments(await this.get(`${pathFor(name, '/comments')}?limit=${safeLimit}`)).items;
+    return (await this.spool.recentCommentEvents(name, limit))
+      .map(event => triggeredComment(event as DevvitWire))
+      .sort((left, right) => right.createdUtc - left.createdUtc || right.fullname.localeCompare(left.fullname));
   }
 
   public async newPostsHistory(name: string, maxItems = 1000): Promise<readonly RedditPost[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages(pathFor(name, '/new'), 100, value => decode.posts(value, 'new posts'), max);
+    return await this.newPosts(name, Math.max(1, Math.min(1000, Math.floor(maxItems))));
   }
 
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
+    return await this.newComments(name, Math.max(1, Math.min(1000, Math.floor(maxItems))));
   }
 
   public async inboxDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages('/message/inbox', 100, value => {
-      const page = directMessages(value, 'private message inbox');
-      return { items: page.messages, after: page.after };
-    }, max);
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getMessages', args: [{ type: 'inbox', limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit inbox messages').map(directMessage);
   }
 
   public async unreadDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages('/message/unread', 100, value => {
-      const page = directMessages(value, 'unread private messages');
-      return { items: page.messages, after: page.after };
-    }, max);
+    return (await this.inboxDirectMessages(maxItems)).filter(message => message.isNew);
   }
 
   public async sentDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
-    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
-    return await this.pages('/message/sent', 100, value => {
-      const page = directMessages(value, 'sent private messages');
-      return { items: page.messages, after: page.after };
-    }, max);
+    const safeLimit = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    const value = await redditChain(this.rpc, [
+      { kind: 'call', name: 'getMessages', args: [{ type: 'sent', limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
+      { kind: 'call', name: 'all', args: [] },
+    ]);
+    return wireArray(value, 'Devvit sent messages').map(directMessage);
   }
 
   public async modmailConversations(name: string, limit = 100): Promise<ModmailConversationPage> {
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    const query = new URLSearchParams({
-      entity: name,
-      limit: String(safeLimit),
-      sort: 'recent',
-      state: 'all',
-    });
-    return modmailConversations(await this.get(`/api/mod/conversations?${query}`));
+    const value = await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'getConversations', args: [{ subreddits: [name], limit: safeLimit, sort: 'recent', state: 'all' }] },
+    ]);
+    const raw = wireMap(value, 'Devvit modmail conversations');
+    const conversationsRaw = raw['conversations'];
+    const conversations = conversationsRaw === undefined || conversationsRaw === null
+      ? []
+      : Object.values(wireMap(conversationsRaw, 'Devvit modmail conversation map')).map(modmailConversationFrom);
+    return {
+      conversations,
+      after: wireMaybeText(raw['next']) ?? wireMaybeText(raw['after']),
+    };
   }
 
   public async modmailConversation(id: string, markRead = false): Promise<ModmailConversation> {
-    const value = id.trim().replace(/^ModmailConversation_/u, '');
-    if (!/^[A-Za-z0-9]+$/u.test(value)) throw new Error(`Invalid Reddit modmail conversation id ${id}`);
-    const query = new URLSearchParams({ markRead: String(markRead) });
-    return modmailConversation(await this.get(`/api/mod/conversations/${encodeURIComponent(value)}?${query}`));
+    const value = await redditChain(this.rpc, [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'getConversation', args: [{ conversationId: id, markRead }] },
+    ]);
+    const raw = wireMap(value, 'Devvit modmail conversation response');
+    const conversationValue = raw['conversation'] ?? raw;
+    const conversationRaw = wireMap(conversationValue, 'Devvit modmail conversation');
+    const merged: { [key: string]: DevvitWire } = { ...conversationRaw };
+    if (raw['messages'] !== undefined) merged['messages'] = raw['messages'];
+    return modmailConversationFrom(merged);
   }
 
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
-    if (fullnames.length === 0) return [];
     const values = [...new Set(fullnames.map(value => value.trim()))];
     if (values.length > 100) throw new Error('Reddit score inventory reads are limited to 100 fullnames per request');
-    for (const fullname of values) {
-      if (!/^(?:t1|t3)_[A-Za-z0-9]+$/u.test(fullname)) throw new Error(`Invalid Reddit fullname ${fullname}`);
-    }
-    const query = new URLSearchParams({ id: values.join(',') });
-    return thingScores(await this.get(`/api/info?${query}`));
-  }
-
-  private async pages<T>(
-    path: string,
-    pageLimit: number,
-    decoder: (value: Json) => decode.RedditListing<T>,
-    maxItems = Number.MAX_SAFE_INTEGER,
-  ): Promise<readonly T[]> {
-    const out: T[] = [];
-    let after: string | null = null;
-    do {
-      const remaining = Math.max(0, maxItems - out.length);
-      if (remaining === 0) break;
-      const limit = Math.max(1, Math.min(pageLimit, remaining));
-      const query = new URLSearchParams({ limit: String(limit), count: String(out.length) });
-      if (after !== null) query.set('after', after);
-      const page = decoder(await this.get(`${path}?${query}`));
-      out.push(...page.items.slice(0, remaining));
-      after = page.after;
-    } while (after !== null && out.length < maxItems);
-    return out;
-  }
-
-  private async token(force = false): Promise<string> {
-    const now = Date.now();
-    if (!force && this.tokenCache !== null && this.tokenCache.until > now + 60_000) return this.tokenCache.value;
-
-    const body = new URLSearchParams({
-      grant_type: 'password',
-      username: this.cfg.username,
-      password: this.cfg.password,
-    });
-    const basic = Buffer.from(`${this.cfg.clientId}:${this.cfg.clientSecret}`).toString('base64');
-    let response: Response;
-    try {
-      response = await this.fetcher(tokenApi, {
-        method: 'POST',
-        headers: {
-          authorization: `Basic ${basic}`,
-          'content-type': 'application/x-www-form-urlencoded',
-          'user-agent': this.cfg.userAgent,
-        },
-        body,
-      });
-    } catch {
-      throw new RedditError('OAuth token request failed at the network boundary', 'network');
-    }
-    if (!response.ok) {
-      throw new RedditError('OAuth token request was rejected', statusKind(response.status), response.status, retryAfterMs(response.headers));
-    }
-    const payload = await json(response, 'OAuth token request');
-    if (!isMap(payload)) throw new RedditError('OAuth token response was not an object', 'invalid_response', response.status);
-    const value = strVal(payload['access_token'], 'access_token');
-    const seconds = numVal(payload['expires_in'], 'expires_in');
-    if (value.length === 0 || seconds <= 0) throw new RedditError('OAuth token response was incomplete', 'invalid_response', response.status);
-    this.tokenCache = { value, until: now + Math.floor(seconds * 1_000) };
-    return value;
-  }
-
-  private async get(path: string): Promise<Json> {
-    return await this.request(path, false);
-  }
-
-  private async request(path: string, reauthed: boolean): Promise<Json> {
-    const url = new URL(`${api}${path}`);
-    if (!url.searchParams.has('raw_json')) url.searchParams.set('raw_json', '1');
-
-    let last: RedditError | null = null;
-    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const token = await this.token(reauthed && attempt === 0);
-      let response: Response;
-      try {
-        response = await this.fetcher(url, {
-          headers: {
-            authorization: `Bearer ${token}`,
-            'user-agent': this.cfg.userAgent,
-          },
-        });
-      } catch {
-        last = new RedditError('Reddit request failed at the network boundary', 'network');
-        if (attempt + 1 < this.maxAttempts) {
-          await this.sleep(backoffMs(attempt, this.random));
-          continue;
-        }
-        throw last;
-      }
-
-      this.latestRate = rateFrom(response.headers);
-      if (response.ok) return await json(response, `GET ${url.pathname}`);
-
-      if (response.status === 401 && !reauthed) {
-        this.tokenCache = null;
-        return await this.request(path, true);
-      }
-
-      const kind = statusKind(response.status);
-      const retry = retryAfterMs(response.headers);
-      last = new RedditError(`GET ${url.pathname} failed`, kind, response.status, retry);
-      const retryable = kind === 'rate_limit' || kind === 'server';
-      if (!retryable || attempt + 1 >= this.maxAttempts) throw last;
-      await this.sleep(retry ?? backoffMs(attempt, this.random));
-    }
-    throw last ?? new RedditError('Reddit request failed', 'unknown');
+    return await Promise.all(values.map(async value => {
+      const kind = value.startsWith('t1_') ? 'comment' : value.startsWith('t3_') ? 'post' : null;
+      if (kind === null) throw new Error(`Invalid Reddit fullname ${value}`);
+      const raw = wireMap(
+        await redditCall(this.rpc, kind === 'post' ? 'getPostById' : 'getCommentById', [value]),
+        `Devvit ${kind}`,
+      );
+      return {
+        fullname: value,
+        score: wireNumber(raw['score'], `Devvit ${kind} score`, 0),
+        archived: wireBoolean(raw['archived'], `Devvit ${kind} archived`, false),
+      };
+    }));
   }
 }
