@@ -43,13 +43,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-curl -fsSLo "$node_archive" "https://nodejs.org/dist/v${node_version}/${node_name}.tar.xz"
-curl -fsSLo "$node_sums" "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
+curl -fsSLo "$node_archive" "https://nodejs.org/dist/v${node_version}/${node_name}.tar.xz" || exit $?
+curl -fsSLo "$node_sums" "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt" || exit $?
 expected_node_sha="$(awk -v file="${node_name}.tar.xz" '$2 == file { print $1 }' "$node_sums")"
 [ -n "$expected_node_sha" ] || { echo 'Could not find Node archive checksum.' >&2; exit 2; }
 actual_node_sha="$(sha256sum "$node_archive" | awk '{ print $1 }')"
 [ "$actual_node_sha" = "$expected_node_sha" ] || { echo 'Node archive checksum mismatch.' >&2; exit 2; }
-tar -xJf "$node_archive" -C "$root"
+tar -xJf "$node_archive" -C "$root" || exit $?
 PATH="$node_home/bin:$PATH"
 export PATH
 
@@ -77,25 +77,25 @@ printf '  live source: %s\n' "$live"
 printf '  disposable root: %s\n' "$root"
 printf '  disposable branch: %s\n' "$ephemeral"
 
-git clone --quiet --no-checkout "$remote" "$repo"
-git -C "$repo" fetch --quiet origin "$ref"
-git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
-git -C "$repo" submodule update --init --recursive
+git clone --quiet --no-checkout "$remote" "$repo" || exit $?
+git -C "$repo" fetch --quiet origin "$ref" || exit $?
+git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD || exit $?
+git -C "$repo" submodule update --init --recursive || exit $?
 
 cd "$repo"
 printf '  candidate SHA: %s\n' "$(git rev-parse HEAD)"
 printf '  node: %s\n' "$(node --version)"
 printf '  npm: %s\n' "$(npm --version)"
 
-run_no_warnings bun-install bun ci
-run_no_warnings mae-ci bun run ci
+run_no_warnings bun-install bun ci || exit $?
+run_no_warnings mae-ci bun run ci || exit $?
 
-run_no_warnings devvit-install npm --prefix devvit install --no-package-lock --no-audit --no-fund
-run_no_warnings devvit-ci npm --prefix devvit run ci
+run_no_warnings devvit-install npm --prefix devvit install --no-package-lock --no-audit --no-fund || exit $?
+run_no_warnings devvit-ci npm --prefix devvit run ci || exit $?
 
 mkdir -p "$build"
-run_no_warnings bun-build bun build ./src/main.ts --target=bun --outdir "$build"
-test -s "$build/main.js"
+run_no_warnings bun-build bun build ./src/main.ts --target=bun --outdir "$build" || exit $?
+test -s "$build/main.js" || { echo 'Bun production build did not produce main.js.' >&2; exit 1; }
 
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
   echo 'Disposable CI checkout was modified by validation.' >&2
