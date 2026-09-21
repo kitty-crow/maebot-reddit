@@ -10,7 +10,6 @@ import {
   redditCall,
   redditChain,
   wireMap,
-  wireMaybeText,
   wireText,
 } from './devvitCompat.ts';
 import { DevvitRpcClient } from './devvitRpc.ts';
