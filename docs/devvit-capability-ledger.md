@@ -1,232 +1,300 @@
-# Devvit Capability Ledger
+# Devvit Migration Status and Capability Ledger
 
 Date: 2026-09-22  
 Target Devvit version: 0.14.4  
-Migration branch: `feat/devvit-migration-clean`
+Branch: `feat/devvit-migration-clean`
 
-## Purpose
+## Current production decision
 
-This document is the authoritative migration ledger for the Reddit transport boundary.
+**Mae uses the existing Reddit OAuth/Data API implementation for every Reddit operation.**
 
-Mae's business logic is not being migrated to Devvit. Mae continues to use the same Reddit-facing contracts. The transport layer routes each operation either through the generic Devvit compatibility adapter or through the existing Reddit OAuth/Data API implementation.
+No Mae Reddit read, mutation, Modmail action, Mod Note action, flair action, post, score lookup, DM operation, media operation, moderation operation, or publishing path is currently routed through Devvit.
 
-The adapter is generic. It knows how to translate Reddit operations to Devvit. It must not know anything about Mae's stores, moderation rules, reputation model, Twitter integration, tickets, Discord, Telegram, or service topology.
+The Devvit app exists only as a minimal presence/proof-of-port:
 
-## Status rules
+- registered app: `this-is-the-mae`
+- Reddit permission enabled
+- no media permission
+- no Redis
+- no scheduler
+- no settings service
+- no External Endpoint dependency
+- no public Mae Reddit hostname
+- no additional Mae listener or port
+- no polling/spool/queue bridge
+- no Discord, Telegram, Tickets, Twitter, moderation, reputation, or Mae-state logic
 
-- **DEVVIT**: Devvit 0.14.4 exposes the required capability closely enough to implement the current contract. This still requires adapter parity tests before cutover.
-- **OAUTH**: Devvit 0.14.4 does not expose an equivalent capability with the semantics Mae currently relies on. Keep the existing OAuth/Data API implementation.
-- **VERIFY**: A related Devvit capability exists, but exact 0.14.4 parity has not yet been proven. Keep OAuth active until type-checking, unit parity tests and a private-installation test prove equivalence.
-- **MIXED**: The public Mae method covers more than one Reddit capability. Route supported cases through Devvit and unsupported cases through OAuth.
+Its only runtime route is:
 
-A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely because a later Devvit release documents something similar. The exact behaviour Mae relies on must be demonstrated first.
+```text
+GET /api/status
+```
 
-## Read surface
+That route resolves Devvit's injected app account with `reddit.getAppUser()` and reports that the app is alive. It is not part of Mae's production Reddit transport.
 
-| Mae operation | Status | Devvit 0.14.4 target | Notes |
-| --- | --- | --- | --- |
-| `me()` | DEVVIT | `reddit.getAppUser()` | App-account identity. |
-| `subreddit(name)` | DEVVIT | `reddit.getSubredditInfoByName()` | Adapter must preserve Mae's existing Reddit-shaped return object. |
-| `moderators(name)` | DEVVIT | `reddit.getModerators(...).all()` | Preserve permission decoding. |
-| `bannedUsers(name)` | DEVVIT | `reddit.getBannedUsers(...).all()` | Listing translation required. |
-| `bannedUser(name, user)` | DEVVIT | banned-user listing + exact username match | Compatibility helper, not a new Mae concept. |
-| `mutedUsers(name)` | DEVVIT | `reddit.getMutedUsers(...).all()` | Listing translation required. |
-| `mutedUser(name, user)` | DEVVIT | muted-user listing + exact username match | Compatibility helper. |
-| `emojis(name)` | OAUTH | none verified | Devvit RedditClient does not currently expose the subreddit custom-emoji inventory used by Mae. |
-| `userFlairTemplates(name)` | OAUTH | Devvit `FlairTemplate` omits legacy CSS class | Mae uses CSS class for cloning, reputation bootstrap and presentation parity, so the incomplete Devvit model is not an exact replacement. |
-| `postFlairTemplates(name)` | OAUTH | Devvit `FlairTemplate` omits legacy CSS class | Keep OAuth until Devvit exposes the complete legacy template metadata Mae consumes. |
-| `userFlairAssignments(name)` | OAUTH | `Subreddit.getUserFlair()` omits flair template ID | Mae's assignment contract requires username, template ID, text and CSS class. Devvit 0.14.4 cannot reproduce it exactly. |
-| `userFlairAssignment(name, user)` | OAUTH | user-flair lookup omits flair template ID | Exact single-user assignment parity is unavailable in 0.14.4. |
-| `rules(name)` | DEVVIT | `reddit.getRules()` | The forensic branch unnecessarily kept this on OAuth. |
-| `sticky(name, slot)` | OAUTH | no exact sticky-slot read API | Devvit can mutate a sticky slot but does not expose the old `/sticky?num=1|2` read semantics. |
-| `hotPosts(name, limit)` | DEVVIT | `reddit.getHotPosts(...).all()` | Listing mapping required. |
-| `newPosts(name, limit)` | DEVVIT | `reddit.getNewPosts(...).all()` | Listing mapping required. |
-| `newComments(name, limit)` | OAUTH | no subreddit-wide latest-comments listing | Devvit `getComments()` is scoped to a post/comment, not the old `/r/<sub>/comments` feed. |
-| `newPostsHistory(name, max)` | DEVVIT | `reddit.getNewPosts(...).all()` | Verify pagination/maximum semantics. |
-| `newCommentsHistory(name, max)` | OAUTH | no exact subreddit-wide comment-history listing | Do not create adapter state merely to emulate this. |
-| `inboxDirectMessages(max)` | OAUTH | `reddit.getMessages({ type: 'inbox' })` is incomplete for Mae | Devvit `PrivateMessage` omits destination, subject, parent/thread IDs, new-state and `was_comment` fields Mae's DM runtime consumes. |
-| `unreadDirectMessages(max)` | OAUTH | Devvit `PrivateMessage` shape is incomplete | Keep the legacy message envelope and pagination. |
-| `sentDirectMessages(max)` | OAUTH | Devvit `PrivateMessage` shape is incomplete | Mae uses sent history for duplicate-safe recovery, so partial identity/thread metadata is not acceptable. |
-| `modmailConversations(name, limit)` | DEVVIT | `reddit.modMail.getConversations()` | Devvit 0.14.4 documents subreddit filters, state, sort and limit. |
-| `modmailConversation(id, markRead)` | DEVVIT | `reddit.modMail.getConversation()` | `markRead` is directly represented. |
-| `scores(fullnames)` | MIXED | `getPostById()` for post-only batches | Devvit `Post` exposes both score and archived state. Devvit 0.14.4 `Comment` does not expose archived state, so any batch containing a `t1_` fullname stays on OAuth. |
+## Architecture
 
-## Mutation surface
+The production path remains:
 
-| Mae operation | Status | Devvit 0.14.4 target | Notes |
-| --- | --- | --- | --- |
-| `submitSelf(...)` | DEVVIT | `reddit.submitPost()` | Preserve app-account authorship and flair behaviour. |
-| `crosspost(...)` | DEVVIT | `reddit.crosspost()` | Preserve source fullname and flair behaviour. |
-| `createFlairTemplate(...)` | MIXED | `createUserFlairTemplate()` / `createPostFlairTemplate()` | Devvit 0.14.4 hardcodes legacy CSS class empty. Requests without a CSS class may use Devvit; CSS-bearing templates remain OAuth. |
-| `uploadEmoji(...)` | OAUTH | none verified | Custom emoji asset-upload flow remains legacy. |
-| `updateEmojiPermissions(...)` | OAUTH | none verified | Custom emoji permission administration remains legacy. |
-| `setUserFlairTemplate(...)` | DEVVIT | `reddit.setUserFlair()` | Preserve template ID and optional custom text. |
-| `userFlairSelection(...)` | VERIFY | related flair APIs exist | Need parity with old `/api/flairselector` current-selection response. |
-| `setUserFlairDirect(...)` | DEVVIT | `reddit.setUserFlair()` | Preserve direct text/CSS semantics where Devvit exposes them. |
-| `setPostFlairTemplate(...)` | DEVVIT | `reddit.setPostFlair()` | Preserve template ID and custom text. |
-| `remove(fullname)` | DEVVIT | `reddit.remove(id, false)` | Exact mapping. |
-| `banUser(...)` | DEVVIT | `reddit.banUser()` | Preserve reason/note truncation and state-mutation gate in Mae. |
-| `unbanUser(...)` | DEVVIT | `reddit.unbanUser()` | Exact capability exists. |
-| `sendPrivateMessage(...)` | DEVVIT | `reddit.sendPrivateMessage()` | New outbound PM is supported. |
-| `replyToPrivateMessage(t4, body)` | OAUTH | no reply-to-existing-PM method verified | Devvit can send a new PM, but that is not equivalent to replying inside an existing t4 thread. |
-| `markPrivateMessageRead(t4)` | OAUTH | no direct get-by-fullname PM API | Avoid scanning incomplete message listings merely to find a `t4_` object; retain exact OAuth read-state mutation. |
-| `replyModmail(...)` | DEVVIT | `reddit.modMail.reply()` | 0.14.4 supports `isAuthorHidden` and `isInternal`. |
-| `archiveModmail(...)` | DEVVIT | `reddit.modMail.archiveConversation()` | Exact capability exists. |
-| `muteModmail(...)` | DEVVIT | `reddit.modMail.muteConversation()` | 72, 168 and 672 hour values match Mae's contract. |
-| `unmuteModmail(...)` | DEVVIT | `reddit.modMail.unmuteConversation()` | Exact capability exists. |
-| `muteUser(...)` | OAUTH | `reddit.muteUser()` has no duration parameter | Mae explicitly requests a 28-day mute. Exact duration parity is unproven in Devvit 0.14.4, so mute creation remains OAuth. |
-| `unmuteUser(...)` | DEVVIT | `reddit.unmuteUser()` | Exact capability exists. |
-| `sticky(postId, slot)` | DEVVIT | `Post.sticky(slot)` | Mutation is supported even though exact sticky-slot read remains VERIFY. |
+```text
+Mae business logic
+      |
+      v
+existing Reddit clients
+      |
+      v
+Reddit OAuth / Data API
+```
 
-## Media surface
+The staged future architecture remains:
 
-| Mae operation | Status | Devvit 0.14.4 target | Notes |
-| --- | --- | --- | --- |
-| `uploadMedia(name, mime, bytes)` | MIXED | Devvit media upload for supported image media | Image path is expected to move to Devvit. Video/raw-media parity is not yet proven and remains OAuth. |
-| `submitMedia(...)` | MIXED | media upload + `reddit.submitPost()` | Plain image submission is expected to use Devvit. Native video and any legacy body-plus-media semantics stay OAuth until exact parity is proven. |
-| `submitGallery(...)` | OAUTH | no exact native gallery submission flow proven | Keep the existing gallery implementation until Devvit exposes and verifies equivalent behaviour. |
+```text
+Mae business logic
+      |
+      | same existing Reddit-shaped calls
+      v
+transport boundary
+      |
+      +--> OAuth / Data API                 (active for everything today)
+      |
+      '--> generic Devvit compatibility adapter   (staged, currently unwired)
+                |
+                v
+              Devvit
+                |
+                v
+              Reddit
+```
 
-## Member Mod Notes surface
+The critical rule is unchanged:
 
-| Mae operation | Status | Devvit 0.14.4 target | Notes |
-| --- | --- | --- | --- |
-| `recentCommentsInCommunities(...)` | VERIFY | `reddit.getCommentsByUser()` + community filtering | Devvit has a user-comment listing, which may be a cleaner replacement than the old subreddit-history scan. Ordering, scan limit and community filtering must match before routing changes. |
-| `addModNote(...)` | DEVVIT | `reddit.addModNote()` | Preserve native Mod Note ID and label semantics. |
-| `deleteModNote(...)` | DEVVIT | `reddit.deleteModNote()` | Preserve note-id validation. |
+> **Do not change Mae to fit Devvit. The adapter must translate what Mae already does into what Devvit expects.**
 
-## Known Devvit gaps and future retirement backlog
+Mae must not learn Devvit method names, Devvit object models, Devvit media conventions, Devvit storage, Devvit authentication internals, or Devvit transport details.
 
-These are the current capabilities for which the OAuth implementation must remain available unless a future Devvit release adds an exact equivalent.
+## What is currently active
 
-1. **Subreddit custom emoji inventory**
-   - Current Mae operation: `emojis()`
-   - Needed Devvit capability: list all custom subreddit emojis including URL and permission metadata.
+| Surface | Current route |
+| --- | --- |
+| Mae Reddit reads | OAuth |
+| Mae Reddit mutations | OAuth |
+| Mae Modmail | OAuth |
+| Mae DMs | OAuth |
+| Mae Mod Notes | OAuth |
+| Mae moderation relationships | OAuth |
+| Mae flair reads/writes | OAuth |
+| Mae posts/crossposts | OAuth |
+| Mae score sampling | OAuth |
+| Mae sticky reads/writes | OAuth |
+| Mae emoji management | OAuth |
+| Mae media uploads | OAuth |
+| Mae image/video/gallery submission | OAuth |
+| Main-user announcements | OAuth |
+| Devvit app presence | Devvit `GET /api/status` only |
 
-2. **Subreddit custom emoji asset upload**
-   - Current Mae operation: `uploadEmoji()`
-   - Needed Devvit capability: upload/replace custom emoji bytes and return equivalent asset state.
+There is intentionally **no mixed runtime routing yet**.
 
-3. **Subreddit custom emoji permission administration**
-   - Current Mae operation: `updateEmojiPermissions()`
-   - Needed Devvit capability: change custom emoji permission metadata.
+## Staged but unwired Devvit work
 
-4. **Subreddit-wide newest-comment listing**
-   - Current Mae operations: `newComments()`, `newCommentsHistory()`
-   - Needed Devvit capability: an exact equivalent of Reddit's subreddit comment listing with ordering and pagination.
-   - Devvit comment triggers are not treated as equivalent because emulating a listing from retained events would create adapter state and change bootstrap/history semantics.
+The branch retains compatibility/controller work that was built and parity-tested before the decision to keep the migration minimal.
 
-5. **Reply to an existing private-message thread**
-   - Current Mae operation: `replyToPrivateMessage()`
-   - Needed Devvit capability: reply to an existing `t4_` object/thread rather than composing a new message.
+These files are intentionally **not imported by the Devvit runtime entrypoint**:
 
-6. **Native Reddit gallery submission**
-   - Current Mae operation: `submitGallery()`
-   - Needed Devvit capability: exact multi-image gallery creation with equivalent flair/result semantics.
+- `devvit/src/server/controller.ts`
+- `devvit/src/server/legacyAdapter.ts`
+- `devvit/src/server/legacyCompat.ts`
+- `devvit/src/server/legacyMutationCompat.ts`
 
-7. **Complete flair-template metadata**
-   - Current Mae operations: `userFlairTemplates()`, `postFlairTemplates()`
-   - Needed Devvit capability: expose the legacy CSS class alongside the existing template metadata.
+Their tests remain useful because they document translation work already completed and protect it from accidental regression while it is dormant.
 
-8. **Complete user-flair assignment metadata**
-   - Current Mae operations: `userFlairAssignments()`, `userFlairAssignment()`
-   - Needed Devvit capability: expose the assigned flair template ID together with username, text and CSS class.
+The staged mappings include work for several Reddit operations such as:
 
-9. **Exact sticky-slot reads**
-   - Current Mae operation: `sticky(subreddit, slot)`
-   - Needed Devvit capability: retrieve sticky slot 1 or 2 directly with old Reddit semantics.
+- app-account identity
+- subreddit information
+- moderator/ban/mute listings
+- rules
+- hot/new post listings
+- Modmail reads/actions
+- self-post/crosspost translation
+- selected flair operations
+- remove/ban/unban
+- outbound private messages
+- selected Mod Notes operations
+- sticky mutation
 
-10. **Complete private-message objects and lookup**
-   - Current Mae operations: inbox/unread/sent DM history and mark-one-read
-   - Needed Devvit capability: preserve subject, destination, thread/parent identity, read/new state and comment-message distinction, plus direct lookup by `t4_` fullname.
+**None of those staged mappings are active in production.** Passing parity tests means only that the translation code is preserved, not that Mae uses it.
 
-11. **Comment archived state for score sampling**
-   - Current Mae operation: `scores(fullnames)` when the batch contains `t1_` comments
-   - Needed Devvit capability: expose the legacy comment archived state alongside score.
-   - Post-only score batches may use Devvit; mixed/comment batches remain OAuth.
+## Devvit media decision
 
-12. **Exact 28-day user mute creation**
-   - Current Mae operation: `muteUser(...)`
-   - Needed Devvit capability: expose or document the mute duration so Mae's explicit 28-day legacy semantics can be preserved.
-   - `unmuteUser(...)` may still use Devvit because removal of the muted relationship is exact.
+Devvit media is removed from the current migration completely.
 
-## Capabilities still under verification
+The Devvit app:
 
-These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.4 parity is demonstrated.
+- does not request `media` permission;
+- does not import `media` from `@devvit/web/server`;
+- has no raw-media route;
+- has no Devvit media adapter;
+- does not attempt image, video, gallery, attachment, or managed-media upload.
 
-- Current user-flair selection equivalent to `/api/flairselector`.
-- Native video upload/submission.
-- Image/media submission when Mae supplies both native media and a body.
-- `recentCommentsInCommunities()` via `getCommentsByUser()`.
-- Score sampling cost when a post-only old `/api/info` batch maps to multiple Devvit object reads.
+Mae's existing raw-byte media APIs remain unchanged and use the old Reddit OAuth implementation.
 
-## Generic adapter surface
+If Devvit media becomes useful in a future release, the rule remains the same: the **adapter** must convert Mae's existing byte contract into the Devvit representation. Mae must not be modified to supply Devvit-specific URLs or payloads.
 
-The Devvit app exposes two server-side surfaces:
+## Why the adapter is currently unwired
 
-- `POST /api/controller`: generic bounded command execution over the Devvit `reddit` and `media` roots. This is application-agnostic and exists so the Devvit bot is not hard-coded to Mae's current method list.
-- `/api/reddit/*`: legacy Reddit REST-shaped compatibility routes used to prove that the existing Mae clients can consume Devvit results without changing their business-facing contracts.
+The compatibility work is not the current blocker. The supported production invocation path is.
 
-The generic controller is the capability primitive. The legacy compatibility routes are translations layered on top of it. Neither surface contains Mae business rules or canonical Mae state.
+Devvit 0.14.4 manages Reddit authentication inside its hosted runtime. The public SDK exposes runtime-injected Reddit capability clients, but does not expose a documented external client credential/factory that lets Mae's local Bun process invoke those Reddit plugin calls directly.
 
-## Publishing identity routing
+Reddit documents:
 
-Transport selection is not based only on the REST path. The caller's Reddit identity is part of the routing contract.
+- normal Devvit `/api/*` server routes for the app runtime/webview model;
+- External Endpoints for trusted outside services invoking a hosted Devvit app;
+- HTTP Fetch for Devvit calling an external allow-listed backend.
 
-- Mae's ordinary automated Reddit identity may use the Devvit adapter for capabilities classified DEVVIT/MIXED.
-- The existing major-announcement/main-user `RedditMutationClient` must remain on legacy OAuth even for operations such as `/api/submit` that the Devvit adapter otherwise supports.
-- The compatibility adapter always creates Devvit-routed posts as the app account. It must never impersonate or replace the configured announcement identity.
-- A future Mae-side transport hook must therefore be attached only to the ordinary Mae Reddit client, never globally to every `RedditMutationClient` instance.
+This deployment does **not** depend on External Endpoints, and Mae Reddit must not gain a public hostname merely to make Devvit call back into it.
 
-## Runtime invocation constraint
+Therefore the branch deliberately does not invent any of the following:
 
-This ledger tracks Reddit API capability parity separately from the physical invocation mechanism.
+- public `mae.kittycrow.dev` Reddit bridge
+- second Mae port
+- Redis queue
+- durable RPC spool
+- scheduler polling
+- fixed-time polling
+- Reddit-object signalling
+- Discord/Telegram relay
+- undocumented Devvit gateway RPC
+- Devvit-owned Mae state
 
-Devvit 0.14.4 manages Reddit authentication inside its hosted runtime when `permissions.reddit` is enabled. It does not document a traditional Devvit client ID/client secret that an external Bun service can use to invoke `reddit.*` directly.
+Until a supported wire exists that fits the architecture, OAuth remains the complete production transport.
 
-Conventional Devvit `/api/*` server endpoints are documented as webview-client-to-Devvit-server endpoints. Reddit documents External Endpoints separately for trusted outside services invoking a hosted Devvit app.
+## Known Devvit 0.14.4 gaps relevant to Mae
 
-Therefore:
+The following capabilities are incomplete, absent, or semantically insufficient for Mae's current contracts. They remain future backlog, not migration requirements for the current minimal Devvit presence.
 
-- do not put an invented "Devvit OAuth" flow into Mae;
-- do not use undocumented Devvit CLI/gateway internals as a production transport;
-- do not reintroduce a public Mae Reddit hostname as a shortcut;
-- keep the generic adapter independent of the eventual invocation mechanism;
-- do not wire Mae to the adapter until that mechanism is supported and demonstrated.
+### Custom emoji
 
-This is a transport constraint, not a reason to move Mae business logic into Devvit.
+Devvit 0.14.4 does not provide the complete custom-emoji inventory/upload/permission flow Mae currently uses.
 
-## Upgrade procedure
+Affected Mae operations:
 
-When a future Devvit release adds one of the missing capabilities:
+- emoji inventory
+- emoji asset upload
+- emoji permission administration
 
-1. Update this ledger first and record the Devvit version that adds the capability.
-2. Add the translation only inside the generic adapter/transport layer.
-3. Add parity tests against the existing OAuth behaviour.
-4. Validate against a private Devvit installation.
-5. Run the exact candidate through Mae's host CI on the user's server.
-6. Switch only that one capability from OAuth to the adapter.
-7. Do not alter Mae business callers to accommodate the transport.
+### Flair metadata
+
+Devvit flair models do not expose all legacy metadata Mae relies on, including complete CSS/template assignment information in several paths.
+
+Affected areas include:
+
+- flair template cloning
+- authoritative flair reconciliation
+- current selected flair template identity
+
+### Private messages
+
+Devvit's private-message model does not provide full parity with Mae's legacy message envelope and exact thread/read-state operations.
+
+Affected areas include:
+
+- inbox/unread/sent history
+- exact reply-to-existing-`t4_`
+- exact mark-one-message-read
+- complete parent/thread/destination metadata
+
+### Subreddit comment history
+
+Devvit does not expose an exact replacement for Reddit's subreddit-wide newest-comment/history listing semantics used by Mae.
+
+### Score sampling
+
+Devvit does not provide Mae's existing batched `/api/info` semantics with complete archived-state parity for all thing types.
+
+### Mute duration
+
+Mae explicitly creates 28-day user mutes. Devvit 0.14.4 does not expose that duration in the equivalent API contract.
+
+### Sticky reads
+
+Devvit can mutate sticky state, but exact legacy sticky-slot read semantics are not exposed.
+
+### Media
+
+Devvit media is intentionally not part of the current migration. All Mae media remains OAuth.
+
+### Native galleries/video
+
+No exact replacement for Mae's existing native gallery/video submission flow is activated.
+
+## Strict TypeScript and architecture enforcement
+
+The dormant adapter remains subject to the repository's strict TypeScript policy.
+
+The branch keeps:
+
+- `strict`
+- `exactOptionalPropertyTypes`
+- `noUncheckedIndexedAccess`
+- `noImplicitOverride`
+- `noImplicitReturns`
+- `noUnusedLocals`
+- `noUnusedParameters`
+- strict catch variables
+- repository no-loose-types checks
+
+The architecture guard also enforces that the Devvit runtime may import only `reddit` from `@devvit/web/server`.
+
+It rejects reintroduction of:
+
+- Devvit media
+- Redis
+- scheduler
+- settings/persistence services
+- failed bridge environment variables
+- `DevvitRpcSpool`
+- Mae Tickets hostname coupling
+- Mae business-module imports
+- Discord/Telegram coupling
+
+## Publishing identity invariant
+
+The existing main-user/announcement OAuth identity remains untouched.
+
+Even if Devvit routing is enabled in the future, it must never globally intercept every `RedditMutationClient` instance. Main-account publishing stays OAuth unless an explicit future decision changes that identity policy.
+
+## Future activation procedure
+
+A future Devvit capability must not become active merely because corresponding code already exists in this branch.
+
+For each individual operation:
+
+1. Confirm the current Devvit release exposes exact semantics.
+2. Update this ledger with the version and evidence.
+3. Add or update adapter-only translation.
+4. Keep Mae's caller contract unchanged.
+5. Add parity tests against the existing OAuth behaviour.
+6. Prove a supported production invocation wire.
+7. Run the exact candidate through host CI.
+8. Enable only that one transport route.
+9. Keep OAuth fallback for everything else.
+
+Until those steps happen, **OAuth is authoritative and Devvit is presence-only**.
 
 ## Architectural invariants
 
-- The migration is developed off `main`; `main` remains the known-good pre-migration bot until cutover.
+- `main` remains the known-good pre-migration line until an explicit cutover decision.
+- Mae runtime code is not modified for the current minimal Devvit presence.
 - Mae does not know Devvit internals.
-- The generic adapter does not know Mae internals.
-- OAuth credentials remain configured while any ledger entry still requires OAuth.
-- Devvit app registration and Reddit permissions are added; no external Devvit client secret is assumed.
-- Devvit-managed Reddit authentication exists inside the hosted Devvit runtime. Any Mae-to-Devvit invocation mechanism must be separately proven and must not be invented in Mae.
-- Routing occurs at the Reddit transport boundary.
-- No fixed-time polling is introduced for the adapter.
-- No new Mae Reddit port is introduced.
+- The dormant adapter does not know Mae business internals.
+- OAuth credentials remain active for all production Reddit behaviour.
+- Devvit has no media permission.
+- No fixed-time polling exists.
+- No new Mae Reddit port exists.
 - Mae's existing internal loopback HTTP listener remains the only Bun listener.
 - Mae Reddit has no public hostname.
 - `mae.kittycrow.dev` is not part of this architecture.
-- No Devvit transport state becomes canonical Mae state.
-- No capability is marked migrated merely because TypeScript compiles.
-
-## Reference documentation
-
-- Devvit 0.14.4 changelog: https://developers.reddit.com/docs/changelog
-- Devvit public API 0.14.4: https://developers.reddit.com/docs/api/public-api
-- RedditClient 0.14.4: https://developers.reddit.com/docs/api/public-api/classes/RedditClient
-- ModMailService 0.14.4: https://developers.reddit.com/docs/api/public-api/classes/ModMailService
+- Devvit owns no canonical Mae state.
+- Dormant compatibility code is not considered an active migration.
+- A green compile/test does not itself authorise routing a capability through Devvit.
