@@ -8,6 +8,6 @@ Ordinary automated Reddit activity runs as the Devvit app account `u/this_is_the
 
 ## Fetch Domains
 
-- `mae.kittycrow.dev` — Mae's existing authenticated backend ingress. Devvit uses only the `/v1/devvit` controller route on this host to receive queued Reddit operations from Mae and return their results. Mae's existing internal API remains loopback-only and is not exposed through this integration.
+- `mae.kittycrow.dev` — reverse-proxies only `/v1/devvit/*` to Mae Reddit's existing loopback internal API listener. The Devvit routes use the `maeBridgeSecret`; the rest of Mae Reddit's internal API keeps its existing internal bearer token and is not exposed through nginx. No separate Devvit ingress listener is used.
 
-This domain is required as part of migrating the existing Reddit Data API application to Devvit without moving Mae's canonical application state or business logic into Devvit.
+This keeps the bridge on the same local adapter/API port already used by Mae's other services while preserving authentication separation.
