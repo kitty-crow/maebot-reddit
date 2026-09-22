@@ -154,6 +154,15 @@ These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.
 - `recentCommentsInCommunities()` via `getCommentsByUser()`.
 - Score sampling cost when a post-only old `/api/info` batch maps to multiple Devvit object reads.
 
+## Publishing identity routing
+
+Transport selection is not based only on the REST path. The caller's Reddit identity is part of the routing contract.
+
+- Mae's ordinary automated Reddit identity may use the Devvit adapter for capabilities classified DEVVIT/MIXED.
+- The existing major-announcement/main-user `RedditMutationClient` must remain on legacy OAuth even for operations such as `/api/submit` that the Devvit adapter otherwise supports.
+- The compatibility adapter always creates Devvit-routed posts as the app account. It must never impersonate or replace the configured announcement identity.
+- A future Mae-side transport hook must therefore be attached only to the ordinary Mae Reddit client, never globally to every `RedditMutationClient` instance.
+
 ## Runtime invocation constraint
 
 This ledger tracks Reddit API capability parity separately from the physical invocation mechanism.
