@@ -28,6 +28,16 @@ const forbidden: readonly {
   { pattern: /vendor\/mae-tickets\/src/iu, reason: 'Reddit must not import Mae Tickets implementation internals', activeOnly: true },
 ];
 
+const adapterForbidden: readonly {
+  readonly pattern: RegExp;
+  readonly reason: string;
+}[] = [
+  { pattern: /(?:^|[\\/])src[\\/](?:mod|modmail|reputation|twitter|dm|questions)[\\/]/iu, reason: 'Devvit adapter must not import Mae business modules' },
+  { pattern: /(?:mae\.kittycrow\.dev|REDDIT_INTERNAL_API_|REDDIT_DEVVIT_|DevvitRpcSpool)/iu, reason: 'Devvit adapter must not know Mae transport configuration or failed migration scaffolding' },
+  { pattern: /(?:Discord|Telegram|Mae Tickets|mae-tickets|twitter\.pb|reputation\.pb)/iu, reason: 'Devvit adapter must remain generic and platform-only' },
+  { pattern: /\b(?:redis|scheduler|settings)\b/iu, reason: 'Generic Devvit adapter must not acquire polling, spool, or bridge state without an explicit reviewed requirement' },
+];
+
 const forbiddenActivePaths = [
   /^src[\\/]modmail[\\/]terminalServer\.ts$/iu,
   /^src[\\/]modmail[\\/]terminalPage(?:View)?\.(?:ts|tsx)$/iu,
@@ -67,7 +77,30 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
   }
 };
 
+const scanAdapter = async (dir: string): Promise<void> => {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const file = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await scanAdapter(file);
+      continue;
+    }
+    if (!sourceFile(file)) continue;
+    const path = relative(process.cwd(), file);
+    const raw = await readFile(file, 'utf8');
+    for (const rule of adapterForbidden) {
+      if (rule.pattern.test(raw)) hits.push(`${path}: ${rule.reason}`);
+    }
+  }
+};
+
 for (const root of roots) await scan(root, activeRoots.has(root));
+try {
+  await scanAdapter('devvit/src');
+} catch (error) {
+  const code = error instanceof Error && 'code' in error ? Reflect.get(error, 'code') : null;
+  if (code !== 'ENOENT') throw error;
+}
+
 if (hits.length > 0) {
   console.error(`Architecture boundary violations:\n${hits.join('\n')}`);
   process.exit(1);
