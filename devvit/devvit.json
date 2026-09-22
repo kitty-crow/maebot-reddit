@@ -8,8 +8,7 @@
   "permissions": {
     "reddit": {
       "enable": true
-    },
-    "media": true
+    }
   },
   "scripts": {
     "build": "vite build",
