@@ -138,7 +138,7 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
     await client.createFlairTemplate('catgirlcoin', 'user', {
       id: 'ignored-source-id',
       text: 'Pawsome',
-      cssClass: 'pawsome',
+      cssClass: null,
       textColour: 'dark',
       backgroundColour: '#ffffff',
       modOnly: false,
@@ -216,6 +216,31 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
       ['getPostById', 't3_post'],
       ['sticky', 2],
     ]);
+  });
+
+  test('flair templates carrying legacy CSS classes stay on OAuth', async () => {
+    const calls: unknown[] = [];
+    const roots: AdapterRoots = {
+      reddit: {
+        async createUserFlairTemplate(options: unknown) {
+          calls.push(options);
+        },
+      },
+      media: {},
+    };
+
+    expect(await handleLegacyMutation({
+      method: 'POST',
+      path: '/r/catgirlcoin/api/flairtemplate_v2',
+      form: {
+        flair_type: 'USER_FLAIR',
+        text: 'Pawsome',
+        css_class: 'pawsome',
+        mod_only: 'false',
+        text_editable: 'false',
+      },
+    }, roots)).toEqual({ supported: false });
+    expect(calls).toEqual([]);
   });
 
   test('unsupported old mutations fail closed so OAuth can remain the fallback', async () => {
