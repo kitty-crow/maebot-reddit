@@ -332,7 +332,7 @@ describe('Devvit legacy Reddit read compatibility', () => {
     }]);
   });
 
-  test('existing post and score decoders consume adapter output', async () => {
+  test('existing post and score decoders consume post-only adapter output', async () => {
     const posts = supported(await handleLegacyRead({
       method: 'GET',
       path: '/r/catgirlcoin/new',
@@ -341,7 +341,7 @@ describe('Devvit legacy Reddit read compatibility', () => {
     const info = supported(await handleLegacyRead({
       method: 'GET',
       path: '/api/info',
-      query: { id: 't3_post,t1_comment' },
+      query: { id: 't3_post' },
     }, roots));
 
     expect(decode.posts(posts).items[0]).toMatchObject({
@@ -353,8 +353,15 @@ describe('Devvit legacy Reddit read compatibility', () => {
     });
     expect(thingScores(info)).toEqual([
       { fullname: 't3_post', score: 9, archived: false },
-      { fullname: 't1_comment', score: 7, archived: false },
     ]);
+  });
+
+  test('keeps comment score batches on OAuth because Devvit Comment omits archived state', async () => {
+    expect(await handleLegacyRead({
+      method: 'GET',
+      path: '/api/info',
+      query: { id: 't3_post,t1_comment' },
+    }, roots)).toEqual({ supported: false });
   });
 
   test('existing Modmail decoders consume adapter output unchanged', async () => {
