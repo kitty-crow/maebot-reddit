@@ -306,6 +306,118 @@ const positiveLimit = (raw: string | undefined, fallback: number, max: number): 
   return Math.min(max, value);
 };
 
+const modmailState = (value: Wire | undefined): string => {
+  if (typeof value === 'number') {
+    return ['new', 'inprogress', 'archived', 'appeals', 'join_requests', 'filtered'][value] ?? 'unknown';
+  }
+  if (typeof value !== 'string') return 'unknown';
+  const normalised = value.replace(/[_ -]/gu, '').toLowerCase();
+  if (normalised === 'new') return 'new';
+  if (normalised === 'inprogress') return 'inprogress';
+  if (normalised === 'archived') return 'archived';
+  if (normalised === 'appeals') return 'appeals';
+  if (normalised === 'joinrequests') return 'join_requests';
+  if (normalised === 'filtered') return 'filtered';
+  return 'unknown';
+};
+
+const modmailParticipant = (value: Wire | undefined): Wire => {
+  if (value === undefined || value === null) return null;
+  const raw = map(value, 'Devvit modmail participant');
+  return {
+    id: maybeText(raw['id']),
+    name: maybeText(raw['name']),
+    isMod: bool(raw['isMod'] ?? raw['isModerator']),
+    isAdmin: bool(raw['isAdmin']),
+    isParticipant: bool(raw['isParticipant'], true),
+    isHidden: bool(raw['isHidden']),
+    isDeleted: bool(raw['isDeleted']),
+  };
+};
+
+const modmailMessage = (value: Wire, conversationId: string): Wire => {
+  const raw = map(value, 'Devvit modmail message');
+  return {
+    id: text(raw['id']),
+    conversationId,
+    author: modmailParticipant(raw['author']),
+    bodyMarkdown: text(raw['bodyMarkdown'] ?? raw['body']),
+    body: text(raw['body'] ?? raw['bodyMarkdown']),
+    date: (() => {
+      const date = raw['date'] ?? raw['createdAt'];
+      if (typeof date === 'string') return date;
+      const seconds = dateSeconds(date);
+      return seconds === 0 ? '' : new Date(seconds * 1_000).toISOString();
+    })(),
+    isInternal: bool(raw['isInternal']),
+    participatingAs: maybeText(raw['participatingAs']),
+  };
+};
+
+const modmailConversationData = (value: Wire): Wire => {
+  const raw = map(value, 'Devvit modmail conversation');
+  const id = text(raw['id']);
+  const subredditRaw = raw['subreddit'];
+  const subreddit = subredditRaw !== undefined && subredditRaw !== null
+    ? map(subredditRaw, 'Devvit modmail subreddit')
+    : null;
+  const displayName = maybeText(raw['subredditName'])
+    ?? (subreddit === null ? null : maybeText(subreddit['displayName']) ?? maybeText(subreddit['name']))
+    ?? '';
+  const messagesRaw = raw['messages'];
+  const source = messagesRaw === undefined || messagesRaw === null
+    ? []
+    : Array.isArray(messagesRaw)
+      ? messagesRaw
+      : Object.values(map(messagesRaw, 'Devvit modmail messages'));
+  const messages: Record<string, Wire> = {};
+  for (const entry of source) {
+    const converted = modmailMessage(entry, id);
+    const messageId = text(map(converted, 'converted modmail message')['id']);
+    if (messageId.length > 0) messages[messageId] = converted;
+  }
+  return {
+    id,
+    subject: text(raw['subject']),
+    subreddit: {
+      id: subreddit === null ? null : maybeText(subreddit['id']),
+      displayName,
+      name: displayName,
+    },
+    conversationType: maybeText(raw['conversationType']) ?? 'unknown',
+    isAuto: bool(raw['isAuto']),
+    participant: modmailParticipant(raw['participant']),
+    lastUserUpdate: maybeText(raw['lastUserUpdate']),
+    isInternal: bool(raw['isInternal']),
+    lastModUpdate: maybeText(raw['lastModUpdate']),
+    lastUpdated: maybeText(raw['lastUpdated'])
+      ?? (() => {
+        const seconds = dateSeconds(raw['lastUpdatedAt']);
+        return seconds === 0 ? '' : new Date(seconds * 1_000).toISOString();
+      })(),
+    state: modmailState(raw['state']),
+    messages,
+    objIds: Object.keys(messages).map(idValue => ({ key: 'messages', id: idValue })),
+  };
+};
+
+const modmailPageBody = (value: Wire): Wire => {
+  const raw = map(value, 'Devvit modmail conversations');
+  const conversationsValue = raw['conversations'];
+  const source = conversationsValue === undefined || conversationsValue === null
+    ? []
+    : Array.isArray(conversationsValue)
+      ? conversationsValue
+      : Object.values(map(conversationsValue, 'Devvit modmail conversation map'));
+  const conversations: Record<string, Wire> = {};
+  for (const entry of source) {
+    const converted = modmailConversationData(entry);
+    const id = text(map(converted, 'converted modmail conversation')['id']);
+    if (id.length > 0) conversations[id] = converted;
+  }
+  return { conversations, messages: {}, after: null };
+};
+
 
 const isoDate = (value: Wire | undefined): string => {
   if (typeof value === 'string') {
@@ -508,6 +620,47 @@ export const handleLegacyRead = async (
     };
   }
 
+  if (request.path === '/api/mod/conversations') {
+    const name = query['entity']?.trim() ?? '';
+    if (name.length === 0) return { supported: false };
+    const value = await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      {
+        kind: 'call',
+        name: 'getConversations',
+        args: [{
+          subreddits: [name],
+          limit: positiveLimit(query['limit'], 100, 100),
+          sort: query['sort'] === 'mod' || query['sort'] === 'user' || query['sort'] === 'unread'
+            ? query['sort']
+            : 'recent',
+          state: query['state'] ?? 'all',
+        }],
+      },
+    ]);
+    return { supported: true, status: 200, body: modmailPageBody(value) };
+  }
+
+  const modmailRead = /^\/api\/mod\/conversations\/([A-Za-z0-9]+)$/u.exec(request.path);
+  if (modmailRead !== null) {
+    const id = modmailRead[1] ?? '';
+    const value = await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      {
+        kind: 'call',
+        name: 'getConversation',
+        args: [{ conversationId: id, markRead: query['markRead'] === 'true' }],
+      },
+    ]);
+    const raw = map(value, 'Devvit modmail conversation response');
+    const conversation = raw['conversation'] ?? value;
+    return {
+      supported: true,
+      status: 200,
+      body: { conversation: modmailConversationData(conversation) },
+    };
+  }
+
   if (request.path === '/api/info') {
     const ids = (query['id'] ?? '').split(',').map(value => value.trim()).filter(Boolean);
     if (ids.length === 0 || ids.length > 100) return { supported: false };
@@ -579,6 +732,23 @@ const modmailId = (path: string, suffix = ''): string | null => {
   const escaped = suffix.replace(/[.*+?^$\{\}()|[\]\\]/gu, '\\$&');
   const match = new RegExp(`^/api/mod/conversations/([A-Za-z0-9]+)${escaped}$`, 'u').exec(path);
   return match?.[1] ?? null;
+};
+
+export const handleLegacyDelete = async (
+  request: LegacyCompatRequest,
+  roots: AdapterRoots,
+): Promise<LegacyCompatResponse> => {
+  if (request.method !== 'DELETE') return { supported: false };
+  if (request.path !== '/api/mod/notes') return { supported: false };
+  const query = request.query ?? {};
+  const noteId = query['note_id'] ?? '';
+  const subreddit = query['subreddit'] ?? '';
+  const user = query['user'] ?? '';
+  if (!noteId.startsWith('ModNote_') || subreddit.length === 0 || user.length === 0) {
+    return { supported: false };
+  }
+  await redditCall(roots, 'deleteModNote', [{ subreddit, user, noteId }]);
+  return { supported: true, status: 200, body: successBody() };
 };
 
 export const handleLegacyMutation = async (
@@ -861,5 +1031,7 @@ export const handleLegacyRequest = async (
 ): Promise<LegacyCompatResponse> => {
   const read = await handleLegacyRead(request, roots);
   if (read.supported) return read;
+  const deleted = await handleLegacyDelete(request, roots);
+  if (deleted.supported) return deleted;
   return await handleLegacyMutation(request, roots);
 };
