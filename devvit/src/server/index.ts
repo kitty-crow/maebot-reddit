@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import {
   executeAdapterCommand,
   parseAdapterCommand,
+  parseJsonWire,
   type AdapterRoots,
 } from './controller.ts';
 import { handleLegacyCompat } from './legacyAdapter.ts';
@@ -42,7 +43,7 @@ app.post('/api/controller', async c => {
   if (raw === null) return c.json({ error: 'adapter command too large' }, 413);
 
   try {
-    const command = parseAdapterCommand(JSON.parse(raw) as unknown);
+    const command = parseAdapterCommand(parseJsonWire(raw));
     const result = await executeAdapterCommand(command, roots);
     return c.json({ id: command.id, ok: true, result });
   } catch (error) {
