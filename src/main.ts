@@ -9,7 +9,7 @@ import {
   dailyReviewApiConfig,
   internalApiConfig,
   redditConfig,
-  redditDevvitIngressConfig,
+  redditDevvitBridgeSecret,
   redditDmConfig,
   redditModerationConfig,
   twitterApiConfig,
@@ -41,7 +41,6 @@ import { CommunityProjectionStore } from './reputation/communityProjectionStore.
 import { ReputationPostMirrorGate } from './reputation/mirrorGate.ts';
 import { ReputationStore } from './reputation/store.ts';
 import { RedditReadClient } from './reddit/client.ts';
-import { RedditDevvitIngressServer } from './reddit/devvitIngress.ts';
 import { DevvitRpcSpool } from './reddit/devvitRpc.ts';
 import { safeError } from './reddit/error.ts';
 import { RedditMediaClient } from './reddit/media.ts';
@@ -60,7 +59,7 @@ const dmCfg = redditDmConfig();
 const twitterCfg = twitterApiConfig();
 const reviewCfg = dailyReviewApiConfig();
 const internalCfg = internalApiConfig();
-const devvitIngressCfg = redditDevvitIngressConfig();
+const devvitBridgeSecret = redditDevvitBridgeSecret();
 if (dmCfg !== null && moderationCfg === null) {
   throw new Error('REDDIT_DM_ENABLED requires REDDIT_MODERATION_ENABLED so private moderation stays canonical');
 }
@@ -88,9 +87,6 @@ const moderationCommunities = moderationCfg === null
   : [canonicalSourceSubreddit, canonicalTargetSubreddit];
 
 const devvitRpc = new DevvitRpcSpool(redditCfg.auth.devvitRpcStateFile);
-const devvitIngress = new RedditDevvitIngressServer(devvitIngressCfg, devvitRpc);
-devvitIngress.start();
-console.log(`Reddit Devvit ingress listening on ${devvitIngress.address()}.`);
 
 const twitter = new TwitterClient(twitterCfg);
 const state = new RedditStateStore(redditCfg.stateFile);
@@ -267,12 +263,14 @@ const dmPollMs = intervalMs('REDDIT_DM_POLL_MS', 15_000, 5_000);
 const mirrorPollMs = intervalMs('REDDIT_MIRROR_POLL_MS', 10_000, 5_000);
 const questionPollMs = 15_000;
 
-const internal = internalCfg === null
-  ? null
-  : new RedditInternalHttpServer(internalCfg, questionEvents, moderationReviews);
-internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);
-internal?.start();
-if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
+if (internalCfg === null) {
+  throw new Error('REDDIT_INTERNAL_API_TOKEN and REDDIT_INTERNAL_API_PORT are required for the Devvit adapter');
+}
+const internal = new RedditInternalHttpServer(internalCfg, questionEvents, moderationReviews);
+internal.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);
+internal.useDevvitBridge(devvitRpc, devvitBridgeSecret);
+internal.start();
+console.log(`Reddit internal API and Devvit adapter listening on ${internal.address()}.`);
 
 let ticking = false;
 let nextQuestionAt = 0;
@@ -555,8 +553,7 @@ const stop = (): void => {
   stopping = true;
   clearInterval(timer);
   stopMemberModNotes();
-  internal?.stop();
-  devvitIngress.stop();
+  internal.stop();
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
