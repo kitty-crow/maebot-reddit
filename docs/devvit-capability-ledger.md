@@ -138,6 +138,24 @@ These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.
 - `recentCommentsInCommunities()` via `getCommentsByUser()`.
 - Score sampling cost when one old `/api/info` batch maps to multiple Devvit object reads.
 
+## Runtime invocation constraint
+
+This ledger tracks Reddit API capability parity separately from the physical invocation mechanism.
+
+Devvit 0.14.4 manages Reddit authentication inside its hosted runtime when `permissions.reddit` is enabled. It does not document a traditional Devvit client ID/client secret that an external Bun service can use to invoke `reddit.*` directly.
+
+Conventional Devvit `/api/*` server endpoints are documented as webview-client-to-Devvit-server endpoints. Reddit documents External Endpoints separately for trusted outside services invoking a hosted Devvit app.
+
+Therefore:
+
+- do not put an invented "Devvit OAuth" flow into Mae;
+- do not use undocumented Devvit CLI/gateway internals as a production transport;
+- do not reintroduce a public Mae Reddit hostname as a shortcut;
+- keep the generic adapter independent of the eventual invocation mechanism;
+- do not wire Mae to the adapter until that mechanism is supported and demonstrated.
+
+This is a transport constraint, not a reason to move Mae business logic into Devvit.
+
 ## Upgrade procedure
 
 When a future Devvit release adds one of the missing capabilities:
@@ -156,7 +174,8 @@ When a future Devvit release adds one of the missing capabilities:
 - Mae does not know Devvit internals.
 - The generic adapter does not know Mae internals.
 - OAuth credentials remain configured while any ledger entry still requires OAuth.
-- Devvit credentials are added, not substituted for OAuth globally.
+- Devvit app registration and Reddit permissions are added; no external Devvit client secret is assumed.
+- Devvit-managed Reddit authentication exists inside the hosted Devvit runtime. Any Mae-to-Devvit invocation mechanism must be separately proven and must not be invented in Mae.
 - Routing occurs at the Reddit transport boundary.
 - No fixed-time polling is introduced for the adapter.
 - No new Mae Reddit port is introduced.
