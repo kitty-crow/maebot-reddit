@@ -35,8 +35,27 @@ const adapterForbidden: readonly {
   { pattern: /(?:^|[\\/])src[\\/](?:mod|modmail|reputation|twitter|dm|questions)[\\/]/iu, reason: 'Devvit adapter must not import Mae business modules' },
   { pattern: /(?:mae\.kittycrow\.dev|REDDIT_INTERNAL_API_|REDDIT_DEVVIT_|DevvitRpcSpool)/iu, reason: 'Devvit adapter must not know Mae transport configuration or failed migration scaffolding' },
   { pattern: /(?:Discord|Telegram|Mae Tickets|mae-tickets|twitter\.pb|reputation\.pb)/iu, reason: 'Devvit adapter must remain generic and platform-only' },
-  { pattern: /\b(?:redis|scheduler|settings)\b/iu, reason: 'Generic Devvit adapter must not acquire polling, spool, or bridge state without an explicit reviewed requirement' },
+  { pattern: /from\s+['"]@devvit\/[^'"]*(?:redis|scheduler|settings)[^'"]*['"]/iu, reason: 'Generic Devvit adapter must not import Devvit persistence, scheduling, or settings services' },
 ];
+
+const allowedDevvitServerImports = new Set(['reddit', 'media']);
+const devvitServerImport = /import\s*\{([\s\S]*?)\}\s*from\s*['"]@devvit\/web\/server['"]/gu;
+
+const checkDevvitServerImports = (raw: string, path: string): void => {
+  for (const match of raw.matchAll(devvitServerImport)) {
+    const clause = match[1] ?? '';
+    for (const part of clause.split(',')) {
+      const cleaned = part.trim().replace(/^type\s+/u, '');
+      if (cleaned.length === 0) continue;
+      const imported = cleaned.split(/\s+as\s+/u)[0]?.trim() ?? '';
+      if (!allowedDevvitServerImports.has(imported)) {
+        hits.push(
+          `${path}: Devvit adapter may import only reddit and media from @devvit/web/server; found ${imported || '<invalid import>'}`,
+        );
+      }
+    }
+  }
+};
 
 const forbiddenActivePaths = [
   /^src[\\/]modmail[\\/]terminalServer\.ts$/iu,
@@ -87,6 +106,7 @@ const scanAdapter = async (dir: string): Promise<void> => {
     if (!sourceFile(file)) continue;
     const path = relative(process.cwd(), file);
     const raw = await readFile(file, 'utf8');
+    checkDevvitServerImports(raw, path);
     for (const rule of adapterForbidden) {
       if (rule.pattern.test(raw)) hits.push(`${path}: ${rule.reason}`);
     }
