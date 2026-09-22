@@ -4,7 +4,7 @@ import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import {
   handleLegacyMutation,
 } from '../devvit/src/server/legacyMutationCompat.ts';
-import type { AdapterRoots } from '../devvit/src/server/controller.ts';
+import type { AdapterRoots, Wire } from '../devvit/src/server/controller.ts';
 
 const cfg: RedditAuthCfg = {
   clientId: 'legacy-client',
@@ -56,17 +56,17 @@ const adapterFetcher = (
 
 describe('Devvit legacy Reddit mutation compatibility', () => {
   test('old submitSelf and crosspost clients consume adapter responses unchanged', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const roots: AdapterRoots = {
       reddit: {
-        async submitPost(options: unknown) {
+        async submitPost(options: Wire) {
           calls.push(['submitPost', options]);
           return {
             id: 't3_created',
             url: 'https://reddit.com/r/catgirlcoin/comments/created/',
           };
         },
-        async crosspost(options: unknown) {
+        async crosspost(options: Wire) {
           calls.push(['crosspost', options]);
           return {
             id: 't3_cross',
@@ -114,18 +114,18 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('old moderation and flair methods translate without changing callers', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const roots: AdapterRoots = {
       reddit: {
-        async createUserFlairTemplate(options: unknown) { calls.push(['createUserFlairTemplate', options]); },
-        async createPostFlairTemplate(options: unknown) { calls.push(['createPostFlairTemplate', options]); },
-        async setUserFlair(options: unknown) { calls.push(['setUserFlair', options]); },
-        async setPostFlair(options: unknown) { calls.push(['setPostFlair', options]); },
-        async remove(...args: unknown[]) { calls.push(['remove', ...args]); },
-        async banUser(options: unknown) { calls.push(['banUser', options]); },
-        async unbanUser(...args: unknown[]) { calls.push(['unbanUser', ...args]); },
-        async muteUser(options: unknown) { calls.push(['muteUser', options]); },
-        async unmuteUser(...args: unknown[]) { calls.push(['unmuteUser', ...args]); },
+        async createUserFlairTemplate(options: Wire) { calls.push(['createUserFlairTemplate', options]); },
+        async createPostFlairTemplate(options: Wire) { calls.push(['createPostFlairTemplate', options]); },
+        async setUserFlair(options: Wire) { calls.push(['setUserFlair', options]); },
+        async setPostFlair(options: Wire) { calls.push(['setPostFlair', options]); },
+        async remove(...args: Wire[]) { calls.push(['remove', ...args]); },
+        async banUser(options: Wire) { calls.push(['banUser', options]); },
+        async unbanUser(...args: Wire[]) { calls.push(['unbanUser', ...args]); },
+        async muteUser(options: Wire) { calls.push(['muteUser', options]); },
+        async unmuteUser(...args: Wire[]) { calls.push(['unmuteUser', ...args]); },
       },
       media: {},
     };
@@ -165,10 +165,10 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('28-day user mute creation stays on OAuth because Devvit exposes no duration', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const roots: AdapterRoots = {
       reddit: {
-        async muteUser(options: unknown) {
+        async muteUser(options: Wire) {
           calls.push(options);
         },
       },
@@ -189,7 +189,7 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('old outbound PM, Modmail and sticky calls translate through Devvit', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const post = {
       async sticky(slot: number) {
         calls.push(['sticky', slot]);
@@ -197,15 +197,15 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
     };
     const roots: AdapterRoots = {
       reddit: {
-        async sendPrivateMessage(options: unknown) { calls.push(['sendPrivateMessage', options]); },
+        async sendPrivateMessage(options: Wire) { calls.push(['sendPrivateMessage', options]); },
         async getPostById(id: string) {
           calls.push(['getPostById', id]);
           return post;
         },
         modMail: {
-          async reply(options: unknown) { calls.push(['modMail.reply', options]); return {}; },
+          async reply(options: Wire) { calls.push(['modMail.reply', options]); return {}; },
           async archiveConversation(id: string) { calls.push(['modMail.archive', id]); return {}; },
-          async muteConversation(options: unknown) { calls.push(['modMail.mute', options]); return {}; },
+          async muteConversation(options: Wire) { calls.push(['modMail.mute', options]); return {}; },
           async unmuteConversation(id: string) { calls.push(['modMail.unmute', id]); return {}; },
         },
       },
@@ -241,10 +241,10 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('flair templates carrying legacy CSS classes stay on OAuth', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const roots: AdapterRoots = {
       reddit: {
-        async createUserFlairTemplate(options: unknown) {
+        async createUserFlairTemplate(options: Wire) {
           calls.push(options);
         },
       },
@@ -266,10 +266,10 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('invalid Mod Note labels and context ids fail closed before Devvit', async () => {
-    const calls: unknown[] = [];
+    const calls: Wire[] = [];
     const roots: AdapterRoots = {
       reddit: {
-        async addModNote(options: unknown) {
+        async addModNote(options: Wire) {
           calls.push(options);
           return { id: 'ModNote_should-not-run' };
         },
