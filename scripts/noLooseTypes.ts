@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import ts from 'typescript';
 
-const roots = ['src', 'test', 'scripts', 'devvit/src'];
+const roots = ['src', 'test', 'scripts', 'devvit'];
 const hits: string[] = [];
 
 const sourceExtension = (file: string): '.ts' | '.tsx' | null => {
@@ -27,6 +27,7 @@ const inspect = async (file: string, extension: '.ts' | '.tsx'): Promise<void> =
 
 const scan = async (dir: string): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
     const file = join(dir, entry.name);
     if (entry.isDirectory()) {
       await scan(file);
