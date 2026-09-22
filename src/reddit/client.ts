@@ -33,6 +33,7 @@ import {
 } from './devvitCompat.ts';
 import { DevvitRpcClient, type DevvitWire } from './devvitRpc.ts';
 import { legacyRedditApi, type LegacyRedditApi } from './legacyApi.ts';
+import { LegacyRedditReadClient } from './legacyRead.ts';
 
 export type RedditFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 export type RedditSleep = (ms: number) => Promise<void>;
@@ -202,6 +203,8 @@ const modmailConversationFrom = (value: DevvitWire): ModmailConversation => {
 export class RedditReadClient {
   private readonly rpc: DevvitRpcClient;
   private readonly legacy: LegacyRedditApi | null;
+  private readonly forceLegacy: boolean;
+  private readonly legacyRead: LegacyRedditReadClient | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
@@ -209,13 +212,16 @@ export class RedditReadClient {
   ) {
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
     this.legacy = legacyRedditApi(cfg, options.fetcher);
+    this.forceLegacy = cfg.transport === 'legacy';
+    this.legacyRead = this.forceLegacy ? new LegacyRedditReadClient(cfg, options) : null;
   }
 
   public rate(): RedditRate {
-    return emptyRate;
+    return this.forceLegacy ? this.legacyRead!.rate() : emptyRate;
   }
 
   public async me(): Promise<RedditAccount> {
+    if (this.forceLegacy) return await this.legacyRead!.me();
     const raw = wireMap(await redditCall(this.rpc, 'getAppUser'), 'Devvit current user');
     return {
       id: bareId(wireText(raw['id'], 'Devvit current user id'), 't2_'),
@@ -227,6 +233,7 @@ export class RedditReadClient {
   }
 
   public async subreddit(name: string): Promise<RedditSubreddit> {
+    if (this.forceLegacy) return await this.legacyRead!.subreddit(name);
     const [info, moderators] = await Promise.all([
       redditCall(this.rpc, 'getSubredditInfoByName', [name]),
       this.moderators(name),
@@ -253,6 +260,7 @@ export class RedditReadClient {
   }
 
   public async moderators(name: string): Promise<readonly RedditModerator[]> {
+    if (this.forceLegacy) return await this.legacyRead!.moderators(name);
     const value = await redditChain(this.rpc, [
       { kind: 'call', name: 'getModerators', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
       { kind: 'call', name: 'all', args: [] },
@@ -274,6 +282,7 @@ export class RedditReadClient {
   }
 
   public async bannedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
+    if (this.forceLegacy) return await this.legacyRead!.bannedUsers(name);
     const value = await redditChain(this.rpc, [
       { kind: 'call', name: 'getBannedUsers', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
       { kind: 'call', name: 'all', args: [] },
@@ -282,11 +291,13 @@ export class RedditReadClient {
   }
 
   public async bannedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
+    if (this.forceLegacy) return await this.legacyRead!.bannedUser(name, username);
     const users = await this.bannedUsers(name);
     return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
   public async mutedUsers(name: string): Promise<readonly decode.RedditRelationshipUser[]> {
+    if (this.forceLegacy) return await this.legacyRead!.mutedUsers(name);
     const value = await redditChain(this.rpc, [
       { kind: 'call', name: 'getMutedUsers', args: [{ subredditName: name, limit: 1000, pageSize: 100 }] },
       { kind: 'call', name: 'all', args: [] },
@@ -295,11 +306,13 @@ export class RedditReadClient {
   }
 
   public async mutedUser(name: string, username: string): Promise<decode.RedditRelationshipUser | null> {
+    if (this.forceLegacy) return await this.legacyRead!.mutedUser(name, username);
     const users = await this.mutedUsers(name);
     return users.find(item => item.username.toLowerCase() === username.toLowerCase()) ?? null;
   }
 
   public async emojis(name: string): Promise<readonly RedditEmoji[]> {
+    if (this.forceLegacy) return await this.legacyRead!.emojis(name);
     if (this.legacy === null) {
       throw new Error('Reddit custom emoji inventory requires legacy Reddit OAuth fallback');
     }
@@ -307,6 +320,7 @@ export class RedditReadClient {
   }
 
   public async userFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
+    if (this.forceLegacy) return await this.legacyRead!.userFlairTemplates(name);
     return wireArray(
       await redditCall(this.rpc, 'getUserFlairTemplates', [name]),
       'Devvit user flair templates',
@@ -314,6 +328,7 @@ export class RedditReadClient {
   }
 
   public async postFlairTemplates(name: string): Promise<readonly RedditFlairTemplate[]> {
+    if (this.forceLegacy) return await this.legacyRead!.postFlairTemplates(name);
     return wireArray(
       await redditCall(this.rpc, 'getPostFlairTemplates', [name]),
       'Devvit post flair templates',
@@ -321,6 +336,7 @@ export class RedditReadClient {
   }
 
   public async userFlairAssignments(name: string): Promise<readonly RedditFlairAssignment[]> {
+    if (this.forceLegacy) return await this.legacyRead!.userFlairAssignments(name);
     if (this.legacy === null) {
       throw new Error('Complete Reddit user-flair inventory requires legacy Reddit OAuth fallback');
     }
@@ -341,6 +357,7 @@ export class RedditReadClient {
   }
 
   public async userFlairAssignment(name: string, username: string): Promise<RedditFlairAssignment | null> {
+    if (this.forceLegacy) return await this.legacyRead!.userFlairAssignment(name, username);
     if (this.legacy === null) {
       throw new Error('Reddit user-flair lookup requires legacy Reddit OAuth fallback');
     }
@@ -352,6 +369,7 @@ export class RedditReadClient {
   }
 
   public async rules(name: string): Promise<decode.RulesPayload> {
+    if (this.forceLegacy) return await this.legacyRead!.rules(name);
     if (this.legacy === null) {
       throw new Error('Complete Reddit rule inventory requires legacy Reddit OAuth fallback');
     }
@@ -361,11 +379,13 @@ export class RedditReadClient {
   }
 
   public async sticky(name: string, slot: 1 | 2): Promise<RedditPost | null> {
+    if (this.forceLegacy) return await this.legacyRead!.sticky(name, slot);
     const posts = await this.hotPosts(name, 10);
     return posts.filter(item => item.stickied)[slot - 1] ?? null;
   }
 
   public async hotPosts(name: string, limit = 100): Promise<readonly RedditPost[]> {
+    if (this.forceLegacy) return await this.legacyRead!.hotPosts(name, limit);
     const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
     const value = await redditChain(this.rpc, [
       { kind: 'call', name: 'getHotPosts', args: [{ subredditName: name, limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
@@ -375,6 +395,7 @@ export class RedditReadClient {
   }
 
   public async newPosts(name: string, limit = 25): Promise<readonly RedditPost[]> {
+    if (this.forceLegacy) return await this.legacyRead!.newPosts(name, limit);
     const safeLimit = Math.max(1, Math.min(1000, Math.floor(limit)));
     const value = await redditChain(this.rpc, [
       { kind: 'call', name: 'getNewPosts', args: [{ subredditName: name, limit: safeLimit, pageSize: Math.min(100, safeLimit) }] },
@@ -384,6 +405,7 @@ export class RedditReadClient {
   }
 
   public async newComments(name: string, limit = 25): Promise<readonly RedditComment[]> {
+    if (this.forceLegacy) return await this.legacyRead!.newComments(name, limit);
     if (this.legacy === null) {
       throw new Error('Subreddit comment listings require legacy Reddit OAuth fallback');
     }
@@ -394,10 +416,12 @@ export class RedditReadClient {
   }
 
   public async newPostsHistory(name: string, maxItems = 1000): Promise<readonly RedditPost[]> {
+    if (this.forceLegacy) return await this.legacyRead!.newPostsHistory(name, maxItems);
     return await this.newPosts(name, Math.max(1, Math.min(1000, Math.floor(maxItems))));
   }
 
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
+    if (this.forceLegacy) return await this.legacyRead!.newCommentsHistory(name, maxItems);
     if (this.legacy === null) {
       throw new Error('Subreddit comment history requires legacy Reddit OAuth fallback');
     }
@@ -445,18 +469,22 @@ export class RedditReadClient {
   }
 
   public async inboxDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    if (this.forceLegacy) return await this.legacyRead!.inboxDirectMessages(maxItems);
     return await this.legacyDirectMessages('/message/inbox', 'private message inbox', maxItems);
   }
 
   public async unreadDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    if (this.forceLegacy) return await this.legacyRead!.unreadDirectMessages(maxItems);
     return await this.legacyDirectMessages('/message/unread', 'unread private messages', maxItems);
   }
 
   public async sentDirectMessages(maxItems = 1000): Promise<readonly RedditDirectMessage[]> {
+    if (this.forceLegacy) return await this.legacyRead!.sentDirectMessages(maxItems);
     return await this.legacyDirectMessages('/message/sent', 'sent private messages', maxItems);
   }
 
   public async modmailConversations(name: string, limit = 100): Promise<ModmailConversationPage> {
+    if (this.forceLegacy) return await this.legacyRead!.modmailConversations(name, limit);
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const value = await redditChain(this.rpc, [
       { kind: 'get', name: 'modMail' },
@@ -474,6 +502,7 @@ export class RedditReadClient {
   }
 
   public async modmailConversation(id: string, markRead = false): Promise<ModmailConversation> {
+    if (this.forceLegacy) return await this.legacyRead!.modmailConversation(id, markRead);
     const value = await redditChain(this.rpc, [
       { kind: 'get', name: 'modMail' },
       { kind: 'call', name: 'getConversation', args: [{ conversationId: id, markRead }] },
@@ -487,6 +516,7 @@ export class RedditReadClient {
   }
 
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
+    if (this.forceLegacy) return await this.legacyRead!.scores(fullnames);
     const values = [...new Set(fullnames.map(value => value.trim()))];
     if (values.length > 100) throw new Error('Reddit score inventory reads are limited to 100 fullnames per request');
     return await Promise.all(values.map(async value => {
