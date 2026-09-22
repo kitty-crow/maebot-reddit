@@ -7,6 +7,7 @@ import {
   handleLegacyRead,
   type LegacyCompatResponse,
 } from '../devvit/src/server/legacyCompat.ts';
+import type { Wire } from '../devvit/src/server/controller.ts';
 
 const supported = (value: LegacyCompatResponse) => {
   if (!value.supported) throw new Error('expected adapter support');
@@ -398,16 +399,16 @@ describe('Devvit legacy Reddit read compatibility', () => {
   });
 
   test('passes exact relationship filters and listing cursors into Devvit', async () => {
-    const seen: unknown[] = [];
+    const seen: Array<[string, Wire]> = [];
     const filteredRoots = {
       ...roots,
       reddit: {
         ...roots.reddit,
-        getBannedUsers(options: unknown) {
+        getBannedUsers(options: Wire) {
           seen.push(['banned', options]);
           return listing([{ id: 't2_bad', username: 'BadUser', note: null }]);
         },
-        getNewPosts(options: unknown) {
+        getNewPosts(options: Wire) {
           seen.push(['new', options]);
           return listing(Array.from({ length: 2 }, (_, index) => ({
             ...post(),
