@@ -80,7 +80,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
           };
         },
       },
-      media: {},
     };
 
     const client = new RedditMutationClient(cfg, {
@@ -133,7 +132,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
         async muteUser(options: Wire) { calls.push(['muteUser', options]); },
         async unmuteUser(...args: Wire[]) { calls.push(['unmuteUser', ...args]); },
       },
-      media: {},
     };
     const client = new RedditMutationClient(cfg, {
       fetcher: adapterFetcher(roots),
@@ -178,7 +176,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
           calls.push(options);
         },
       },
-      media: {},
     };
 
     expect(await handleLegacyMutation({
@@ -215,7 +212,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
           async unmuteConversation(id: string) { calls.push(['modMail.unmute', id]); return {}; },
         },
       },
-      media: {},
     };
     const client = new RedditMutationClient(cfg, {
       fetcher: adapterFetcher(roots),
@@ -254,7 +250,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
           calls.push(options);
         },
       },
-      media: {},
     };
 
     expect(await handleLegacyMutation({
@@ -280,7 +275,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
           return { id: 'ModNote_should-not-run' };
         },
       },
-      media: {},
     };
 
     expect(await handleLegacyMutation({
@@ -309,7 +303,7 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
   });
 
   test('unsupported old mutations fail closed so OAuth can remain the fallback', async () => {
-    const roots: AdapterRoots = { reddit: {}, media: {} };
+    const roots: AdapterRoots = { reddit: {} };
 
     expect(await handleLegacyMutation({
       method: 'POST',
