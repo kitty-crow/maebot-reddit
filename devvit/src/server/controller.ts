@@ -6,6 +6,31 @@ export type Wire =
   | Wire[]
   | { readonly [key: string]: Wire };
 
+export type DecodedValue =
+  | null
+  | boolean
+  | number
+  | string
+  | bigint
+  | Date
+  | Uint8Array
+  | DecodedValue[]
+  | Map<DecodedValue, DecodedValue>
+  | { readonly [key: string]: DecodedValue };
+
+type RuntimeCallable = (...args: DecodedValue[]) => RuntimeValue | Promise<RuntimeValue>;
+
+export type RuntimeValue =
+  | null
+  | undefined
+  | boolean
+  | number
+  | string
+  | bigint
+  | symbol
+  | object
+  | RuntimeCallable;
+
 export type AdapterStep =
   | { readonly kind: 'get'; readonly name: string }
   | { readonly kind: 'call'; readonly name: string; readonly args: readonly Wire[] }
@@ -18,14 +43,16 @@ export type AdapterCommand = {
 };
 
 export type AdapterRoots = Readonly<{
-  reddit: unknown;
-  media: unknown;
+  reddit: object;
+  media: object;
 }>;
 
 type Budget = {
   nodes: number;
   bytes: number;
 };
+
+type WireMap = { readonly [key: string]: Wire };
 
 const MAX_STEPS = 16;
 const MAX_ARGS = 32;
@@ -52,6 +79,13 @@ const consume = (state: Budget, bytes = 0): void => {
 };
 
 const stringBytes = (value: string): number => Buffer.byteLength(value, 'utf8');
+
+const wireMap = (value: Wire, context: string): WireMap => {
+  if (value === null || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error(`${context} must be an object`);
+  }
+  return value;
+};
 
 const assertMember = (name: string): void => {
   if (!memberPattern.test(name) || forbiddenMembers.has(name)) {
@@ -93,79 +127,60 @@ const assertWire = (value: Wire, state: Budget, depth = 0): void => {
   }
 };
 
-const wireFromUnknown = (value: unknown): Wire => {
-  if (
-    value === null
-    || typeof value === 'boolean'
-    || typeof value === 'number'
-    || typeof value === 'string'
-  ) return value;
-  if (Array.isArray(value)) return value.map(wireFromUnknown);
-  if (typeof value !== 'object') throw new Error('Adapter value is not JSON-compatible');
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, wireFromUnknown(child)]),
-  );
+export const parseJsonWire = (raw: string): Wire => {
+  const parsed = JSON.parse(raw) as Wire;
+  assertWire(parsed, budget());
+  return parsed;
 };
 
-export const parseAdapterCommand = (value: unknown): AdapterCommand => {
-  if (value === null || Array.isArray(value) || typeof value !== 'object') {
-    throw new Error('Adapter command must be an object');
-  }
-  const raw = value as Readonly<Record<string, unknown>>;
-  if (typeof raw['id'] !== 'string') throw new Error('Adapter command id must be a string');
-  if (raw['root'] !== 'reddit' && raw['root'] !== 'media') {
+export const parseAdapterCommand = (value: Wire): AdapterCommand => {
+  const raw = wireMap(value, 'Adapter command');
+  const id = raw['id'];
+  const root = raw['root'];
+  const rawSteps = raw['steps'];
+
+  if (typeof id !== 'string') throw new Error('Adapter command id must be a string');
+  if (root !== 'reddit' && root !== 'media') {
     throw new Error('Adapter command root must be reddit or media');
   }
-  if (!Array.isArray(raw['steps'])) throw new Error('Adapter command steps must be an array');
+  if (!Array.isArray(rawSteps)) throw new Error('Adapter command steps must be an array');
 
-  const steps: AdapterStep[] = raw['steps'].map((value, index) => {
-    if (value === null || Array.isArray(value) || typeof value !== 'object') {
-      throw new Error(`Adapter step ${index} must be an object`);
-    }
-    const step = value as Readonly<Record<string, unknown>>;
-    if (typeof step['name'] !== 'string') {
+  const steps: AdapterStep[] = rawSteps.map((value, index) => {
+    const step = wireMap(value, `Adapter step ${index}`);
+    const name = step['name'];
+    const kind = step['kind'];
+
+    if (typeof name !== 'string') {
       throw new Error(`Adapter step ${index} name must be a string`);
     }
-    if (step['kind'] === 'get') {
-      return { kind: 'get', name: step['name'] };
+    if (kind === 'get') {
+      return { kind: 'get', name };
     }
-    if (step['kind'] === 'call') {
-      if (!Array.isArray(step['args'])) {
+    if (kind === 'call') {
+      const args = step['args'];
+      if (!Array.isArray(args)) {
         throw new Error(`Adapter call step ${index} args must be an array`);
       }
-      return {
-        kind: 'call',
-        name: step['name'],
-        args: step['args'].map(wireFromUnknown),
-      };
+      return { kind: 'call', name, args };
     }
-    if (step['kind'] === 'find') {
+    if (kind === 'find') {
       if (!Object.hasOwn(step, 'equals')) {
         throw new Error(`Adapter find step ${index} requires equals`);
       }
-      return {
-        kind: 'find',
-        name: step['name'],
-        equals: wireFromUnknown(step['equals']),
-      };
+      const equals = step['equals'];
+      if (equals === undefined) throw new Error(`Adapter find step ${index} requires equals`);
+      return { kind: 'find', name, equals };
     }
     throw new Error(`Adapter step ${index} has an invalid kind`);
   });
 
-  const command: AdapterCommand = {
-    id: raw['id'],
-    root: raw['root'],
-    steps,
-  };
+  const command: AdapterCommand = { id, root, steps };
   validateCommand(command);
   return command;
 };
 
 export const validateCommand = (command: AdapterCommand): void => {
   if (!idPattern.test(command.id)) throw new Error('Invalid adapter command id');
-  if (command.root !== 'reddit' && command.root !== 'media') {
-    throw new Error('Invalid adapter root');
-  }
   if (command.steps.length < 1 || command.steps.length > MAX_STEPS) {
     throw new Error('Invalid adapter step count');
   }
@@ -183,9 +198,14 @@ export const validateCommand = (command: AdapterCommand): void => {
   }
 };
 
-const decodeWire = (value: Wire, depth = 0): unknown => {
+const decodeWire = (value: Wire, depth = 0): DecodedValue => {
   if (depth > MAX_DEPTH) throw new Error('Adapter value exceeds maximum depth');
-  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+  if (
+    value === null
+    || typeof value === 'boolean'
+    || typeof value === 'number'
+    || typeof value === 'string'
+  ) {
     return value;
   }
   if (Array.isArray(value)) return value.map(child => decodeWire(child, depth + 1));
@@ -199,27 +219,49 @@ const decodeWire = (value: Wire, depth = 0): unknown => {
       if (decoded.byteLength > MAX_RAW_BYTES) throw new Error('Adapter byte payload is too large');
       return decoded;
     }
+
     const wide = value['$bigint'];
     if (typeof wide === 'string' && /^-?\d+$/u.test(wide)) return BigInt(wide);
+
     const date = value['$date'];
     if (typeof date === 'string') {
       const parsed = new Date(date);
       if (!Number.isFinite(parsed.getTime())) throw new Error('Invalid adapter date');
       return parsed;
     }
-    const map = value['$map'];
-    if (Array.isArray(map)) {
-      if (map.length > MAX_COLLECTION) throw new Error('Adapter map is too large');
-      return new Map(map.map(entry => {
-        if (!Array.isArray(entry) || entry.length !== 2) throw new Error('Invalid adapter map entry');
-        return [decodeWire(entry[0] as Wire, depth + 1), decodeWire(entry[1] as Wire, depth + 1)];
-      }));
+
+    const mapValue = value['$map'];
+    if (Array.isArray(mapValue)) {
+      if (mapValue.length > MAX_COLLECTION) throw new Error('Adapter map is too large');
+      const entries: Array<[DecodedValue, DecodedValue]> = mapValue.map(entry => {
+        if (!Array.isArray(entry) || entry.length !== 2) {
+          throw new Error('Invalid adapter map entry');
+        }
+        const key = entry[0];
+        const child = entry[1];
+        if (key === undefined || child === undefined) {
+          throw new Error('Invalid adapter map entry');
+        }
+        return [decodeWire(key, depth + 1), decodeWire(child, depth + 1)];
+      });
+      return new Map<DecodedValue, DecodedValue>(entries);
     }
   }
 
   return Object.fromEntries(
     Object.entries(value).map(([key, child]) => [key, decodeWire(child, depth + 1)]),
   );
+};
+
+const isRuntimeArray = (value: RuntimeValue): value is RuntimeValue[] => Array.isArray(value);
+
+const isRuntimeMap = (
+  value: RuntimeValue,
+): value is Map<RuntimeValue, RuntimeValue> => value instanceof Map;
+
+const runtimeProperty = (target: object, key: string): RuntimeValue => {
+  const value: RuntimeValue = Reflect.get(target, key);
+  return value;
 };
 
 const encodeObject = (
@@ -234,7 +276,7 @@ const encodeObject = (
     const out: Record<string, Wire> = {};
     let count = 0;
 
-    const add = (key: string, child: unknown): void => {
+    const add = (key: string, child: RuntimeValue): void => {
       if (child === undefined || typeof child === 'function' || forbiddenMembers.has(key)) return;
       if (Object.hasOwn(out, key)) return;
       count += 1;
@@ -243,9 +285,9 @@ const encodeObject = (
       out[key] = encodeWire(child, seen, state, depth + 1);
     };
 
-    for (const key of Object.keys(value)) add(key, Reflect.get(value, key));
+    for (const key of Object.keys(value)) add(key, runtimeProperty(value, key));
 
-    let prototype = Object.getPrototypeOf(value) as object | null;
+    let prototype: object | null = Object.getPrototypeOf(value);
     let prototypeDepth = 0;
     while (
       prototype !== null
@@ -257,12 +299,12 @@ const encodeObject = (
         const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
         if (descriptor?.get === undefined) continue;
         try {
-          add(key, Reflect.get(value, key));
+          add(key, runtimeProperty(value, key));
         } catch {
           // Optional Devvit model getters may legitimately be unavailable.
         }
       }
-      prototype = Object.getPrototypeOf(prototype) as object | null;
+      prototype = Object.getPrototypeOf(prototype);
       prototypeDepth += 1;
     }
     return out;
@@ -272,12 +314,13 @@ const encodeObject = (
 };
 
 const encodeWire = (
-  value: unknown,
+  value: RuntimeValue,
   seen: WeakSet<object>,
   state: Budget,
   depth: number,
 ): Wire => {
   if (depth > MAX_DEPTH) throw new Error('Adapter result exceeds maximum depth');
+
   if (value === undefined || value === null) {
     consume(state);
     return null;
@@ -302,6 +345,9 @@ const encodeWire = (
     consume(state, stringBytes(encoded));
     return { $bigint: encoded };
   }
+  if (typeof value === 'symbol' || typeof value === 'function') {
+    throw new Error(`Unsupported adapter result type: ${typeof value}`);
+  }
   if (value instanceof Date) {
     const encoded = value.toISOString();
     consume(state, stringBytes(encoded));
@@ -313,12 +359,12 @@ const encodeWire = (
     consume(state, stringBytes(encoded));
     return { $bytes: encoded };
   }
-  if (Array.isArray(value)) {
+  if (isRuntimeArray(value)) {
     consume(state);
     if (value.length > MAX_COLLECTION) throw new Error('Adapter result array is too large');
     return value.map(child => encodeWire(child, seen, state, depth + 1));
   }
-  if (value instanceof Map) {
+  if (isRuntimeMap(value)) {
     consume(state);
     if (value.size > MAX_COLLECTION) throw new Error('Adapter result map is too large');
     return {
@@ -328,19 +374,35 @@ const encodeWire = (
       ]),
     };
   }
-  if (typeof value === 'object') {
-    consume(state);
-    return encodeObject(value, seen, state, depth);
-  }
-  throw new Error(`Unsupported adapter result type: ${typeof value}`);
+
+  consume(state);
+  return encodeObject(value, seen, state, depth);
 };
 
-export const encodeResult = (value: unknown): Wire =>
+export const encodeResult = (value: RuntimeValue): Wire =>
   encodeWire(value, new WeakSet<object>(), budget(), 0);
 
-export const decodeValue = (value: Wire): unknown => {
+export const decodeValue = (value: Wire): DecodedValue => {
   assertWire(value, budget());
   return decodeWire(value);
+};
+
+const objectTarget = (value: RuntimeValue, member: string): object => {
+  if (value !== null && (typeof value === 'object' || typeof value === 'function')) return value;
+  throw new Error(`Cannot access ${member} on a non-object adapter value`);
+};
+
+const findProperty = (
+  values: RuntimeValue[],
+  name: string,
+  expected: DecodedValue,
+): RuntimeValue => {
+  const found = values.find(item => {
+    if (item === null || (typeof item !== 'object' && typeof item !== 'function')) return false;
+    return Object.is(runtimeProperty(item, name), expected);
+  });
+  if (found === undefined) throw new Error(`No adapter item matched ${name}`);
+  return found;
 };
 
 export const executeAdapterCommand = async (
@@ -348,36 +410,27 @@ export const executeAdapterCommand = async (
   roots: AdapterRoots,
 ): Promise<Wire> => {
   validateCommand(command);
-  let current: unknown = roots[command.root];
+  let current: RuntimeValue = roots[command.root];
 
   for (const step of command.steps) {
-    if (
-      current === null
-      || (typeof current !== 'object' && typeof current !== 'function')
-    ) {
-      throw new Error(`Cannot access ${step.name} on a non-object adapter value`);
-    }
-
     if (step.kind === 'find') {
-      if (!Array.isArray(current)) throw new Error('Adapter find requires an array');
-      const expected = decodeValue(step.equals);
-      const found = current.find(item =>
-        item !== null
-        && (typeof item === 'object' || typeof item === 'function')
-        && Object.is(Reflect.get(item, step.name), expected));
-      if (found === undefined) throw new Error(`No adapter item matched ${step.name}`);
-      current = found;
+      if (!isRuntimeArray(current)) throw new Error('Adapter find requires an array');
+      current = findProperty(current, step.name, decodeValue(step.equals));
       continue;
     }
 
-    const member = Reflect.get(current, step.name);
+    const target = objectTarget(current, step.name);
+    const member = runtimeProperty(target, step.name);
+
     if (step.kind === 'get') {
       current = member;
       continue;
     }
 
     if (typeof member !== 'function') throw new Error(`${step.name} is not callable`);
-    current = await Reflect.apply(member, current, step.args.map(decodeValue));
+    const args = step.args.map(decodeValue);
+    const result: RuntimeValue = await Reflect.apply(member, target, args);
+    current = result;
   }
 
   return encodeResult(current);
