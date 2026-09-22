@@ -193,4 +193,4 @@ export const devvitCallContracts = {
   modmailMute: [modmailMute] satisfies Parameters<RedditApi['modMail']['muteConversation']>,
   modmailUnmute: ['abcdef'] satisfies Parameters<RedditApi['modMail']['unmuteConversation']>,
   sticky,
-} as const;
+};
