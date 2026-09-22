@@ -284,26 +284,17 @@ const scoreThing = (
   };
 };
 
-const infoListing = async (roots: AdapterRoots, ids: readonly string[]): Promise<Wire> => {
-  const children: Wire[] = [];
-  for (const id of ids) {
-    if (id.startsWith('t3_')) {
-      children.push({
-        kind: 't3',
-        data: scoreThing(await redditCall(roots, 'getPostById', [id]), 't3'),
-      });
-    } else if (id.startsWith('t1_')) {
-      children.push({
-        kind: 't1',
-        data: scoreThing(await redditCall(roots, 'getCommentById', [id]), 't1'),
-      });
-    }
-  }
-  return {
-    kind: 'Listing',
-    data: { after: null, before: null, children },
-  };
-};
+const infoListing = async (roots: AdapterRoots, ids: readonly string[]): Promise<Wire> => ({
+  kind: 'Listing',
+  data: {
+    after: null,
+    before: null,
+    children: await Promise.all(ids.map(async id => ({
+      kind: 't3',
+      data: scoreThing(await redditCall(roots, 'getPostById', [id]), 't3'),
+    }))),
+  },
+});
 
 const positiveLimit = (raw: string | undefined, fallback: number, max: number): number => {
   if (raw === undefined) return fallback;
@@ -541,7 +532,9 @@ export const handleLegacyRead = async (
 
   if (request.path === '/api/info') {
     const ids = (query['id'] ?? '').split(',').map(value => value.trim()).filter(Boolean);
-    if (ids.length === 0 || ids.length > 100) return { supported: false };
+    if (ids.length === 0 || ids.length > 100 || ids.some(id => !/^t3_[A-Za-z0-9]+$/u.test(id))) {
+      return { supported: false };
+    }
     return { supported: true, status: 200, body: await infoListing(roots, ids) };
   }
 
