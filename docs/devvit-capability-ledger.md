@@ -38,15 +38,15 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | `userFlairAssignments(name)` | OAUTH | `Subreddit.getUserFlair()` omits flair template ID | Mae's assignment contract requires username, template ID, text and CSS class. Devvit 0.14.4 cannot reproduce it exactly. |
 | `userFlairAssignment(name, user)` | OAUTH | user-flair lookup omits flair template ID | Exact single-user assignment parity is unavailable in 0.14.4. |
 | `rules(name)` | DEVVIT | `reddit.getRules()` | The forensic branch unnecessarily kept this on OAuth. |
-| `sticky(name, slot)` | VERIFY | post objects expose sticky state | Need exact slot 1/2 read semantics. Filtering hot posts is not accepted as parity. |
+| `sticky(name, slot)` | OAUTH | no exact sticky-slot read API | Devvit can mutate a sticky slot but does not expose the old `/sticky?num=1|2` read semantics. |
 | `hotPosts(name, limit)` | DEVVIT | `reddit.getHotPosts(...).all()` | Listing mapping required. |
 | `newPosts(name, limit)` | DEVVIT | `reddit.getNewPosts(...).all()` | Listing mapping required. |
 | `newComments(name, limit)` | OAUTH | no subreddit-wide latest-comments listing | Devvit `getComments()` is scoped to a post/comment, not the old `/r/<sub>/comments` feed. |
 | `newPostsHistory(name, max)` | DEVVIT | `reddit.getNewPosts(...).all()` | Verify pagination/maximum semantics. |
 | `newCommentsHistory(name, max)` | OAUTH | no exact subreddit-wide comment-history listing | Do not create adapter state merely to emulate this. |
-| `inboxDirectMessages(max)` | VERIFY | `reddit.getMessages({ type: 'inbox' })` | Related API exists. Exact message shape, paging and identity semantics still require parity tests. |
-| `unreadDirectMessages(max)` | VERIFY | `reddit.getMessages({ type: 'unread' })` | Same requirement as inbox. |
-| `sentDirectMessages(max)` | VERIFY | `reddit.getMessages({ type: 'sent' })` | Same requirement as inbox. |
+| `inboxDirectMessages(max)` | OAUTH | `reddit.getMessages({ type: 'inbox' })` is incomplete for Mae | Devvit `PrivateMessage` omits destination, subject, parent/thread IDs, new-state and `was_comment` fields Mae's DM runtime consumes. |
+| `unreadDirectMessages(max)` | OAUTH | Devvit `PrivateMessage` shape is incomplete | Keep the legacy message envelope and pagination. |
+| `sentDirectMessages(max)` | OAUTH | Devvit `PrivateMessage` shape is incomplete | Mae uses sent history for duplicate-safe recovery, so partial identity/thread metadata is not acceptable. |
 | `modmailConversations(name, limit)` | DEVVIT | `reddit.modMail.getConversations()` | Devvit 0.14.4 documents subreddit filters, state, sort and limit. |
 | `modmailConversation(id, markRead)` | DEVVIT | `reddit.modMail.getConversation()` | `markRead` is directly represented. |
 | `scores(fullnames)` | DEVVIT | `getPostById()` / `getCommentById()` | Semantically possible, but one legacy batch read becomes multiple Devvit object reads. Performance/quota impact must be measured. |
@@ -69,7 +69,7 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | `unbanUser(...)` | DEVVIT | `reddit.unbanUser()` | Exact capability exists. |
 | `sendPrivateMessage(...)` | DEVVIT | `reddit.sendPrivateMessage()` | New outbound PM is supported. |
 | `replyToPrivateMessage(t4, body)` | OAUTH | no reply-to-existing-PM method verified | Devvit can send a new PM, but that is not equivalent to replying inside an existing t4 thread. |
-| `markPrivateMessageRead(t4)` | VERIFY | `PrivateMessage.markAsRead()` | Object method exists, but exact lookup-by-fullname path and error semantics must be proven. |
+| `markPrivateMessageRead(t4)` | OAUTH | no direct get-by-fullname PM API | Avoid scanning incomplete message listings merely to find a `t4_` object; retain exact OAuth read-state mutation. |
 | `replyModmail(...)` | DEVVIT | `reddit.modMail.reply()` | 0.14.4 supports `isAuthorHidden` and `isInternal`. |
 | `archiveModmail(...)` | DEVVIT | `reddit.modMail.archiveConversation()` | Exact capability exists. |
 | `muteModmail(...)` | DEVVIT | `reddit.modMail.muteConversation()` | 72, 168 and 672 hour values match Mae's contract. |
@@ -131,14 +131,19 @@ These are the current capabilities for which the OAuth implementation must remai
    - Current Mae operations: `userFlairAssignments()`, `userFlairAssignment()`
    - Needed Devvit capability: expose the assigned flair template ID together with username, text and CSS class.
 
+9. **Exact sticky-slot reads**
+   - Current Mae operation: `sticky(subreddit, slot)`
+   - Needed Devvit capability: retrieve sticky slot 1 or 2 directly with old Reddit semantics.
+
+10. **Complete private-message objects and lookup**
+   - Current Mae operations: inbox/unread/sent DM history and mark-one-read
+   - Needed Devvit capability: preserve subject, destination, thread/parent identity, read/new state and comment-message distinction, plus direct lookup by `t4_` fullname.
+
 ## Capabilities still under verification
 
 These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.4 parity is demonstrated.
 
 - Current user-flair selection equivalent to `/api/flairselector`.
-- Exact sticky slot 1/2 read semantics.
-- Inbox/unread/sent PM listing shape and pagination.
-- Mark-one-PM-read from an existing `t4_` fullname.
 - Native video upload/submission.
 - Image/media submission when Mae supplies both native media and a body.
 - `recentCommentsInCommunities()` via `getCommentsByUser()`.
