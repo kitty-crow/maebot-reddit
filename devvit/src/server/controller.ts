@@ -88,6 +88,7 @@ const assertWire = (value: Wire, state: Budget, depth = 0): void => {
   for (const [key, child] of entries) {
     consume(state, stringBytes(key));
     if (key.length > 256) throw new Error('Adapter object key is too large');
+    if (forbiddenMembers.has(key)) throw new Error('Invalid adapter object key');
     assertWire(child, state, depth + 1);
   }
 };
@@ -234,7 +235,7 @@ const encodeObject = (
     let count = 0;
 
     const add = (key: string, child: unknown): void => {
-      if (child === undefined || typeof child === 'function' || key === 'constructor') return;
+      if (child === undefined || typeof child === 'function' || forbiddenMembers.has(key)) return;
       if (Object.hasOwn(out, key)) return;
       count += 1;
       if (count > MAX_COLLECTION) throw new Error('Adapter result object is too large');
