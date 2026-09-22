@@ -151,7 +151,6 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
     await client.remove('t1_comment');
     await client.banUser('catgirlcoin', 'BadUser', 'reason', 'note');
     await client.unbanUser('catgirlcoin', 'BadUser');
-    await client.muteUser('catgirlcoin', 'NoisyUser', 'note');
     await client.unmuteUser('catgirlcoin', 'NoisyUser');
 
     expect(calls.map(value => Array.isArray(value) ? value[0] : null)).toEqual([
@@ -161,9 +160,32 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
       'remove',
       'banUser',
       'unbanUser',
-      'muteUser',
       'unmuteUser',
     ]);
+  });
+
+  test('28-day user mute creation stays on OAuth because Devvit exposes no duration', async () => {
+    const calls: unknown[] = [];
+    const roots: AdapterRoots = {
+      reddit: {
+        async muteUser(options: unknown) {
+          calls.push(options);
+        },
+      },
+      media: {},
+    };
+
+    expect(await handleLegacyMutation({
+      method: 'POST',
+      path: '/r/catgirlcoin/api/friend',
+      form: {
+        name: 'NoisyUser',
+        type: 'muted',
+        duration: '28',
+        note: 'note',
+      },
+    }, roots)).toEqual({ supported: false });
+    expect(calls).toEqual([]);
   });
 
   test('old outbound PM, Modmail and sticky calls translate through Devvit', async () => {
