@@ -1,68 +1,59 @@
 import { media, reddit } from '@devvit/web/server';
 import { Hono } from 'hono';
-import {
-  handleLegacyRequest,
-  type LegacyCompatRequest,
-} from './legacyCompat.ts';
-
-type RequestBody = {
-  readonly method?: unknown;
-  readonly path?: unknown;
-  readonly query?: unknown;
-  readonly form?: unknown;
-};
+import type { AdapterRoots } from './controller.ts';
+import { handleLegacyCompat } from './legacyAdapter.ts';
+import type { LegacyCompatRequest } from './legacyCompat.ts';
 
 const app = new Hono();
-const roots = { reddit, media };
+const roots: AdapterRoots = { reddit, media };
+const prefix = '/api/reddit';
 
-const stringRecord = (value: unknown): Readonly<Record<string, string>> | undefined => {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Adapter query/form must be an object');
-  }
-  const out: Record<string, string> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (typeof child !== 'string') throw new Error('Adapter query/form values must be strings');
-    out[key] = child;
-  }
-  return out;
+const record = (params: URLSearchParams): Readonly<Record<string, string>> =>
+  Object.fromEntries(params.entries());
+
+const form = async (request: Request): Promise<Readonly<Record<string, string>>> => {
+  const type = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  if (type !== 'application/x-www-form-urlencoded') return {};
+  return record(new URLSearchParams(await request.text()));
 };
 
-const request = (value: unknown): LegacyCompatRequest => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Adapter request body must be an object');
+app.get('/api/reddit', c => c.json({
+  ok: true,
+  adapter: 'legacy-reddit-compat',
+}));
+
+app.all('/api/reddit/*', async c => {
+  const url = new URL(c.req.url);
+  const legacyPath = url.pathname.slice(prefix.length);
+  if (!legacyPath.startsWith('/')) return c.json({ error: 'invalid Reddit compatibility path' }, 400);
+
+  const method = c.req.method;
+  if (method !== 'GET' && method !== 'POST' && method !== 'DELETE') {
+    return c.json({ error: 'unsupported method' }, 405);
   }
-  const raw = value as RequestBody;
-  if (raw.method !== 'GET' && raw.method !== 'POST' && raw.method !== 'DELETE') {
-    throw new Error('Adapter method is invalid');
-  }
-  if (typeof raw.path !== 'string' || !raw.path.startsWith('/') || raw.path.length > 2_048) {
-    throw new Error('Adapter path is invalid');
-  }
-  const query = stringRecord(raw.query);
-  const form = stringRecord(raw.form);
-  return {
-    method: raw.method,
-    path: raw.path,
-    ...(query === undefined ? {} : { query }),
-    ...(form === undefined ? {} : { form }),
+
+  const request: LegacyCompatRequest = {
+    method,
+    path: legacyPath,
+    query: record(url.searchParams),
+    ...(method === 'GET' ? {} : { form: await form(c.req.raw) }),
   };
-};
 
-app.get('/api/adapter/health', c => c.json({ ok: true }));
-
-app.post('/api/reddit', async c => {
   try {
-    const result = await handleLegacyRequest(request(await c.req.json()), roots);
-    return c.json(result);
+    const response = await handleLegacyCompat(request, roots);
+    if (!response.supported) {
+      return c.json({
+        error: 'unsupported Reddit capability',
+        method,
+        path: legacyPath,
+      }, 501);
+    }
+    return c.json(response.body, response.status);
   } catch (error) {
-    return c.json({
-      supported: true,
-      status: 400,
-      body: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    }, 400);
+    console.error(
+      `[Reddit adapter] ${method} ${legacyPath} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return c.json({ error: 'Reddit adapter operation failed' }, 500);
   }
 });
 
