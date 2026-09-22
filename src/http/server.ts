@@ -12,6 +12,7 @@ import {
   type ManualUserAction,
 } from '../reputation/manualModeration.ts';
 import type { ReputationStore } from '../reputation/store.ts';
+import { DevvitRpcSpool, type DevvitRpcResult } from '../reddit/devvitRpc.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
@@ -38,6 +39,20 @@ const json = (value: object, status = 200): Response => new Response(JSON.string
   status,
   headers: { 'content-type': 'application/json; charset=utf-8' },
 });
+
+const devvitResult = (value: Json): DevvitRpcResult | null => {
+  if (!isMap(value)) return null;
+  const id = value['id'];
+  const ok = value['ok'];
+  if (typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/u.test(id) || typeof ok !== 'boolean') return null;
+  const error = value['error'];
+  return {
+    id,
+    ok,
+    ...(value['value'] === undefined ? {} : { value: value['value'] }),
+    ...(typeof error === 'string' ? { error } : {}),
+  };
+};
 
 const defaultLogger: RedditInternalHttpLogger = line => console.log(line);
 
@@ -223,6 +238,8 @@ export class RedditInternalHttpServer {
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
   private userModeration: ManualReputationModeration | null = null;
+  private devvitRpc: DevvitRpcSpool | null = null;
+  private devvitSecret: string | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -258,6 +275,13 @@ export class RedditInternalHttpServer {
     this.userModeration = service;
   }
 
+  public useDevvitBridge(spool: DevvitRpcSpool, secret: string): void {
+    if (this.server !== null) throw new Error('Devvit bridge must be attached before the Reddit internal API starts');
+    if (secret.trim().length === 0) throw new Error('Devvit bridge secret must not be empty');
+    this.devvitRpc = spool;
+    this.devvitSecret = secret;
+  }
+
   public start(): void {
     if (this.server !== null) return;
     this.server = Bun.serve({
@@ -281,6 +305,48 @@ export class RedditInternalHttpServer {
 
   private authorised(req: Request): boolean {
     return req.headers.get('authorization') === `Bearer ${this.cfg.token}`;
+  }
+
+  private devvitAuthorised(req: Request): boolean {
+    return this.devvitSecret !== null
+      && req.headers.get('authorization') === `Bearer ${this.devvitSecret}`;
+  }
+
+  private async devvit(req: Request, url: URL): Promise<Response> {
+    if (this.devvitRpc === null || this.devvitSecret === null) {
+      return this.record(req, url, json({ error: 'devvit bridge unavailable' }, 503));
+    }
+    if (!this.devvitAuthorised(req)) {
+      return this.record(req, url, json({ error: 'unauthorised' }, 401));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/devvit/work') {
+      const rawLimit = url.searchParams.get('limit');
+      const rawWait = url.searchParams.get('wait');
+      const limit = rawLimit === null ? 25 : Number(rawLimit);
+      const waitMs = rawWait === null ? 0 : Number(rawWait);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        return this.record(req, url, json({ error: 'invalid limit' }, 400));
+      }
+      if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 25_000) {
+        return this.record(req, url, json({ error: 'invalid wait' }, 400));
+      }
+      const commands = waitMs === 0
+        ? await this.devvitRpc.lease(limit)
+        : await this.devvitRpc.waitForWork(limit, waitMs);
+      return this.record(req, url, json({ commands }), `commands=${commands.length}`);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/devvit/result') {
+      const parsed = await bodyMap(req);
+      if (parsed === null) return this.record(req, url, json({ error: 'invalid json' }, 400));
+      const input = devvitResult(parsed);
+      if (input === null) return this.record(req, url, json({ error: 'invalid result' }, 400));
+      await this.devvitRpc.complete(input);
+      return this.record(req, url, json({ ok: true }), `result=${input.id}`);
+    }
+
+    return this.record(req, url, json({ error: 'not found' }, 404));
   }
 
   private record(req: Request, url: URL, response: Response, detail = ''): Response {
@@ -441,6 +507,7 @@ export class RedditInternalHttpServer {
 
   private async route(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname.startsWith('/v1/devvit/')) return await this.devvit(req, url);
     if (req.method === 'GET' && url.pathname === '/health') {
       return this.record(req, url, json({ ok: true }));
     }
