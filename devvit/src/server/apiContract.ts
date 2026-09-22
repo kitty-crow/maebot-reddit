@@ -1,7 +1,6 @@
-import { media, reddit } from '@devvit/web/server';
+import { reddit } from '@devvit/web/server';
 
 type RedditApi = typeof reddit;
-type MediaApi = typeof media;
 type PostModel = Awaited<ReturnType<RedditApi['getPostById']>>;
 
 /**
@@ -42,7 +41,6 @@ export type VerifiedDevvitSurface = Readonly<{
     muteConversation: RedditApi['modMail']['muteConversation'];
     unmuteConversation: RedditApi['modMail']['unmuteConversation'];
   }>;
-  mediaUpload: MediaApi['upload'];
 }>;
 
 const subredditListing = {
