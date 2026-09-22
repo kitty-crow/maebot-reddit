@@ -64,7 +64,6 @@ export type RedditAuthCfg = {
   readonly username: string;
   readonly password: string;
   readonly userAgent: string;
-  readonly adapter?: LoopbackApiCfg | null;
 };
 
 export type RedditCfg = {
@@ -100,24 +99,6 @@ export type InternalApiCfg = {
   readonly token: string;
 };
 
-const redditAdapterConfig = (): LoopbackApiCfg | null => {
-  const transport = opt('REDDIT_TRANSPORT', 'legacy').toLowerCase();
-  if (transport === 'legacy') return null;
-  if (transport !== 'hybrid') throw new Error('REDDIT_TRANSPORT must be legacy or hybrid');
-
-  const token = maybe('REDDIT_INTERNAL_API_TOKEN');
-  const rawPort = maybe('REDDIT_INTERNAL_API_PORT');
-  if (token === null || rawPort === null) {
-    throw new Error('REDDIT_TRANSPORT=hybrid requires REDDIT_INTERNAL_API_TOKEN and REDDIT_INTERNAL_API_PORT');
-  }
-  const host = loopbackHost('REDDIT_INTERNAL_API_HOST');
-  const formattedHost = host === '::1' ? '[::1]' : host;
-  return {
-    base: `http://${formattedHost}:${port('REDDIT_INTERNAL_API_PORT', rawPort)}`,
-    token,
-  };
-};
-
 export const redditConfig = (): RedditCfg => ({
   auth: {
     // Preserve the production Python deployment's credential names so the
@@ -127,7 +108,6 @@ export const redditConfig = (): RedditCfg => ({
     username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
     password: alias('REDDIT_PASSWORD', 'this_is_the_mae'),
     userAgent: maybe('REDDIT_USER_AGENT') ?? 'linux:com.kittycrow.maebot-reddit:0.1.0 (by /u/this_is_the_mae)',
-    adapter: redditAdapterConfig(),
   },
   sourceSubreddit: community('REDDIT_SOURCE_SUBREDDIT', 'catgirlcoin'),
   primarySubreddit: community('REDDIT_PRIMARY_SUBREDDIT', 'nyaonearth'),
