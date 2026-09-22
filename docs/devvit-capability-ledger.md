@@ -159,6 +159,15 @@ These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.
 - `recentCommentsInCommunities()` via `getCommentsByUser()`.
 - Score sampling cost when a post-only old `/api/info` batch maps to multiple Devvit object reads.
 
+## Generic adapter surface
+
+The Devvit app exposes two server-side surfaces:
+
+- `POST /api/controller`: generic bounded command execution over the Devvit `reddit` and `media` roots. This is application-agnostic and exists so the Devvit bot is not hard-coded to Mae's current method list.
+- `/api/reddit/*`: legacy Reddit REST-shaped compatibility routes used to prove that the existing Mae clients can consume Devvit results without changing their business-facing contracts.
+
+The generic controller is the capability primitive. The legacy compatibility routes are translations layered on top of it. Neither surface contains Mae business rules or canonical Mae state.
+
 ## Publishing identity routing
 
 Transport selection is not based only on the REST path. The caller's Reddit identity is part of the routing contract.
