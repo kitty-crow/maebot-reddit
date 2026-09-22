@@ -23,6 +23,10 @@ describe('generic Devvit Reddit adapter controller', () => {
       public get label(): string {
         return 'model';
       }
+
+      public toJSON(): never {
+        throw new Error('adapter must not invoke arbitrary toJSON hooks');
+      }
     }
 
     const command: AdapterCommand = {
@@ -72,7 +76,7 @@ describe('generic Devvit Reddit adapter controller', () => {
     expect(marked).toBe('b');
   });
 
-  test('round-trips bridge-only values without Mae-specific types', () => {
+  test('round-trips adapter-only wire values without application types', () => {
     const original = {
       when: new Date('2026-01-01T00:00:00.000Z'),
       bytes: new Uint8Array([1, 2, 3]),
@@ -111,5 +115,14 @@ describe('generic Devvit Reddit adapter controller', () => {
     const value: { self?: unknown } = {};
     value.self = value;
     expect(() => encodeResult(value)).toThrow('Adapter result contains a cycle');
+  });
+
+  test('rejects aggregate result growth even when individual fields are small', () => {
+    const value = Array.from({ length: 10 }, () => 'x'.repeat(500_000));
+    expect(() => encodeResult(value)).toThrow('Adapter value exceeds maximum wire size');
+  });
+
+  test('rejects malformed byte encodings', () => {
+    expect(() => decodeValue({ $bytes: 'not base64!' })).toThrow('Invalid adapter byte encoding');
   });
 });
