@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import ts from 'typescript';
 
-const roots = ['src', 'test', 'scripts'];
+const roots = ['src', 'test', 'scripts', 'devvit/src'];
 const hits: string[] = [];
 
 const sourceExtension = (file: string): '.ts' | '.tsx' | null => {
