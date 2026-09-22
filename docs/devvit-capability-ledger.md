@@ -74,7 +74,7 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | `archiveModmail(...)` | DEVVIT | `reddit.modMail.archiveConversation()` | Exact capability exists. |
 | `muteModmail(...)` | DEVVIT | `reddit.modMail.muteConversation()` | 72, 168 and 672 hour values match Mae's contract. |
 | `unmuteModmail(...)` | DEVVIT | `reddit.modMail.unmuteConversation()` | Exact capability exists. |
-| `muteUser(...)` | DEVVIT | `reddit.muteUser()` | Preserve note semantics. |
+| `muteUser(...)` | OAUTH | `reddit.muteUser()` has no duration parameter | Mae explicitly requests a 28-day mute. Exact duration parity is unproven in Devvit 0.14.4, so mute creation remains OAuth. |
 | `unmuteUser(...)` | DEVVIT | `reddit.unmuteUser()` | Exact capability exists. |
 | `sticky(postId, slot)` | DEVVIT | `Post.sticky(slot)` | Mutation is supported even though exact sticky-slot read remains VERIFY. |
 
@@ -143,6 +143,11 @@ These are the current capabilities for which the OAuth implementation must remai
    - Current Mae operation: `scores(fullnames)` when the batch contains `t1_` comments
    - Needed Devvit capability: expose the legacy comment archived state alongside score.
    - Post-only score batches may use Devvit; mixed/comment batches remain OAuth.
+
+12. **Exact 28-day user mute creation**
+   - Current Mae operation: `muteUser(...)`
+   - Needed Devvit capability: expose or document the mute duration so Mae's explicit 28-day legacy semantics can be preserved.
+   - `unmuteUser(...)` may still use Devvit because removal of the muted relationship is exact.
 
 ## Capabilities still under verification
 
