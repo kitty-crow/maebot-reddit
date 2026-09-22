@@ -373,6 +373,20 @@ const conversationKind = (value: Wire | undefined): string => {
   return 'unknown';
 };
 
+const conversationState = (value: Wire | undefined): string => {
+  if (typeof value === 'number') {
+    return ['new', 'inprogress', 'archived', 'appeals', 'join_requests', 'filtered'][value] ?? 'unknown';
+  }
+  const raw = maybeText(value)?.replaceAll('_', '').toLowerCase() ?? '';
+  if (raw === 'new') return 'new';
+  if (raw === 'inprogress') return 'inprogress';
+  if (raw === 'archived') return 'archived';
+  if (raw === 'appeals') return 'appeals';
+  if (raw === 'joinrequests') return 'join_requests';
+  if (raw === 'filtered') return 'filtered';
+  return 'unknown';
+};
+
 const modmailMessageData = (value: Wire, conversationId: string): Wire => {
   const raw = map(value, 'Devvit Modmail message');
   return {
@@ -416,7 +430,7 @@ const modmailConversationData = (value: Wire): Wire => {
       : participantData(raw['participant']),
     subject: text(raw['subject']),
     conversationType: conversationKind(raw['conversationType'] ?? raw['kind']),
-    state: maybeText(raw['state']) ?? 'unknown',
+    state: conversationState(raw['state']),
     isInternal: bool(raw['isInternal']),
     isAuto: bool(raw['isAuto']),
     lastUpdated: isoDate(raw['lastUpdated'] ?? raw['lastUpdatedAt']),
