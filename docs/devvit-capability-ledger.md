@@ -33,10 +33,10 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | `mutedUsers(name)` | DEVVIT | `reddit.getMutedUsers(...).all()` | Listing translation required. |
 | `mutedUser(name, user)` | DEVVIT | muted-user listing + exact username match | Compatibility helper. |
 | `emojis(name)` | OAUTH | none verified | Devvit RedditClient does not currently expose the subreddit custom-emoji inventory used by Mae. |
-| `userFlairTemplates(name)` | DEVVIT | `reddit.getUserFlairTemplates()` | Preserve template metadata. |
-| `postFlairTemplates(name)` | DEVVIT | `reddit.getPostFlairTemplates()` | Preserve template metadata. |
-| `userFlairAssignments(name)` | VERIFY | related user-flair APIs exist | Exact complete subreddit flair-assignment inventory semantics must be proven for 0.14.4. OAuth remains authoritative meanwhile. |
-| `userFlairAssignment(name, user)` | VERIFY | related user-flair APIs exist | Must prove exact single-user lookup semantics and fields. |
+| `userFlairTemplates(name)` | OAUTH | Devvit `FlairTemplate` omits legacy CSS class | Mae uses CSS class for cloning, reputation bootstrap and presentation parity, so the incomplete Devvit model is not an exact replacement. |
+| `postFlairTemplates(name)` | OAUTH | Devvit `FlairTemplate` omits legacy CSS class | Keep OAuth until Devvit exposes the complete legacy template metadata Mae consumes. |
+| `userFlairAssignments(name)` | OAUTH | `Subreddit.getUserFlair()` omits flair template ID | Mae's assignment contract requires username, template ID, text and CSS class. Devvit 0.14.4 cannot reproduce it exactly. |
+| `userFlairAssignment(name, user)` | OAUTH | user-flair lookup omits flair template ID | Exact single-user assignment parity is unavailable in 0.14.4. |
 | `rules(name)` | DEVVIT | `reddit.getRules()` | The forensic branch unnecessarily kept this on OAuth. |
 | `sticky(name, slot)` | VERIFY | post objects expose sticky state | Need exact slot 1/2 read semantics. Filtering hot posts is not accepted as parity. |
 | `hotPosts(name, limit)` | DEVVIT | `reddit.getHotPosts(...).all()` | Listing mapping required. |
@@ -57,7 +57,7 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | --- | --- | --- | --- |
 | `submitSelf(...)` | DEVVIT | `reddit.submitPost()` | Preserve app-account authorship and flair behaviour. |
 | `crosspost(...)` | DEVVIT | `reddit.crosspost()` | Preserve source fullname and flair behaviour. |
-| `createFlairTemplate(...)` | DEVVIT | `createUserFlairTemplate()` / `createPostFlairTemplate()` | Translate metadata exactly. |
+| `createFlairTemplate(...)` | MIXED | `createUserFlairTemplate()` / `createPostFlairTemplate()` | Devvit 0.14.4 hardcodes legacy CSS class empty. Requests without a CSS class may use Devvit; CSS-bearing templates remain OAuth. |
 | `uploadEmoji(...)` | OAUTH | none verified | Custom emoji asset-upload flow remains legacy. |
 | `updateEmojiPermissions(...)` | OAUTH | none verified | Custom emoji permission administration remains legacy. |
 | `setUserFlairTemplate(...)` | DEVVIT | `reddit.setUserFlair()` | Preserve template ID and optional custom text. |
@@ -123,12 +123,18 @@ These are the current capabilities for which the OAuth implementation must remai
    - Current Mae operation: `submitGallery()`
    - Needed Devvit capability: exact multi-image gallery creation with equivalent flair/result semantics.
 
+7. **Complete flair-template metadata**
+   - Current Mae operations: `userFlairTemplates()`, `postFlairTemplates()`
+   - Needed Devvit capability: expose the legacy CSS class alongside the existing template metadata.
+
+8. **Complete user-flair assignment metadata**
+   - Current Mae operations: `userFlairAssignments()`, `userFlairAssignment()`
+   - Needed Devvit capability: expose the assigned flair template ID together with username, text and CSS class.
+
 ## Capabilities still under verification
 
 These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.4 parity is demonstrated.
 
-- Complete subreddit user-flair assignment inventory.
-- Single-user flair assignment lookup.
 - Current user-flair selection equivalent to `/api/flairselector`.
 - Exact sticky slot 1/2 read semantics.
 - Inbox/unread/sent PM listing shape and pagination.
