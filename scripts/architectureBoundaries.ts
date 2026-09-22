@@ -57,6 +57,15 @@ const checkDevvitServerImports = (raw: string, path: string): void => {
   }
 };
 
+const forbiddenDevvitRuntimeWiring = [
+  /from\s+['"]\.\/controller\.ts['"]/u,
+  /from\s+['"]\.\/legacyAdapter\.ts['"]/u,
+  /from\s+['"]\.\/legacyCompat\.ts['"]/u,
+  /from\s+['"]\.\/legacyMutationCompat\.ts['"]/u,
+  /\/api\/controller/u,
+  /\/api\/reddit/u,
+];
+
 const forbiddenActivePaths = [
   /^src[\\/]modmail[\\/]terminalServer\.ts$/iu,
   /^src[\\/]modmail[\\/]terminalPage(?:View)?\.(?:ts|tsx)$/iu,
@@ -96,6 +105,22 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
   }
 };
 
+const checkMinimalDevvitRuntime = async (): Promise<void> => {
+  const indexPath = 'devvit/src/server/index.ts';
+  const raw = await readFile(indexPath, 'utf8');
+  for (const pattern of forbiddenDevvitRuntimeWiring) {
+    if (pattern.test(raw)) {
+      hits.push(`${indexPath}: Devvit runtime must remain presence-only; compatibility/controller wiring is dormant`);
+    }
+  }
+
+  const configPath = 'devvit/devvit.json';
+  const config = await readFile(configPath, 'utf8');
+  if (/"media"\s*:/u.test(config)) {
+    hits.push(`${configPath}: Devvit media permission must remain disabled`);
+  }
+};
+
 const scanAdapter = async (dir: string): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const file = join(dir, entry.name);
@@ -116,6 +141,7 @@ const scanAdapter = async (dir: string): Promise<void> => {
 for (const root of roots) await scan(root, activeRoots.has(root));
 try {
   await scanAdapter('devvit/src');
+  await checkMinimalDevvitRuntime();
 } catch (error) {
   const code = error instanceof Error && 'code' in error ? Reflect.get(error, 'code') : null;
   if (code !== 'ENOENT') throw error;
