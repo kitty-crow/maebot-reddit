@@ -110,7 +110,7 @@ export const redditConfig = (): RedditCfg => ({
     devvitRpcStateFile: resolve(process.cwd(), opt('REDDIT_DEVVIT_RPC_STATE_FILE', 'data/devvitRpc.pb')),
     devvitRpcTimeoutMs: positive('REDDIT_DEVVIT_RPC_TIMEOUT_MS', '120000'),
     transport: (() => {
-      const value = (maybe('REDDIT_TRANSPORT') ?? 'devvit').toLowerCase();
+      const value = (maybe('REDDIT_TRANSPORT') ?? 'legacy').toLowerCase();
       if (value === 'devvit' || value === 'legacy') return value;
       throw new Error('REDDIT_TRANSPORT must be devvit or legacy');
     })(),
