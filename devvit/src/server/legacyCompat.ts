@@ -383,3 +383,323 @@ export const handleLegacyRead = async (
 
   return { supported: false };
 };
+
+
+const formText = (
+  form: Readonly<Record<string, string>>,
+  name: string,
+  fallback = '',
+): string => form[name] ?? fallback;
+
+const createdPostBody = (value: Wire): Wire => {
+  const raw = map(value, 'Devvit created post');
+  const rawId = text(raw['id']);
+  const id = bare(rawId, 't3_');
+  return {
+    json: {
+      errors: [],
+      data: {
+        id,
+        name: fullname(rawId, 't3_'),
+        url: text(raw['url']),
+      },
+    },
+  };
+};
+
+const successBody = (): Wire => ({ json: { errors: [] } });
+
+const subredditFromPath = (path: string, suffix: string): string | null => {
+  const pattern = new RegExp(`^/r/([^/]+)${suffix.replace(/[.*+?^$\{\}()|[\]\\]/gu, '\\$&')}$`, 'u');
+  const match = pattern.exec(path);
+  return match === null ? null : decodeURIComponent(match[1] ?? '');
+};
+
+const modmailId = (path: string, suffix = ''): string | null => {
+  const escaped = suffix.replace(/[.*+?^$\{\}()|[\]\\]/gu, '\\$&');
+  const match = new RegExp(`^/api/mod/conversations/([A-Za-z0-9]+)${escaped}$`, 'u').exec(path);
+  return match?.[1] ?? null;
+};
+
+export const handleLegacyMutation = async (
+  request: LegacyCompatRequest,
+  roots: AdapterRoots,
+): Promise<LegacyCompatResponse> => {
+  if (request.method !== 'POST') return { supported: false };
+  const form = request.form ?? {};
+
+  if (request.path === '/api/submit') {
+    const subreddit = formText(form, 'sr');
+    const title = formText(form, 'title');
+    const kind = formText(form, 'kind');
+    const flairId = formText(form, 'flair_id');
+    if (subreddit.length === 0 || title.length === 0) return { supported: false };
+
+    if (kind === 'self') {
+      const options: Record<string, Wire> = {
+        subredditName: subreddit,
+        title,
+        text: formText(form, 'text'),
+        sendreplies: formText(form, 'sendreplies', 'true') !== 'false',
+      };
+      if (flairId.length > 0) options['flairId'] = flairId;
+      return {
+        supported: true,
+        status: 200,
+        body: createdPostBody(await redditCall(roots, 'submitPost', [options])),
+      };
+    }
+
+    if (kind === 'crosspost') {
+      const source = formText(form, 'crosspost_fullname');
+      if (!/^t3_[A-Za-z0-9]+$/u.test(source)) return { supported: false };
+      const options: Record<string, Wire> = {
+        subredditName: subreddit,
+        postId: source,
+        title,
+        sendreplies: formText(form, 'sendreplies', 'true') !== 'false',
+      };
+      if (flairId.length > 0) options['flairId'] = flairId;
+      return {
+        supported: true,
+        status: 200,
+        body: createdPostBody(await redditCall(roots, 'crosspost', [options])),
+      };
+    }
+
+    // Image/video/gallery submission has separate compatibility handling and
+    // falls back to OAuth unless exact Devvit parity is established.
+    return { supported: false };
+  }
+
+  const flairTemplateSubreddit = subredditFromPath(request.path, '/api/flairtemplate_v2');
+  if (flairTemplateSubreddit !== null) {
+    const type = formText(form, 'flair_type');
+    const method = type === 'USER_FLAIR'
+      ? 'createUserFlairTemplate'
+      : type === 'LINK_FLAIR'
+        ? 'createPostFlairTemplate'
+        : null;
+    if (method === null) return { supported: false };
+    const options: Record<string, Wire> = {
+      subredditName: flairTemplateSubreddit,
+      text: formText(form, 'text'),
+      modOnly: formText(form, 'mod_only') === 'true',
+      allowUserEdits: formText(form, 'text_editable') === 'true',
+    };
+    const background = formText(form, 'background_color');
+    const textColor = formText(form, 'text_color');
+    const allowable = formText(form, 'allowable_content');
+    const maxEmojis = Number(formText(form, 'max_emojis'));
+    if (background.length > 0) options['backgroundColor'] = background;
+    if (textColor === 'light' || textColor === 'dark') options['textColor'] = textColor;
+    if (allowable === 'all' || allowable === 'emoji' || allowable === 'text') {
+      options['allowableContent'] = allowable;
+    }
+    if (Number.isSafeInteger(maxEmojis) && maxEmojis >= 1 && maxEmojis <= 10) {
+      options['maxEmojis'] = maxEmojis;
+    }
+    await redditCall(roots, method, [options]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const selectFlairSubreddit = subredditFromPath(request.path, '/api/selectflair');
+  if (selectFlairSubreddit !== null) {
+    const templateId = formText(form, 'flair_template_id');
+    if (templateId.length === 0) return { supported: false };
+    const customText = formText(form, 'text');
+    const username = formText(form, 'name');
+    const postId = formText(form, 'link');
+
+    if (username.length > 0) {
+      const options: Record<string, Wire> = {
+        subredditName: selectFlairSubreddit,
+        username,
+        flairTemplateId: templateId,
+      };
+      if (customText.length > 0) options['text'] = customText;
+      await redditCall(roots, 'setUserFlair', [options]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+
+    if (/^t3_[A-Za-z0-9]+$/u.test(postId)) {
+      const options: Record<string, Wire> = {
+        subredditName: selectFlairSubreddit,
+        postId,
+        flairTemplateId: templateId,
+      };
+      if (customText.length > 0) options['text'] = customText;
+      await redditCall(roots, 'setPostFlair', [options]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+
+    return { supported: false };
+  }
+
+  const directFlairSubreddit = subredditFromPath(request.path, '/api/flair');
+  if (directFlairSubreddit !== null) {
+    const username = formText(form, 'name');
+    if (username.length === 0) return { supported: false };
+    await redditCall(roots, 'setUserFlair', [{
+      subredditName: directFlairSubreddit,
+      username,
+      text: formText(form, 'text'),
+      cssClass: formText(form, 'css_class'),
+    }]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  if (request.path === '/api/remove') {
+    const id = formText(form, 'id');
+    if (!/^(?:t1|t3)_[A-Za-z0-9]+$/u.test(id)) return { supported: false };
+    await redditCall(roots, 'remove', [id, false]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const friendSubreddit = subredditFromPath(request.path, '/api/friend');
+  if (friendSubreddit !== null) {
+    const username = formText(form, 'name');
+    const type = formText(form, 'type');
+    if (username.length === 0) return { supported: false };
+    if (type === 'banned') {
+      await redditCall(roots, 'banUser', [{
+        subredditName: friendSubreddit,
+        username,
+        reason: formText(form, 'ban_reason').slice(0, 100),
+        note: formText(form, 'note').slice(0, 300),
+      }]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+    if (type === 'muted') {
+      await redditCall(roots, 'muteUser', [{
+        subredditName: friendSubreddit,
+        username,
+        note: formText(form, 'note').slice(0, 300),
+      }]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+    return { supported: false };
+  }
+
+  const unfriendSubreddit = subredditFromPath(request.path, '/api/unfriend');
+  if (unfriendSubreddit !== null) {
+    const username = formText(form, 'name');
+    const type = formText(form, 'type');
+    if (username.length === 0) return { supported: false };
+    if (type === 'banned') {
+      await redditCall(roots, 'unbanUser', [username, unfriendSubreddit]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+    if (type === 'muted') {
+      await redditCall(roots, 'unmuteUser', [username, unfriendSubreddit]);
+      return { supported: true, status: 200, body: successBody() };
+    }
+    return { supported: false };
+  }
+
+  if (request.path === '/api/compose') {
+    const to = formText(form, 'to');
+    if (to.length === 0) return { supported: false };
+    await redditCall(roots, 'sendPrivateMessage', [{
+      to,
+      subject: formText(form, 'subject').slice(0, 100),
+      text: formText(form, 'text'),
+    }]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const replyId = modmailId(request.path);
+  if (replyId !== null) {
+    const body = formText(form, 'body').trim();
+    if (body.length === 0) return { supported: false };
+    await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      {
+        kind: 'call',
+        name: 'reply',
+        args: [{
+          conversationId: replyId,
+          body,
+          isAuthorHidden: formText(form, 'isAuthorHidden') === 'true',
+          isInternal: formText(form, 'isInternal') === 'true',
+        }],
+      },
+    ]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const archiveId = modmailId(request.path, '/archive');
+  if (archiveId !== null) {
+    await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'archiveConversation', args: [archiveId] },
+    ]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const muteId = modmailId(request.path, '/mute');
+  if (muteId !== null) {
+    const hours = Number(formText(form, 'num_hours'));
+    if (hours !== 72 && hours !== 168 && hours !== 672) return { supported: false };
+    await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'muteConversation', args: [{ conversationId: muteId, numHours: hours }] },
+    ]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  const unmuteId = modmailId(request.path, '/unmute');
+  if (unmuteId !== null) {
+    await run(roots, 'reddit', [
+      { kind: 'get', name: 'modMail' },
+      { kind: 'call', name: 'unmuteConversation', args: [unmuteId] },
+    ]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  if (request.path === '/api/set_subreddit_sticky') {
+    const id = formText(form, 'id');
+    const slot = Number(formText(form, 'num'));
+    const state = formText(form, 'state');
+    if (!/^t3_[A-Za-z0-9]+$/u.test(id) || (slot !== 1 && slot !== 2) || state !== 'true') {
+      return { supported: false };
+    }
+    await run(roots, 'reddit', [
+      { kind: 'call', name: 'getPostById', args: [id] },
+      { kind: 'call', name: 'sticky', args: [slot] },
+    ]);
+    return { supported: true, status: 200, body: successBody() };
+  }
+
+  if (request.path === '/api/mod/notes') {
+    const subreddit = formText(form, 'subreddit');
+    const user = formText(form, 'user');
+    const note = formText(form, 'note');
+    if (subreddit.length === 0 || user.length === 0 || note.length === 0) return { supported: false };
+    const options: Record<string, Wire> = { subreddit, user, note };
+    const label = formText(form, 'label');
+    const redditId = formText(form, 'reddit_id');
+    if (label.length > 0) options['label'] = label;
+    if (redditId.length > 0) options['redditId'] = redditId;
+    const created = map(await redditCall(roots, 'addModNote', [options]), 'Devvit created mod note');
+    return {
+      supported: true,
+      status: 200,
+      body: { id: text(created['id']) },
+    };
+  }
+
+  // /api/comment (PM thread reply), /api/read_message, /api/flairselector,
+  // custom emoji administration and unsupported media forms deliberately fall
+  // through to the legacy OAuth transport.
+  return { supported: false };
+};
+
+export const handleLegacyRequest = async (
+  request: LegacyCompatRequest,
+  roots: AdapterRoots,
+): Promise<LegacyCompatResponse> => {
+  const read = await handleLegacyRead(request, roots);
+  if (read.supported) return read;
+  return await handleLegacyMutation(request, roots);
+};
