@@ -12,6 +12,10 @@ import {
   type ManualUserAction,
 } from '../reputation/manualModeration.ts';
 import type { ReputationStore } from '../reputation/store.ts';
+import {
+  adapterRequestFromJson,
+  type RedditAdapterHandler,
+} from '../reddit/adapter.ts';
 import { RedditMutationClient } from '../reddit/mutate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
@@ -223,6 +227,7 @@ export class RedditInternalHttpServer {
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
   private userModeration: ManualReputationModeration | null = null;
+  private redditAdapter: RedditAdapterHandler | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -256,6 +261,11 @@ export class RedditInternalHttpServer {
   public useUserModeration(service: ManualReputationModeration): void {
     if (this.server !== null) throw new Error('User moderation must be attached before the Reddit internal API starts');
     this.userModeration = service;
+  }
+
+  public useRedditAdapter(handler: RedditAdapterHandler): void {
+    if (this.server !== null) throw new Error('Reddit adapter must be attached before the Reddit internal API starts');
+    this.redditAdapter = handler;
   }
 
   public start(): void {
@@ -445,6 +455,24 @@ export class RedditInternalHttpServer {
       return this.record(req, url, json({ ok: true }));
     }
     if (!this.authorised(req)) return this.record(req, url, json({ error: 'unauthorised' }, 401));
+
+    if (req.method === 'POST' && url.pathname === '/v1/reddit-adapter') {
+      if (this.redditAdapter === null) {
+        return this.record(req, url, json({ error: 'reddit adapter unavailable' }, 503));
+      }
+      const raw = await bodyMap(req);
+      const request = adapterRequestFromJson(raw);
+      if (request === null) {
+        return this.record(req, url, json({ error: 'invalid reddit adapter request' }, 400));
+      }
+      try {
+        const result = await this.redditAdapter(request);
+        return this.record(req, url, json(result));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'reddit adapter failed';
+        return this.record(req, url, json({ error: message }, 503));
+      }
+    }
 
     if (req.method === 'GET' && url.pathname === '/v1/question-events') {
       const after = nonNegativeInt(url.searchParams.get('after'), 0);
