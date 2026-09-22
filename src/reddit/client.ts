@@ -6,6 +6,7 @@ import type { ModmailConversation, ModmailConversationPage } from '../modmail/ty
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
 import { numVal, strVal } from '../types/value.ts';
+import { RedditAdapterClient } from './adapter.ts';
 import * as decode from './decode.ts';
 import { redditEmojis, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
@@ -32,6 +33,7 @@ export type RedditClientOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
+  readonly adapter?: RedditAdapterClient;
 };
 
 type Token = {
@@ -63,6 +65,7 @@ export class RedditReadClient {
   private readonly maxAttempts: number;
   private tokenCache: Token | null = null;
   private latestRate: RedditRate = { used: null, remaining: null, resetMs: null };
+  private readonly adapter: RedditAdapterClient | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
@@ -78,6 +81,9 @@ export class RedditReadClient {
       : rawFetcher;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
+    this.adapter = options.adapter ?? (cfg.adapter === undefined || cfg.adapter === null
+      ? null
+      : new RedditAdapterClient(cfg.adapter));
   }
 
   public rate(): RedditRate {
@@ -304,6 +310,10 @@ export class RedditReadClient {
   }
 
   private async get(path: string): Promise<Json> {
+    if (this.adapter !== null) {
+      const adapted = await this.adapter.request('GET', path);
+      if (adapted !== undefined) return adapted;
+    }
     return await this.request(path, false);
   }
 
