@@ -6,6 +6,7 @@ import {
   parseAdapterCommand,
   validateCommand,
   type AdapterCommand,
+  type AdapterStep,
 } from './controller.ts';
 
 describe('generic Devvit Reddit adapter controller', () => {
@@ -85,17 +86,7 @@ describe('generic Devvit Reddit adapter controller', () => {
       map: new Map([['a', 1]]),
     };
 
-    const decoded = decodeValue(encodeResult(original)) as {
-      readonly when: Date;
-      readonly bytes: Uint8Array;
-      readonly wide: bigint;
-      readonly map: Map<string, number>;
-    };
-
-    expect(decoded.when.toISOString()).toBe('2026-01-01T00:00:00.000Z');
-    expect([...decoded.bytes]).toEqual([1, 2, 3]);
-    expect(decoded.wide).toBe(9_007_199_254_740_993n);
-    expect(decoded.map.get('a')).toBe(1);
+    expect(decodeValue(encodeResult(original))).toEqual(original);
   });
 
   test('parses generic JSON commands without trusting TypeScript casts', () => {
@@ -132,7 +123,7 @@ describe('generic Devvit Reddit adapter controller', () => {
     expect(() => validateCommand({
       id: 'too-many',
       root: 'reddit',
-      steps: Array.from({ length: 17 }, () => ({ kind: 'get' as const, name: 'x' })),
+      steps: Array.from({ length: 17 }, (): AdapterStep => ({ kind: 'get', name: 'x' })),
     })).toThrow('Invalid adapter step count');
   });
 
