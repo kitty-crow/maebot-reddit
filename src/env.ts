@@ -71,12 +71,6 @@ export type RedditAuthCfg = {
   readonly transport?: 'devvit' | 'legacy';
 };
 
-export type RedditDevvitIngressCfg = {
-  readonly host: string;
-  readonly port: number;
-  readonly secret: string;
-};
-
 export type RedditCfg = {
   readonly auth: RedditAuthCfg;
   readonly sourceSubreddit: string;
@@ -137,11 +131,7 @@ export const redditConfig = (): RedditCfg => ({
   stateFile: resolve(process.cwd(), opt('REDDIT_STATE_FILE', 'data/reddit.pb')),
 });
 
-export const redditDevvitIngressConfig = (): RedditDevvitIngressCfg => ({
-  host: loopbackHost('REDDIT_DEVVIT_INGRESS_HOST'),
-  port: port('REDDIT_DEVVIT_INGRESS_PORT', req('REDDIT_DEVVIT_INGRESS_PORT')),
-  secret: req('REDDIT_DEVVIT_BRIDGE_SECRET'),
-});
+export const redditDevvitBridgeSecret = (): string => req('REDDIT_DEVVIT_BRIDGE_SECRET');
 
 export const redditModerationConfig = (): RedditModerationCfg | null => {
   if (!enabled('REDDIT_MODERATION_ENABLED')) return null;
