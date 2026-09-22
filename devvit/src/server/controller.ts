@@ -128,7 +128,7 @@ const assertWire = (value: Wire, state: Budget, depth = 0): void => {
 };
 
 export const parseJsonWire = (raw: string): Wire => {
-  const parsed = JSON.parse(raw) as Wire;
+  const parsed: Wire = JSON.parse(raw);
   assertWire(parsed, budget());
   return parsed;
 };
