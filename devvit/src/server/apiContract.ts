@@ -2,6 +2,7 @@ import { media, reddit } from '@devvit/web/server';
 
 type RedditApi = typeof reddit;
 type MediaApi = typeof media;
+type PostModel = Awaited<ReturnType<RedditApi['getPostById']>>;
 
 /**
  * Compile-time-only capability contract for Devvit 0.14.4.
@@ -157,6 +158,8 @@ const modmailMute = {
   numHours: 72,
 } satisfies Parameters<RedditApi['modMail']['muteConversation']>[0];
 
+const sticky = [2] satisfies Parameters<PostModel['sticky']>;
+
 /**
  * Exported only so noUnusedLocals keeps every compile-time witness alive.
  * The object is never imported by the Devvit runtime bundle.
@@ -189,4 +192,5 @@ export const devvitCallContracts = {
   modmailArchive: ['abcdef'] satisfies Parameters<RedditApi['modMail']['archiveConversation']>,
   modmailMute: [modmailMute] satisfies Parameters<RedditApi['modMail']['muteConversation']>,
   modmailUnmute: ['abcdef'] satisfies Parameters<RedditApi['modMail']['unmuteConversation']>,
+  sticky,
 } as const;
