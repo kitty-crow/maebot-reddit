@@ -38,13 +38,12 @@ export type AdapterStep =
 
 export type AdapterCommand = {
   readonly id: string;
-  readonly root: 'reddit' | 'media';
+  readonly root: 'reddit';
   readonly steps: readonly AdapterStep[];
 };
 
 export type AdapterRoots = Readonly<{
   reddit: object;
-  media: object;
 }>;
 
 type Budget = {
@@ -140,8 +139,8 @@ export const parseAdapterCommand = (value: Wire): AdapterCommand => {
   const rawSteps = raw['steps'];
 
   if (typeof id !== 'string') throw new Error('Adapter command id must be a string');
-  if (root !== 'reddit' && root !== 'media') {
-    throw new Error('Adapter command root must be reddit or media');
+  if (root !== 'reddit') {
+    throw new Error('Adapter command root must be reddit');
   }
   if (!Array.isArray(rawSteps)) throw new Error('Adapter command steps must be an array');
 
