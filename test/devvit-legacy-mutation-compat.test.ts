@@ -23,6 +23,12 @@ const formRecord = (body: BodyInit | null | undefined): Readonly<Record<string, 
   return {};
 };
 
+const legacyMethod = (method: string | undefined): 'GET' | 'POST' | 'DELETE' => {
+  const normalized = (method ?? 'GET').toUpperCase();
+  if (normalized === 'GET' || normalized === 'POST' || normalized === 'DELETE') return normalized;
+  throw new Error(`Unsupported test HTTP method: ${normalized}`);
+};
+
 const adapterFetcher = (
   roots: AdapterRoots,
 ): ((input: string | URL | Request, init?: RequestInit) => Promise<Response>) =>
@@ -36,7 +42,7 @@ const adapterFetcher = (
     }
 
     const response = await handleLegacyMutation({
-      method: (init.method ?? 'GET') as 'GET' | 'POST' | 'DELETE',
+      method: legacyMethod(init.method),
       path: url.pathname,
       query: Object.fromEntries(url.searchParams.entries()),
       form: formRecord(init.body),
