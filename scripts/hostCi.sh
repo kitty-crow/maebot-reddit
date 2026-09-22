@@ -3,14 +3,22 @@ set -euo pipefail
 umask 077
 
 platform='reddit'
-default_ref='feature/reddit-reputation-bootstrap'
-ref="${1:-$default_ref}"
+ref="${1:-}"
 live="${MAE_LIVE_DIR:-/home/kitty/server/mae/reddit}"
 remote="${MAE_CI_REMOTE:-}"
 
-for command in git bun; do
+if ! printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo 'Usage: bash scripts/hostCi.sh <exact-40-character-commit-sha>' >&2
+  exit 2
+fi
+
+for command in git bun node npm; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 2; }
 done
+[ "$(node --version)" = 'v24.18.0' ] || {
+  echo "Host CI requires Node v24.18.0; found $(node --version)." >&2
+  exit 2
+}
 [ -d "$live" ] || { echo "Live Reddit directory not found: $live" >&2; exit 2; }
 
 if [ -z "$remote" ]; then
@@ -22,8 +30,10 @@ root="$(mktemp -d "/tmp/mae-${platform}-ci.XXXXXXXX")"
 repo="$root/repo"
 build="$root/build"
 tmp="$root/tmp"
+home="$root/home"
+npm_cache="$root/npm-cache"
 ephemeral="ci/${platform}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-mkdir -p "$tmp"
+mkdir -p "$tmp" "$home" "$npm_cache"
 
 cleanup() {
   status=$?
@@ -35,7 +45,7 @@ trap cleanup EXIT INT TERM
 
 run_clean() {
   env -i \
-    HOME="${HOME:-/tmp}" \
+    HOME="$home" \
     PATH="$PATH" \
     USER="${USER:-mae-ci}" \
     LANG="${LANG:-C.UTF-8}" \
@@ -56,18 +66,48 @@ git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
 git -C "$repo" submodule update --init --recursive
 
 cd "$repo"
-printf '  candidate SHA: %s\n' "$(git rev-parse HEAD)"
-# Install exactly the dependency graph committed in bun.lock.
+candidate="$(git rev-parse HEAD)"
+[ "$candidate" = "$ref" ] || {
+  echo "Fetched candidate SHA $candidate does not match requested SHA $ref." >&2
+  exit 1
+}
+printf '  candidate SHA: %s\n' "$candidate"
+
+# Install exactly the Bun dependency graph committed in bun.lock.
 bun ci
 
 # The TypeScript Reddit runtime is self-contained. Legacy Python/common state is
 # migration evidence only and is deliberately not a prerequisite for host CI.
-# Production reputation.pb is never opened or copied by this script: validation
-# runs only inside the disposable clone with test-owned temporary stores.
+# Production protobuf stores are never opened or copied by this script.
 run_clean bun run ci
 mkdir -p "$build"
 run_clean bun build ./src/main.ts --target=bun --outdir "$build"
 test -s "$build/main.js"
+
+# Devvit validation runs with a scrubbed environment so it cannot inherit
+# production Reddit, OpenAI, Discord, Telegram, or service credentials.
+(
+  cd "$repo/devvit"
+  env -i \
+    HOME="$home" \
+    PATH="$PATH" \
+    USER="${USER:-mae-ci}" \
+    LANG="${LANG:-C.UTF-8}" \
+    CI=1 \
+    TMPDIR="$tmp" \
+    npm_config_cache="$npm_cache" \
+    npm install --package-lock=false --no-audit --no-fund
+  env -i \
+    HOME="$home" \
+    PATH="$PATH" \
+    USER="${USER:-mae-ci}" \
+    LANG="${LANG:-C.UTF-8}" \
+    CI=1 \
+    TMPDIR="$tmp" \
+    npm_config_cache="$npm_cache" \
+    npm run ci
+  rm -rf node_modules
+)
 
 # CI must not alter source, create tracked candidates, or move submodules.
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
