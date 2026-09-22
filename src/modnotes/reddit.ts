@@ -7,6 +7,8 @@ import {
   wireText,
 } from '../reddit/devvitCompat.ts';
 import { DevvitRpcClient } from '../reddit/devvitRpc.ts';
+import { legacyRedditApi, type LegacyRedditApi } from '../reddit/legacyApi.ts';
+import { isMap, type Json } from '../types/json.ts';
 import type { RedditComment } from '../reddit/types.ts';
 import type { MemberModNoteLabel } from './store.ts';
 
@@ -21,16 +23,46 @@ export type MemberModNotesRedditOptions = {
   readonly rpc?: DevvitRpcClient;
 };
 
+const findModNoteId = (value: Json): string | null => {
+  if (typeof value === 'string') return value.startsWith('ModNote_') ? value : null;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findModNoteId(child);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (!isMap(value)) return null;
+  const direct = value['id'];
+  if (typeof direct === 'string' && direct.startsWith('ModNote_')) return direct;
+  for (const child of Object.values(value)) {
+    const found = findModNoteId(child);
+    if (found !== null) return found;
+  }
+  return null;
+};
+
 export class MemberModNotesRedditClient {
   private readonly rpc: DevvitRpcClient;
   private readonly read: RedditReadClient;
+  private readonly legacy: LegacyRedditApi | null;
+  private readonly forceLegacy: boolean;
 
   public constructor(
     cfg: RedditAuthCfg,
     options: MemberModNotesRedditOptions = {},
   ) {
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
-    this.read = new RedditReadClient(cfg, { rpc: this.rpc });
+    this.forceLegacy = cfg.transport === 'legacy';
+    this.legacy = legacyRedditApi(cfg, options.fetcher);
+    this.read = new RedditReadClient(cfg, {
+      rpc: this.rpc,
+      fetcher: options.fetcher,
+      sleep: options.sleep,
+      random: options.random,
+      maxAttempts: options.maxAttempts,
+      rateReserve: options.rateReserve,
+    });
   }
 
   public async recentCommentsInCommunities(
@@ -64,6 +96,20 @@ export class MemberModNotesRedditClient {
     if (text.length < 1 || text.length > 250) {
       throw new Error('Reddit Mod Note text must be from 1 to 250 characters');
     }
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit OAuth is not configured');
+      const form = new URLSearchParams({
+        api_type: 'json',
+        subreddit,
+        user,
+        note: text,
+      });
+      if (label !== 'NONE') form.set('label', label);
+      if (redditId !== undefined) form.set('reddit_id', redditId);
+      const id = findModNoteId(await this.legacy.form('/api/mod/notes', form));
+      if (id === null) throw new Error('Legacy Reddit Mod Note creation returned no ModNote id');
+      return id;
+    }
     const raw = wireMap(await redditCall(this.rpc, 'addModNote', [{
       subreddit,
       user,
@@ -83,6 +129,12 @@ export class MemberModNotesRedditClient {
     const user = rawUsername.trim().replace(/^u\//iu, '');
     const noteId = rawNoteId.trim();
     if (!noteId.startsWith('ModNote_')) throw new Error(`Invalid native Mod Note id ${rawNoteId}`);
+    if (this.forceLegacy) {
+      if (this.legacy === null) throw new Error('Legacy Reddit OAuth is not configured');
+      const query = new URLSearchParams({ note_id: noteId, subreddit, user });
+      await this.legacy.delete(`/api/mod/notes?${query}`);
+      return;
+    }
     await redditCall(this.rpc, 'deleteModNote', [{ subreddit, user, noteId }]);
   }
 }
