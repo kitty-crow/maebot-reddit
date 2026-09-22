@@ -115,11 +115,6 @@ export const redditConfig = (): RedditCfg => ({
     username: maybe('REDDIT_USERNAME') ?? 'this_is_the_mae',
     devvitRpcStateFile: resolve(process.cwd(), opt('REDDIT_DEVVIT_RPC_STATE_FILE', 'data/devvitRpc.pb')),
     devvitRpcTimeoutMs: positive('REDDIT_DEVVIT_RPC_TIMEOUT_MS', '120000'),
-    transport: (() => {
-      const value = (maybe('REDDIT_TRANSPORT') ?? 'devvit').toLowerCase();
-      if (value === 'devvit' || value === 'legacy') return value;
-      throw new Error('REDDIT_TRANSPORT must be devvit or legacy');
-    })(),
     legacyOauth: (() => {
       const clientId = maybe('REDDIT_CLIENT_ID');
       const clientSecret = maybe('REDDIT_CLIENT_SECRET');
