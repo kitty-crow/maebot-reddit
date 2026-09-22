@@ -48,7 +48,10 @@ app.all('/api/reddit/*', async c => {
         path: legacyPath,
       }, 501);
     }
-    return c.json(response.body, response.status);
+    return new Response(JSON.stringify(response.body), {
+      status: response.status,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
   } catch (error) {
     console.error(
       `[Reddit adapter] ${method} ${legacyPath} failed: ${error instanceof Error ? error.message : String(error)}`,
