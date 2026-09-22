@@ -206,21 +206,19 @@ const relationship = async (
     return { supported: true, status: 200, body: emptyEnvelope() };
   }
 
-  if (type === 'banned') {
-    await call(roots, 'banUser', [{
-      subredditName,
-      username,
-      reason: (form['ban_reason'] ?? '').slice(0, 100),
-      note: (form['note'] ?? '').slice(0, 300),
-      ...(integer(form['duration']) === null ? {} : { duration: integer(form['duration'])! }),
-    }]);
-  } else {
-    await call(roots, 'muteUser', [{
-      subredditName,
-      username,
-      note: (form['note'] ?? '').slice(0, 300),
-    }]);
+  if (type === 'muted') {
+    // Mae's legacy contract explicitly requests a 28-day mute. Devvit 0.14.4
+    // muteUser() exposes no duration option, so exact parity is unproven.
+    return { supported: false };
   }
+
+  await call(roots, 'banUser', [{
+    subredditName,
+    username,
+    reason: (form['ban_reason'] ?? '').slice(0, 100),
+    note: (form['note'] ?? '').slice(0, 300),
+    ...(integer(form['duration']) === null ? {} : { duration: integer(form['duration'])! }),
+  }]);
   return { supported: true, status: 200, body: emptyEnvelope() };
 };
 
