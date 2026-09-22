@@ -31,6 +31,17 @@ const integer = (value: string | undefined): number | null => {
   return Number.isSafeInteger(parsed) ? parsed : null;
 };
 
+const modNoteLabels = new Set([
+  'BOT_BAN',
+  'PERMA_BAN',
+  'BAN',
+  'ABUSE_WARNING',
+  'SPAM_WARNING',
+  'SPAM_WATCH',
+  'SOLID_CONTRIBUTOR',
+  'HELPFUL_USER',
+]);
+
 const run = async (
   roots: AdapterRoots,
   steps: readonly AdapterStep[],
@@ -260,12 +271,18 @@ const modNote = async (
     const user = form['user'];
     const note = form['note'];
     if (subreddit === undefined || user === undefined || note === undefined) return { supported: false };
+    const label = form['label'];
+    if (label !== undefined && !modNoteLabels.has(label)) return { supported: false };
+    const redditId = form['reddit_id'];
+    if (redditId !== undefined && !/^(?:t1|t3)_[A-Za-z0-9]+$/u.test(redditId)) {
+      return { supported: false };
+    }
     const value = await call(roots, 'addModNote', [{
       subreddit,
       user,
       note,
-      ...(form['label'] === undefined ? {} : { label: form['label'] }),
-      ...(form['reddit_id'] === undefined ? {} : { redditId: form['reddit_id'] }),
+      ...(label === undefined ? {} : { label }),
+      ...(redditId === undefined ? {} : { redditId }),
     }]);
     const raw = map(value, 'Devvit Mod Note');
     const id = typeof raw['id'] === 'string' ? raw['id'] : '';
