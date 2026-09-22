@@ -49,7 +49,7 @@ A feature does not move from **OAUTH** or **VERIFY** to **DEVVIT** merely becaus
 | `sentDirectMessages(max)` | OAUTH | Devvit `PrivateMessage` shape is incomplete | Mae uses sent history for duplicate-safe recovery, so partial identity/thread metadata is not acceptable. |
 | `modmailConversations(name, limit)` | DEVVIT | `reddit.modMail.getConversations()` | Devvit 0.14.4 documents subreddit filters, state, sort and limit. |
 | `modmailConversation(id, markRead)` | DEVVIT | `reddit.modMail.getConversation()` | `markRead` is directly represented. |
-| `scores(fullnames)` | DEVVIT | `getPostById()` / `getCommentById()` | Semantically possible, but one legacy batch read becomes multiple Devvit object reads. Performance/quota impact must be measured. |
+| `scores(fullnames)` | MIXED | `getPostById()` for post-only batches | Devvit `Post` exposes both score and archived state. Devvit 0.14.4 `Comment` does not expose archived state, so any batch containing a `t1_` fullname stays on OAuth. |
 
 ## Mutation surface
 
@@ -139,6 +139,11 @@ These are the current capabilities for which the OAuth implementation must remai
    - Current Mae operations: inbox/unread/sent DM history and mark-one-read
    - Needed Devvit capability: preserve subject, destination, thread/parent identity, read/new state and comment-message distinction, plus direct lookup by `t4_` fullname.
 
+11. **Comment archived state for score sampling**
+   - Current Mae operation: `scores(fullnames)` when the batch contains `t1_` comments
+   - Needed Devvit capability: expose the legacy comment archived state alongside score.
+   - Post-only score batches may use Devvit; mixed/comment batches remain OAuth.
+
 ## Capabilities still under verification
 
 These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.4 parity is demonstrated.
@@ -147,7 +152,7 @@ These are not declared Devvit gaps yet. OAuth remains the safe route until 0.14.
 - Native video upload/submission.
 - Image/media submission when Mae supplies both native media and a body.
 - `recentCommentsInCommunities()` via `getCommentsByUser()`.
-- Score sampling cost when one old `/api/info` batch maps to multiple Devvit object reads.
+- Score sampling cost when a post-only old `/api/info` batch maps to multiple Devvit object reads.
 
 ## Runtime invocation constraint
 
