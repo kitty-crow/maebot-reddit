@@ -102,14 +102,28 @@ const redditList = async (
 const listing = (
   children: readonly Wire[],
   kind: 't1' | 't2' | 't3' | 't4' | 't5' | '',
+  after: string | null = null,
 ): Wire => ({
   kind: 'Listing',
   data: {
-    after: null,
+    after,
     before: null,
     children: children.map(data => kind.length === 0 ? data : { kind, data }),
   },
 });
+
+const cursorFrom = (
+  values: readonly Wire[],
+  requested: number,
+  prefix: 't2_' | 't3_',
+): string | null => {
+  if (values.length < requested) return null;
+  const last = values.at(-1);
+  if (last === undefined) return null;
+  const raw = map(last, 'Devvit listing cursor item');
+  const id = maybeText(raw['id']);
+  return id === null ? null : fullname(id, prefix);
+};
 
 const appUserData = (value: Wire): Wire => {
   const raw = map(value, 'Devvit app user');
@@ -274,15 +288,21 @@ const postListing = async (
   method: 'getHotPosts' | 'getNewPosts',
   name: string,
   limit: number,
-): Promise<Wire> =>
-  listing(
-    (await redditList(roots, method, [{
-      subredditName: name,
-      limit,
-      pageSize: Math.min(100, limit),
-    }])).map(postData),
+  after: string | null,
+): Promise<Wire> => {
+  const options: Record<string, Wire> = {
+    subredditName: name,
+    limit,
+    pageSize: Math.min(100, limit),
+  };
+  if (after !== null) options['after'] = after;
+  const values = await redditList(roots, method, [options]);
+  return listing(
+    values.map(postData),
     't3',
+    cursorFrom(values, limit, 't3_'),
   );
+};
 
 const infoListing = async (roots: AdapterRoots, ids: readonly string[]): Promise<Wire> => {
   const children: Wire[] = [];
@@ -580,15 +600,25 @@ export const handleLegacyRead = async (
       : kind === 'banned'
         ? 'getBannedUsers'
         : 'getMutedUsers';
-    const values = await redditList(roots, method, [{
+    const limit = positiveLimit(query['limit'], 100, 1000);
+    const options: Record<string, Wire> = {
       subredditName: name,
-      limit: positiveLimit(query['limit'], 100, 1000),
-      pageSize: 100,
-    }]);
+      limit,
+      pageSize: Math.min(100, limit),
+    };
+    if (query['after'] !== undefined) options['after'] = query['after'];
+    if ((kind === 'banned' || kind === 'muted') && query['user'] !== undefined) {
+      options['username'] = query['user'];
+    }
+    const values = await redditList(roots, method, [options]);
     return {
       supported: true,
       status: 200,
-      body: listing(values.map(kind === 'moderators' ? moderatorData : relationshipData), ''),
+      body: listing(
+        values.map(kind === 'moderators' ? moderatorData : relationshipData),
+        '',
+        cursorFrom(values, limit, 't2_'),
+      ),
     };
   }
 
@@ -616,7 +646,13 @@ export const handleLegacyRead = async (
     return {
       supported: true,
       status: 200,
-      body: await postListing(roots, posts[2] === 'hot' ? 'getHotPosts' : 'getNewPosts', name, limit),
+      body: await postListing(
+        roots,
+        posts[2] === 'hot' ? 'getHotPosts' : 'getNewPosts',
+        name,
+        limit,
+        query['after'] ?? null,
+      ),
     };
   }
 
