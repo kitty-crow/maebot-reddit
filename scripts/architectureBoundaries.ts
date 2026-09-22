@@ -42,7 +42,7 @@ const forbiddenActivePaths = [
   /^src[\\/]modmail[\\/]terminalServer\.ts$/iu,
   /^src[\\/]modmail[\\/]terminalPage(?:View)?\.(?:ts|tsx)$/iu,
   /^src[\\/]modmail[\\/]web(?:[\\/]|$)/iu,
-] as const;
+];
 
 const hits: string[] = [];
 const sourceFile = (file: string): boolean => {
