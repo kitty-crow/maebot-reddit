@@ -144,7 +144,7 @@ const moderatorData = (value: Wire): Wire => {
     : map(raw['moderatorInfo'], 'Devvit moderator info');
   const directPermissions = moderatorInfo?.['modPermissions'];
   const accountPermissions = raw['modPermissions'];
-  let decoded: readonly Wire[] = [];
+  let decoded: Wire[] = [];
   if (Array.isArray(directPermissions)) {
     decoded = directPermissions.filter(item => typeof item === 'string');
   } else if (
