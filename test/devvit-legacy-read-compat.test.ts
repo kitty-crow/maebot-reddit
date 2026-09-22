@@ -383,7 +383,7 @@ describe('Devvit legacy Reddit read compatibility', () => {
       id: 'abcdef',
       subreddit: 'catgirlcoin',
       subject: 'Help',
-      state: 'new',
+      state: 'inprogress',
     });
     expect(page.conversations[0]?.messages[0]).toMatchObject({
       id: 'm1',
@@ -395,6 +395,7 @@ describe('Devvit legacy Reddit read compatibility', () => {
       id: 'abcdef',
       subreddit: 'catgirlcoin',
       subject: 'Help',
+      state: 'inprogress',
     });
   });
 
