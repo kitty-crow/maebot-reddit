@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 umask 077
 
 platform='reddit'
@@ -54,18 +53,27 @@ run_clean() {
     "$@"
 }
 
+must() {
+  "$@"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "Host CI command failed with status $status: $*" >&2
+    exit "$status"
+  fi
+}
+
 printf 'Mae %s host CI\n' "$platform"
 printf '  ref: %s\n' "$ref"
 printf '  live source: %s\n' "$live"
 printf '  disposable root: %s\n' "$root"
 printf '  disposable branch: %s\n' "$ephemeral"
 
-git clone --quiet --no-checkout "$remote" "$repo"
-git -C "$repo" fetch --quiet origin "$ref"
-git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
-git -C "$repo" submodule update --init --recursive
+must git clone --quiet --no-checkout "$remote" "$repo"
+must git -C "$repo" fetch --quiet origin "$ref"
+must git -C "$repo" checkout --quiet -b "$ephemeral" FETCH_HEAD
+must git -C "$repo" submodule update --init --recursive
 
-cd "$repo"
+cd "$repo" || exit $?
 candidate="$(git rev-parse HEAD)"
 [ "$candidate" = "$ref" ] || {
   echo "Fetched candidate SHA $candidate does not match requested SHA $ref." >&2
@@ -74,21 +82,21 @@ candidate="$(git rev-parse HEAD)"
 printf '  candidate SHA: %s\n' "$candidate"
 
 # Install exactly the Bun dependency graph committed in bun.lock.
-bun ci
+must bun ci
 
 # The TypeScript Reddit runtime is self-contained. Legacy Python/common state is
 # migration evidence only and is deliberately not a prerequisite for host CI.
 # Production protobuf stores are never opened or copied by this script.
-run_clean bun run ci
-mkdir -p "$build"
-run_clean bun build ./src/main.ts --target=bun --outdir "$build"
-test -s "$build/main.js"
+must run_clean bun run ci
+must mkdir -p "$build"
+must run_clean bun build ./src/main.ts --target=bun --outdir "$build"
+must test -s "$build/main.js"
 
 # Devvit validation runs with a scrubbed environment so it cannot inherit
 # production Reddit, OpenAI, Discord, Telegram, or service credentials.
 (
-  cd "$repo/devvit"
-  env -i \
+  cd "$repo/devvit" || exit $?
+  must env -i \
     HOME="$home" \
     PATH="$PATH" \
     USER="${USER:-mae-ci}" \
@@ -97,7 +105,7 @@ test -s "$build/main.js"
     TMPDIR="$tmp" \
     npm_config_cache="$npm_cache" \
     npm install --package-lock=false --no-audit --no-fund
-  env -i \
+  must env -i \
     HOME="$home" \
     PATH="$PATH" \
     USER="${USER:-mae-ci}" \
@@ -106,7 +114,7 @@ test -s "$build/main.js"
     TMPDIR="$tmp" \
     npm_config_cache="$npm_cache" \
     npm run ci
-  rm -rf node_modules dist
+  must rm -rf node_modules dist
 )
 
 # CI must not alter source, create tracked candidates, or move submodules.
