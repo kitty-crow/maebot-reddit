@@ -59,7 +59,9 @@ LIVE_RATE="$(bun -e '
   if (configured) {
     process.stdout.write(resolve(process.cwd(), configured));
   } else {
-    const clientId = redditConfig().auth.legacyOauth?.clientId;\n    if (!clientId) throw new Error("Legacy Reddit OAuth client id is required for the shared rate-budget key");\n    const key = createHash("sha256").update(clientId).digest("hex").slice(0, 16);
+    const clientId = redditConfig().auth.legacyOauth?.clientId;
+    if (!clientId) throw new Error("Legacy Reddit OAuth client id is required for the shared rate-budget key");
+    const key = createHash("sha256").update(clientId).digest("hex").slice(0, 16);
     process.stdout.write(resolve(process.cwd(), "data", `redditRate-${key}.pb`));
   }
 ')"
