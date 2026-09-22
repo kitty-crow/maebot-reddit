@@ -35,15 +35,14 @@ const roots = {
         id: 't5_abc',
         name,
         title: 'Catgirl Coin',
-        subscribers: 42,
-        nsfw: false,
-        type: 'public',
+        subscribersCount: 42,
+        isNsfw: false,
         authorFlairSettings: {
-          enabled: true,
-          usersCanAssign: false,
+          isEnabled: true,
+          isSelfAssignabled: false,
         },
         postFlairSettings: {
-          enabled: true,
+          isEnabled: true,
         },
       };
     },
@@ -52,7 +51,7 @@ const roots = {
         {
           username: 'this_is_the_mae',
           id: 't2_app',
-          permissions: ['all'],
+          moderatorInfo: { modPermissions: ['all'] },
         },
       ]);
     },
@@ -136,7 +135,7 @@ const roots = {
                 isDeleted: false,
               },
               conversationType: 'sr_user',
-              state: 'new',
+              state: 'InProgress',
               isInternal: false,
               isAuto: false,
               lastUpdated: new Date('2026-01-06T00:00:00.000Z'),
@@ -179,7 +178,7 @@ const roots = {
               isDeleted: false,
             },
             conversationType: 'sr_user',
-            state: 'new',
+            state: 'inprogress',
             isInternal: false,
             isAuto: false,
             lastUpdated: new Date('2026-01-06T00:00:00.000Z'),
@@ -220,9 +219,8 @@ const roots = {
         body: 'hi',
         permalink: '/r/catgirlcoin/comments/post/hello/comment/',
         createdAt: new Date('2026-01-05T00:00:00.000Z'),
-        distinguished: null,
+        distinguishedBy: null,
         stickied: false,
-        removedByCategory: null,
         score: 7,
         archived: false,
       };
@@ -284,7 +282,7 @@ describe('Devvit legacy Reddit read compatibility', () => {
       userFlairSelfAssign: false,
       linkFlairEnabled: true,
       over18: false,
-      submissionType: 'public',
+      submissionType: null,
     });
   });
 
@@ -310,22 +308,21 @@ describe('Devvit legacy Reddit read compatibility', () => {
     expect(decode.relationshipUsers(muted).items[0]?.username).toBe('MutedUser');
   });
 
-  test('existing flair and rule decoders consume adapter output', async () => {
-    const userFlairs = supported(await handleLegacyRead({
+  test('rules use Devvit while incomplete flair-template reads stay on OAuth', async () => {
+    expect(await handleLegacyRead({
       method: 'GET',
       path: '/r/catgirlcoin/api/user_flair_v2',
-    }, roots));
-    const postFlairs = supported(await handleLegacyRead({
+    }, roots)).toEqual({ supported: false });
+    expect(await handleLegacyRead({
       method: 'GET',
       path: '/r/catgirlcoin/api/link_flair_v2',
-    }, roots));
+    }, roots)).toEqual({ supported: false });
+
     const rules = supported(await handleLegacyRead({
       method: 'GET',
       path: '/r/catgirlcoin/about/rules',
     }, roots));
 
-    expect(decode.flairTemplates(userFlairs)[0]?.id).toBe('user-flair');
-    expect(decode.flairTemplates(postFlairs)[0]?.id).toBe('post-flair');
     expect(decode.rules(rules).rules).toEqual([{
       shortName: 'Be nice',
       description: 'No abuse',
@@ -391,6 +388,55 @@ describe('Devvit legacy Reddit read compatibility', () => {
       subreddit: 'catgirlcoin',
       subject: 'Help',
     });
+  });
+
+  test('passes exact relationship filters and listing cursors into Devvit', async () => {
+    const seen: unknown[] = [];
+    const filteredRoots = {
+      ...roots,
+      reddit: {
+        ...roots.reddit,
+        getBannedUsers(options: unknown) {
+          seen.push(['banned', options]);
+          return listing([{ id: 't2_bad', username: 'BadUser', note: null }]);
+        },
+        getNewPosts(options: unknown) {
+          seen.push(['new', options]);
+          return listing(Array.from({ length: 2 }, (_, index) => ({
+            ...post(),
+            id: `t3_post${index + 1}`,
+          })));
+        },
+      },
+    };
+
+    await handleLegacyRead({
+      method: 'GET',
+      path: '/r/catgirlcoin/about/banned',
+      query: { limit: '1', user: 'BadUser', after: 't2_prev' },
+    }, filteredRoots);
+
+    await handleLegacyRead({
+      method: 'GET',
+      path: '/r/catgirlcoin/new',
+      query: { limit: '2', after: 't3_prev' },
+    }, filteredRoots);
+
+    expect(seen).toEqual([
+      ['banned', {
+        subredditName: 'catgirlcoin',
+        limit: 1,
+        pageSize: 1,
+        after: 't2_prev',
+        username: 'BadUser',
+      }],
+      ['new', {
+        subredditName: 'catgirlcoin',
+        limit: 2,
+        pageSize: 2,
+        after: 't3_prev',
+      }],
+    ]);
   });
 
   test('unsupported capabilities stay unsupported rather than being emulated', async () => {
