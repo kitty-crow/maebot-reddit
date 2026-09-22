@@ -212,14 +212,22 @@ const postData = (value: Wire): Wire => {
 };
 
 const subredditBody = async (name: string, roots: AdapterRoots): Promise<Wire> => {
-  const [infoValue, meValue, moderators] = await Promise.all([
+  const [infoValue, meValue] = await Promise.all([
     redditCall(roots, 'getSubredditInfoByName', [name]),
     redditCall(roots, 'getAppUser'),
-    redditList(roots, 'getModerators', [{ subredditName: name, limit: 1000, pageSize: 100 }]),
   ]);
   const info = map(infoValue, 'Devvit subreddit');
   const me = map(meValue, 'Devvit app user');
-  const username = text(me['username']).toLowerCase();
+  const appUsername = text(me['username']);
+  const moderators = appUsername.length === 0
+    ? []
+    : await redditList(roots, 'getModerators', [{
+        subredditName: name,
+        username: appUsername,
+        limit: 1,
+        pageSize: 1,
+      }]);
+  const username = appUsername.toLowerCase();
   const authorFlair = info['authorFlairSettings'] === undefined || info['authorFlairSettings'] === null
     ? null
     : map(info['authorFlairSettings'], 'Devvit author flair settings');
