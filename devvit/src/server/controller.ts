@@ -92,6 +92,74 @@ const assertWire = (value: Wire, state: Budget, depth = 0): void => {
   }
 };
 
+const wireFromUnknown = (value: unknown): Wire => {
+  if (
+    value === null
+    || typeof value === 'boolean'
+    || typeof value === 'number'
+    || typeof value === 'string'
+  ) return value;
+  if (Array.isArray(value)) return value.map(wireFromUnknown);
+  if (typeof value !== 'object') throw new Error('Adapter value is not JSON-compatible');
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, wireFromUnknown(child)]),
+  );
+};
+
+export const parseAdapterCommand = (value: unknown): AdapterCommand => {
+  if (value === null || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error('Adapter command must be an object');
+  }
+  const raw = value as Readonly<Record<string, unknown>>;
+  if (typeof raw['id'] !== 'string') throw new Error('Adapter command id must be a string');
+  if (raw['root'] !== 'reddit' && raw['root'] !== 'media') {
+    throw new Error('Adapter command root must be reddit or media');
+  }
+  if (!Array.isArray(raw['steps'])) throw new Error('Adapter command steps must be an array');
+
+  const steps: AdapterStep[] = raw['steps'].map((value, index) => {
+    if (value === null || Array.isArray(value) || typeof value !== 'object') {
+      throw new Error(`Adapter step ${index} must be an object`);
+    }
+    const step = value as Readonly<Record<string, unknown>>;
+    if (typeof step['name'] !== 'string') {
+      throw new Error(`Adapter step ${index} name must be a string`);
+    }
+    if (step['kind'] === 'get') {
+      return { kind: 'get', name: step['name'] };
+    }
+    if (step['kind'] === 'call') {
+      if (!Array.isArray(step['args'])) {
+        throw new Error(`Adapter call step ${index} args must be an array`);
+      }
+      return {
+        kind: 'call',
+        name: step['name'],
+        args: step['args'].map(wireFromUnknown),
+      };
+    }
+    if (step['kind'] === 'find') {
+      if (!Object.hasOwn(step, 'equals')) {
+        throw new Error(`Adapter find step ${index} requires equals`);
+      }
+      return {
+        kind: 'find',
+        name: step['name'],
+        equals: wireFromUnknown(step['equals']),
+      };
+    }
+    throw new Error(`Adapter step ${index} has an invalid kind`);
+  });
+
+  const command: AdapterCommand = {
+    id: raw['id'],
+    root: raw['root'],
+    steps,
+  };
+  validateCommand(command);
+  return command;
+};
+
 export const validateCommand = (command: AdapterCommand): void => {
   if (!idPattern.test(command.id)) throw new Error('Invalid adapter command id');
   if (command.root !== 'reddit' && command.root !== 'media') {
