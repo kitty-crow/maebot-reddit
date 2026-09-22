@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { directMessages } from '../src/dm/decode.ts';
+import { modmailConversation, modmailConversations } from '../src/modmail/decode.ts';
 import * as decode from '../src/reddit/decode.ts';
 import { thingScores } from '../src/reddit/scoreDecode.ts';
 import {
@@ -116,6 +117,94 @@ const roots = {
     },
     async getPostById() {
       return post();
+    },
+    modMail: {
+      async getConversations() {
+        return {
+          conversations: {
+            abcdef: {
+              id: 'abcdef',
+              subredditName: 'catgirlcoin',
+              subject: 'Help',
+              participant: {
+                id: 't2_member',
+                name: 'Member',
+                isMod: false,
+                isAdmin: false,
+                isParticipant: true,
+                isHidden: false,
+                isDeleted: false,
+              },
+              conversationType: 'sr_user',
+              state: 'new',
+              isInternal: false,
+              isAuto: false,
+              lastUpdated: new Date('2026-01-06T00:00:00.000Z'),
+              messages: {
+                m1: {
+                  id: 'm1',
+                  conversationId: 'abcdef',
+                  author: {
+                    id: 't2_member',
+                    name: 'Member',
+                    isMod: false,
+                    isAdmin: false,
+                    isParticipant: true,
+                    isHidden: false,
+                    isDeleted: false,
+                  },
+                  bodyMarkdown: 'Hello',
+                  date: new Date('2026-01-06T00:00:00.000Z'),
+                  isInternal: false,
+                  participatingAs: 'user',
+                },
+              },
+            },
+          },
+        };
+      },
+      async getConversation() {
+        return {
+          conversation: {
+            id: 'abcdef',
+            subredditName: 'catgirlcoin',
+            subject: 'Help',
+            participant: {
+              id: 't2_member',
+              name: 'Member',
+              isMod: false,
+              isAdmin: false,
+              isParticipant: true,
+              isHidden: false,
+              isDeleted: false,
+            },
+            conversationType: 'sr_user',
+            state: 'new',
+            isInternal: false,
+            isAuto: false,
+            lastUpdated: new Date('2026-01-06T00:00:00.000Z'),
+            messages: {
+              m1: {
+                id: 'm1',
+                conversationId: 'abcdef',
+                author: {
+                  id: 't2_member',
+                  name: 'Member',
+                  isMod: false,
+                  isAdmin: false,
+                  isParticipant: true,
+                  isHidden: false,
+                  isDeleted: false,
+                },
+                bodyMarkdown: 'Hello',
+                date: new Date('2026-01-06T00:00:00.000Z'),
+                isInternal: false,
+                participatingAs: 'user',
+              },
+            },
+          },
+        };
+      },
     },
     async getCommentById() {
       return {
@@ -269,6 +358,39 @@ describe('Devvit legacy Reddit read compatibility', () => {
       { fullname: 't3_post', score: 9, archived: false },
       { fullname: 't1_comment', score: 7, archived: false },
     ]);
+  });
+
+  test('existing Modmail decoders consume adapter output unchanged', async () => {
+    const pageBody = supported(await handleLegacyRead({
+      method: 'GET',
+      path: '/api/mod/conversations',
+      query: { entity: 'catgirlcoin', limit: '100', sort: 'recent', state: 'all' },
+    }, roots));
+    const singleBody = supported(await handleLegacyRead({
+      method: 'GET',
+      path: '/api/mod/conversations/abcdef',
+      query: { markRead: 'false' },
+    }, roots));
+
+    const page = modmailConversations(pageBody);
+    expect(page.conversations).toHaveLength(1);
+    expect(page.conversations[0]).toMatchObject({
+      id: 'abcdef',
+      subreddit: 'catgirlcoin',
+      subject: 'Help',
+      state: 'new',
+    });
+    expect(page.conversations[0]?.messages[0]).toMatchObject({
+      id: 'm1',
+      bodyMarkdown: 'Hello',
+      createdAt: 1767657600,
+    });
+
+    expect(modmailConversation(singleBody)).toMatchObject({
+      id: 'abcdef',
+      subreddit: 'catgirlcoin',
+      subject: 'Help',
+    });
   });
 
   test('unsupported capabilities stay unsupported rather than being emulated', async () => {
