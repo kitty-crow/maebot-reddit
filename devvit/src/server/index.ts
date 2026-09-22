@@ -1,6 +1,10 @@
 import { media, reddit } from '@devvit/web/server';
 import { Hono } from 'hono';
-import type { AdapterRoots } from './controller.ts';
+import {
+  executeAdapterCommand,
+  parseAdapterCommand,
+  type AdapterRoots,
+} from './controller.ts';
 import { handleLegacyCompat } from './legacyAdapter.ts';
 import type { LegacyCompatRequest } from './legacyCompat.ts';
 
@@ -21,6 +25,31 @@ app.get('/api/reddit', c => c.json({
   ok: true,
   adapter: 'legacy-reddit-compat',
 }));
+
+const maxCommandBytes = 4 * 1024 * 1024;
+const commandText = async (request: Request): Promise<string | null> => {
+  const declared = request.headers.get('content-length');
+  if (declared !== null) {
+    const size = Number(declared);
+    if (Number.isFinite(size) && size > maxCommandBytes) return null;
+  }
+  const value = await request.text();
+  return new TextEncoder().encode(value).byteLength <= maxCommandBytes ? value : null;
+};
+
+app.post('/api/controller', async c => {
+  const raw = await commandText(c.req.raw);
+  if (raw === null) return c.json({ error: 'adapter command too large' }, 413);
+
+  try {
+    const command = parseAdapterCommand(JSON.parse(raw) as unknown);
+    const result = await executeAdapterCommand(command, roots);
+    return c.json({ id: command.id, ok: true, result });
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+    return c.json({ ok: false, error: message }, 400);
+  }
+});
 
 app.all('/api/reddit/*', async c => {
   const url = new URL(c.req.url);
