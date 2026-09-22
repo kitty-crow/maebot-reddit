@@ -79,8 +79,14 @@ const createdPostEnvelope = (value: Wire): Wire => {
 const emptyEnvelope = (): Wire => ({ json: { errors: [] } });
 
 const subredditPath = (path: string, suffix: string): string | null => {
-  const match = new RegExp(`^/r/([^/]+)${suffix.replace(/[.*+?^$\{\}()|[\]\\]/gu, '\\$&')}$`, 'u').exec(path);
-  return match === null ? null : decodeURIComponent(match[1] ?? '');
+  if (!path.startsWith('/r/') || !path.endsWith(suffix)) return null;
+  const encoded = path.slice(3, path.length - suffix.length);
+  if (encoded.length === 0 || encoded.includes('/')) return null;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
 };
 
 const flairOptions = (
