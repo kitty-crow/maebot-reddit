@@ -306,6 +306,139 @@ const positiveLimit = (raw: string | undefined, fallback: number, max: number): 
   return Math.min(max, value);
 };
 
+
+const isoDate = (value: Wire | undefined): string => {
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : '';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = value > 10_000_000_000 ? value : value * 1_000;
+    return new Date(millis).toISOString();
+  }
+  if (value !== null && value !== undefined && !Array.isArray(value) && typeof value === 'object') {
+    const raw = value['$date'];
+    if (typeof raw === 'string') {
+      const parsed = new Date(raw);
+      return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : '';
+    }
+  }
+  return '';
+};
+
+const participantData = (value: Wire | undefined): Wire => {
+  if (value === undefined || value === null) return null;
+  const raw = map(value, 'Devvit Modmail participant');
+  return {
+    id: maybeText(raw['id']),
+    name: maybeText(raw['name'] ?? raw['username']),
+    isMod: bool(raw['isMod'] ?? raw['isModerator']),
+    isAdmin: bool(raw['isAdmin']),
+    isParticipant: bool(raw['isParticipant']),
+    isHidden: bool(raw['isHidden']),
+    isDeleted: bool(raw['isDeleted']),
+  };
+};
+
+const conversationKind = (value: Wire | undefined): string => {
+  const raw = maybeText(value)?.toLowerCase() ?? '';
+  if (raw === 'sr_user' || raw === 'sr_sr' || raw === 'internal') return raw;
+  return raw === 'sruser' ? 'sr_user' : raw === 'srsr' ? 'sr_sr' : 'unknown';
+};
+
+const modmailMessageData = (value: Wire, conversationId: string): Wire => {
+  const raw = map(value, 'Devvit Modmail message');
+  return {
+    id: text(raw['id']),
+    conversationId: text(raw['conversationId'], conversationId),
+    author: participantData(raw['author']),
+    bodyMarkdown: text(raw['bodyMarkdown'] ?? raw['body']),
+    date: isoDate(raw['date'] ?? raw['createdAt']),
+    isInternal: bool(raw['isInternal']),
+    participatingAs: maybeText(raw['participatingAs']),
+  };
+};
+
+const modmailConversationData = (value: Wire): Wire => {
+  const raw = map(value, 'Devvit Modmail conversation');
+  const id = text(raw['id']);
+  const rawMessages = raw['messages'];
+  const values = rawMessages === undefined || rawMessages === null
+    ? []
+    : Array.isArray(rawMessages)
+      ? rawMessages
+      : Object.values(map(rawMessages, 'Devvit Modmail messages'));
+  const messages = Object.fromEntries(values.map(message => {
+    const converted = map(modmailMessageData(message, id), 'converted Modmail message');
+    return [text(converted['id']), converted];
+  }));
+  const subredditRaw = raw['subreddit'];
+  const subredditName = maybeText(raw['subredditName'])
+    ?? (subredditRaw === undefined || subredditRaw === null
+      ? null
+      : maybeText(map(subredditRaw, 'Devvit Modmail subreddit')['displayName']
+        ?? map(subredditRaw, 'Devvit Modmail subreddit')['name']));
+  return {
+    id,
+    subreddit: subredditName === null ? null : { displayName: subredditName, name: subredditName },
+    owner: raw['owner'] === undefined ? null : participantData(raw['owner']),
+    participant: raw['participant'] === undefined
+      ? participantData(raw['owner'])
+      : participantData(raw['participant']),
+    subject: text(raw['subject']),
+    conversationType: conversationKind(raw['conversationType'] ?? raw['kind']),
+    state: maybeText(raw['state']) ?? 'unknown',
+    isInternal: bool(raw['isInternal']),
+    isAuto: bool(raw['isAuto']),
+    lastUpdated: isoDate(raw['lastUpdated'] ?? raw['lastUpdatedAt']),
+    messages,
+    objIds: Object.keys(messages).map(idValue => ({ key: 'messages', id: idValue })),
+  };
+};
+
+const modmailListBody = async (
+  roots: AdapterRoots,
+  subreddit: string,
+  limit: number,
+): Promise<Wire> => {
+  const value = await run(roots, 'reddit', [
+    { kind: 'get', name: 'modMail' },
+    {
+      kind: 'call',
+      name: 'getConversations',
+      args: [{ subreddits: [subreddit], limit, sort: 'recent', state: 'all' }],
+    },
+  ]);
+  const raw = map(value, 'Devvit Modmail conversations');
+  const conversationsRaw = raw['conversations'];
+  const conversations = conversationsRaw === undefined || conversationsRaw === null
+    ? []
+    : Object.values(map(conversationsRaw, 'Devvit Modmail conversation map'));
+  const converted = conversations.map(modmailConversationData);
+  return {
+    conversations: Object.fromEntries(converted.map(value => {
+      const row = map(value, 'converted Modmail conversation');
+      return [text(row['id']), row];
+    })),
+    messages: {},
+    after: null,
+  };
+};
+
+const modmailSingleBody = async (
+  roots: AdapterRoots,
+  id: string,
+  markRead: boolean,
+): Promise<Wire> => {
+  const value = await run(roots, 'reddit', [
+    { kind: 'get', name: 'modMail' },
+    { kind: 'call', name: 'getConversation', args: [{ conversationId: id, markRead }] },
+  ]);
+  const raw = map(value, 'Devvit Modmail conversation response');
+  const conversation = raw['conversation'] ?? value;
+  return { conversation: modmailConversationData(conversation) };
+};
+
 export const handleLegacyRead = async (
   request: LegacyCompatRequest,
   roots: AdapterRoots,
@@ -379,6 +512,33 @@ export const handleLegacyRead = async (
     const ids = (query['id'] ?? '').split(',').map(value => value.trim()).filter(Boolean);
     if (ids.length === 0 || ids.length > 100) return { supported: false };
     return { supported: true, status: 200, body: await infoListing(roots, ids) };
+  }
+
+  if (request.path === '/api/mod/conversations') {
+    const subreddit = query['entity'];
+    if (subreddit === undefined || subreddit.length === 0) return { supported: false };
+    return {
+      supported: true,
+      status: 200,
+      body: await modmailListBody(
+        roots,
+        subreddit,
+        positiveLimit(query['limit'], 25, 100),
+      ),
+    };
+  }
+
+  const modmailConversation = /^\/api\/mod\/conversations\/([A-Za-z0-9]+)$/u.exec(request.path);
+  if (modmailConversation !== null) {
+    return {
+      supported: true,
+      status: 200,
+      body: await modmailSingleBody(
+        roots,
+        modmailConversation[1] ?? '',
+        query['markRead'] === 'true',
+      ),
+    };
   }
 
   return { supported: false };
