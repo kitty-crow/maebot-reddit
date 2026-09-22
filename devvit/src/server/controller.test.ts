@@ -137,7 +137,7 @@ describe('generic Devvit Reddit adapter controller', () => {
   });
 
   test('rejects cyclic results instead of walking arbitrary object graphs forever', () => {
-    const value: { self?: unknown } = {};
+    const value: { self?: object } = {};
     value.self = value;
     expect(() => encodeResult(value)).toThrow('Adapter result contains a cycle');
   });
