@@ -20,7 +20,6 @@ export type VerifiedDevvitSurface = Readonly<{
   getHotPosts: RedditApi['getHotPosts'];
   getNewPosts: RedditApi['getNewPosts'];
   getPostById: RedditApi['getPostById'];
-  getCommentById: RedditApi['getCommentById'];
   submitPost: RedditApi['submitPost'];
   crosspost: RedditApi['crosspost'];
   createUserFlairTemplate: RedditApi['createUserFlairTemplate'];
@@ -31,7 +30,6 @@ export type VerifiedDevvitSurface = Readonly<{
   banUser: RedditApi['banUser'];
   unbanUser: RedditApi['unbanUser'];
   sendPrivateMessage: RedditApi['sendPrivateMessage'];
-  muteUser: RedditApi['muteUser'];
   unmuteUser: RedditApi['unmuteUser'];
   addModNote: RedditApi['addModNote'];
   deleteModNote: RedditApi['deleteModNote'];
@@ -115,11 +113,6 @@ const ban = {
   duration: 7,
 } satisfies Parameters<RedditApi['banUser']>[0];
 
-const mute = {
-  subredditName: 'catgirlcoin',
-  username: 'NoisyUser',
-  note: 'note',
-} satisfies Parameters<RedditApi['muteUser']>[0];
 
 const privateMessage = {
   to: 'Member',
@@ -177,7 +170,6 @@ export const devvitCallContracts = {
   hot: [postListing] satisfies Parameters<RedditApi['getHotPosts']>,
   new: [postListing] satisfies Parameters<RedditApi['getNewPosts']>,
   postById: ['t3_post'] satisfies Parameters<RedditApi['getPostById']>,
-  commentById: ['t1_comment'] satisfies Parameters<RedditApi['getCommentById']>,
   submitPost: [selfPost] satisfies Parameters<RedditApi['submitPost']>,
   crosspost: [crosspost] satisfies Parameters<RedditApi['crosspost']>,
   createUserFlairTemplate: [flairTemplate] satisfies Parameters<RedditApi['createUserFlairTemplate']>,
@@ -187,7 +179,6 @@ export const devvitCallContracts = {
   remove: ['t1_comment', false] satisfies Parameters<RedditApi['remove']>,
   banUser: [ban] satisfies Parameters<RedditApi['banUser']>,
   unbanUser: ['BadUser', 'catgirlcoin'] satisfies Parameters<RedditApi['unbanUser']>,
-  muteUser: [mute] satisfies Parameters<RedditApi['muteUser']>,
   unmuteUser: ['NoisyUser', 'catgirlcoin'] satisfies Parameters<RedditApi['unmuteUser']>,
   sendPrivateMessage: [privateMessage] satisfies Parameters<RedditApi['sendPrivateMessage']>,
   addModNote: [modNote] satisfies Parameters<RedditApi['addModNote']>,
