@@ -38,7 +38,7 @@ const adapterForbidden: readonly {
   { pattern: /from\s+['"]@devvit\/[^'"]*(?:redis|scheduler|settings)[^'"]*['"]/iu, reason: 'Generic Devvit adapter must not import Devvit persistence, scheduling, or settings services' },
 ];
 
-const allowedDevvitServerImports = new Set(['reddit', 'media']);
+const allowedDevvitServerImports = new Set(['reddit']);
 const devvitServerImport = /import\s*\{([\s\S]*?)\}\s*from\s*['"]@devvit\/web\/server['"]/gu;
 
 const checkDevvitServerImports = (raw: string, path: string): void => {
@@ -50,7 +50,7 @@ const checkDevvitServerImports = (raw: string, path: string): void => {
       const imported = cleaned.split(/\s+as\s+/u)[0]?.trim() ?? '';
       if (!allowedDevvitServerImports.has(imported)) {
         hits.push(
-          `${path}: Devvit adapter may import only reddit and media from @devvit/web/server; found ${imported || '<invalid import>'}`,
+          `${path}: Devvit runtime may import only reddit from @devvit/web/server; found ${imported || '<invalid import>'}`,
         );
       }
     }
