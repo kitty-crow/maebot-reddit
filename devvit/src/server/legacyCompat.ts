@@ -7,7 +7,7 @@ import {
 } from './controller.ts';
 
 export type LegacyCompatRequest = {
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'DELETE';
   readonly path: string;
   readonly query?: Readonly<Record<string, string>>;
   readonly form?: Readonly<Record<string, string>>;
