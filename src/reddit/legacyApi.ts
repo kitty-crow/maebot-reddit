@@ -49,6 +49,10 @@ export class LegacyRedditApi {
     return await this.request('POST', path, body);
   }
 
+  public async delete(path: string): Promise<Json> {
+    return await this.request('DELETE', path);
+  }
+
   public async upload(url: string, body: FormData): Promise<Response> {
     try {
       return await this.fetcher(url, { method: 'POST', body });
@@ -115,7 +119,7 @@ export class LegacyRedditApi {
   }
 
   private async request(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: URLSearchParams,
     reauthed = false,
