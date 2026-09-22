@@ -116,6 +116,11 @@ must test -s "$build/main.js"
     npm run ci
   must rm -rf node_modules dist
 )
+devvit_status=$?
+if [ "$devvit_status" -ne 0 ]; then
+  echo "Devvit validation failed with status $devvit_status." >&2
+  exit "$devvit_status"
+fi
 
 # CI must not alter source, create tracked candidates, or move submodules.
 if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
