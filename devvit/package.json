@@ -1,22 +1,32 @@
 {
-  "name": "this-is-the-mae",
+  "name": "@kitty-crow/reddit-devvit-adapter",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "vite build",
     "test:types": "tsc --noEmit",
     "test:unit": "vitest run",
-    "ci": "npm run test:types && npm run test:unit"
+    "ci": "npm run test:types && npm run test:unit && npm run build",
+    "dev": "devvit playtest"
   },
   "engines": {
     "node": ">=24.18.0"
   },
   "dependencies": {
-    "@devvit/web": "0.14.4"
+    "@devvit/web": "0.14.4",
+    "hono": "4.13.5"
   },
   "devDependencies": {
+    "@devvit/start": "0.14.4",
     "@types/node": "24.13.3",
     "typescript": "6.0.3",
+    "vite": "8.2.2",
     "vitest": "4.1.10"
+  },
+  "allowScripts": {
+    "protobufjs@7.6.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.9": true
   }
 }
