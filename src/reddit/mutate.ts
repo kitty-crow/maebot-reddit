@@ -2,7 +2,6 @@ import type { RedditAuthCfg } from '../env.ts';
 import { assertRedditStateMutationAllowed } from '../reputation/manualOverrideGate.ts';
 import type { Json } from '../types/json.ts';
 import { isMap, parseJson } from '../types/json.ts';
-import { RedditAdapterClient } from './adapter.ts';
 import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
@@ -19,7 +18,6 @@ export type RedditMutationOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
-  readonly adapter?: RedditAdapterClient;
 };
 
 export type RedditCreatedPost = {
@@ -142,7 +140,6 @@ export class RedditMutationClient {
   private readonly maxAttempts: number;
   private tokenCache: Token | null = null;
   private latestRate: RedditRate = { used: null, remaining: null, resetMs: null };
-  private readonly adapter: RedditAdapterClient | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
@@ -159,9 +156,6 @@ export class RedditMutationClient {
     this.uploadFetcher = options.uploadFetcher ?? fetch;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
-    this.adapter = options.adapter ?? (cfg.adapter === undefined || cfg.adapter === null
-      ? null
-      : new RedditAdapterClient(cfg.adapter));
   }
 
   public rate(): RedditRate {
@@ -485,10 +479,6 @@ export class RedditMutationClient {
   }
 
   private async form(path: string, body: URLSearchParams): Promise<Json> {
-    if (this.adapter !== null) {
-      const adapted = await this.adapter.request('POST', path, body);
-      if (adapted !== undefined) return adapted;
-    }
     return await this.request(path, body, false);
   }
 
