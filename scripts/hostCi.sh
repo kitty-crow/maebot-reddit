@@ -106,7 +106,7 @@ test -s "$build/main.js"
     TMPDIR="$tmp" \
     npm_config_cache="$npm_cache" \
     npm run ci
-  rm -rf node_modules
+  rm -rf node_modules dist
 )
 
 # CI must not alter source, create tracked candidates, or move submodules.
