@@ -17,6 +17,11 @@ const forbidden: readonly {
   { pattern: /node-telegram-bot-api/iu, reason: 'Reddit must not own Telegram presentation' },
   { pattern: /DISCORD_(TOKEN|MAE_TOKEN|SERVER_ID)/u, reason: 'Reddit must not own Discord credentials' },
   { pattern: /TELEGRAM_(TOKEN|BOT_TOKEN)/u, reason: 'Reddit must not own Telegram credentials' },
+  { pattern: /mae\.kittycrow\.dev/iu, reason: 'Mae Reddit must not depend on the Mae Tickets public hostname' },
+  { pattern: /REDDIT_DEVVIT_(?:INGRESS_HOST|INGRESS_PORT)/u, reason: 'Devvit must not add a second Mae Reddit listener' },
+  { pattern: /REDDIT_DEVVIT_BRIDGE_SECRET/u, reason: 'The local Devvit adapter must use the existing internal API trust boundary' },
+  { pattern: /REDDIT_DEVVIT_RPC_STATE_FILE/u, reason: 'Devvit transport must not add a canonical RPC spool store' },
+  { pattern: /DevvitRpcSpool/u, reason: 'Devvit transport must not add a durable RPC spool subsystem' },
   { pattern: /ModmailTerminalServer/u, reason: 'Reddit must not host the extracted Mae Tickets browser/server', activeOnly: true },
   { pattern: /modmailTerminalConfig/u, reason: 'Reddit must not configure the extracted Mae Tickets browser/server', activeOnly: true },
   { pattern: /\/v1\/modmail\/terminal-sessions/u, reason: 'Reddit must not expose legacy terminal-session authority', activeOnly: true },
@@ -55,6 +60,9 @@ const scan = async (dir: string, active: boolean): Promise<void> => {
     }
     if (active && /deprecated[\\/]legacy-python/iu.test(raw)) {
       hits.push(`${path}: active TypeScript must not depend on deprecated legacy Python code`);
+    }
+    if (active && /Bun\.serve\s*\(/u.test(raw) && path !== 'src/http/server.ts') {
+      hits.push(`${path}: Mae Reddit must keep a single Bun listener in src/http/server.ts`);
     }
   }
 };
