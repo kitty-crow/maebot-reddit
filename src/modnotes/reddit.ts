@@ -1,5 +1,4 @@
 import type { RedditAuthCfg } from '../env.ts';
-import { RedditAdapterClient } from '../reddit/adapter.ts';
 import * as decode from '../reddit/decode.ts';
 import { RedditError, statusKind } from '../reddit/error.ts';
 import { backoffMs, retryAfterMs } from '../reddit/rate.ts';
@@ -18,7 +17,6 @@ export type MemberModNotesRedditOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
-  readonly adapter?: RedditAdapterClient;
 };
 
 type Token = {
@@ -105,7 +103,6 @@ export class MemberModNotesRedditClient {
   private readonly random: () => number;
   private readonly maxAttempts: number;
   private tokenCache: Token | null = null;
-  private readonly adapter: RedditAdapterClient | null;
 
   public constructor(
     private readonly cfg: RedditAuthCfg,
@@ -121,9 +118,6 @@ export class MemberModNotesRedditClient {
       : rawFetcher;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
-    this.adapter = options.adapter ?? (cfg.adapter === undefined || cfg.adapter === null
-      ? null
-      : new RedditAdapterClient(cfg.adapter));
   }
 
   public async recentCommentsInCommunities(
@@ -267,11 +261,6 @@ export class MemberModNotesRedditClient {
     body: URLSearchParams | null,
     reauthed: boolean,
   ): Promise<Json> {
-    if (!reauthed && this.adapter !== null) {
-      const adapted = await this.adapter.request(method, path, body);
-      if (adapted !== undefined) return adapted;
-    }
-
     const url = new URL(`${api}${path}`);
     if (!url.searchParams.has('raw_json')) url.searchParams.set('raw_json', '1');
     let last: RedditError | null = null;
