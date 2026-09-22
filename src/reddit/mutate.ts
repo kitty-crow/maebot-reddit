@@ -14,6 +14,7 @@ import {
 } from './devvitCompat.ts';
 import { DevvitRpcClient } from './devvitRpc.ts';
 import { legacyRedditApi, type LegacyRedditApi } from './legacyApi.ts';
+import { LegacyRedditMutationClient } from './legacyMutate.ts';
 import { retryAfterMs } from './rate.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -110,6 +111,7 @@ export class RedditMutationClient {
   private readonly rpc: DevvitRpcClient;
   private readonly legacy: LegacyRedditApi | null;
   private readonly forceLegacy: boolean;
+  private readonly legacyMutation: LegacyRedditMutationClient | null;
 
   public constructor(
     cfg: RedditAuthCfg,
@@ -118,10 +120,11 @@ export class RedditMutationClient {
     this.rpc = options.rpc ?? devvitRpcClient(cfg);
     this.legacy = legacyRedditApi(cfg, options.fetcher);
     this.forceLegacy = cfg.transport === 'legacy';
+    this.legacyMutation = this.forceLegacy ? new LegacyRedditMutationClient(cfg, options) : null;
   }
 
   public rate(): RedditRate {
-    return emptyRate;
+    return this.forceLegacy ? this.legacyMutation!.rate() : emptyRate;
   }
 
   public async submitSelf(
@@ -188,6 +191,7 @@ export class RedditMutationClient {
     kind: 'user' | 'post',
     template: RedditFlairTemplate,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.createFlairTemplate(subreddit, kind, template);
     const options = {
       subredditName: subreddit,
       text: template.text,
@@ -212,6 +216,7 @@ export class RedditMutationClient {
     emoji: RedditEmoji,
     input: RedditEmojiMedia,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.uploadEmoji(subreddit, emoji, input);
     if (this.legacy === null) {
       throw new Error('Reddit custom emoji upload requires legacy Reddit OAuth fallback');
     }
@@ -242,6 +247,7 @@ export class RedditMutationClient {
   }
 
   public async updateEmojiPermissions(subreddit: string, emoji: RedditEmoji): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.updateEmojiPermissions(subreddit, emoji);
     if (this.legacy === null) {
       throw new Error('Reddit custom emoji permission management requires legacy Reddit OAuth fallback');
     }
@@ -257,6 +263,7 @@ export class RedditMutationClient {
     templateId: string,
     customText: string | null,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.setUserFlairTemplate(subreddit, username, templateId, customText);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'setUserFlair', [{
       subredditName: subreddit,
@@ -267,6 +274,7 @@ export class RedditMutationClient {
   }
 
   public async userFlairSelection(subreddit: string, username: string): Promise<RedditSelectedUserFlair> {
+    if (this.forceLegacy) return await this.legacyMutation!.userFlairSelection(subreddit, username);
     if (this.legacy === null) {
       throw new Error('Reddit user-flair selection requires legacy Reddit OAuth fallback');
     }
@@ -295,6 +303,7 @@ export class RedditMutationClient {
     flairText: string | null,
     cssClass: string | null,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.setUserFlairDirect(subreddit, username, flairText, cssClass);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'setUserFlair', [{
       subredditName: subreddit,
@@ -310,6 +319,7 @@ export class RedditMutationClient {
     templateId: string,
     customText: string | null = null,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.setPostFlairTemplate(subreddit, postId, templateId, customText);
     await redditCall(this.rpc, 'setPostFlair', [{
       subredditName: subreddit,
       postId: postId.startsWith('t3_') ? postId : `t3_${postId}`,
@@ -319,6 +329,7 @@ export class RedditMutationClient {
   }
 
   public async remove(fullname: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.remove(fullname);
     await redditCall(this.rpc, 'remove', [fullname, false]);
   }
 
@@ -328,6 +339,7 @@ export class RedditMutationClient {
     reason: string,
     note: string,
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.banUser(subreddit, username, reason, note);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'banUser', [{
       subredditName: subreddit,
@@ -338,11 +350,13 @@ export class RedditMutationClient {
   }
 
   public async unbanUser(subreddit: string, username: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.unbanUser(subreddit, username);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'unbanUser', [username, subreddit]);
   }
 
   public async sendPrivateMessage(username: string, subject: string, body: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.sendPrivateMessage(username, subject, body);
     await redditCall(this.rpc, 'sendPrivateMessage', [{
       to: username,
       subject: subject.slice(0, 100),
@@ -351,6 +365,7 @@ export class RedditMutationClient {
   }
 
   public async replyToPrivateMessage(fullname: string, body: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.replyToPrivateMessage(fullname, body);
     if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
       throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
     }
@@ -365,6 +380,7 @@ export class RedditMutationClient {
   }
 
   public async markPrivateMessageRead(fullname: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.markPrivateMessageRead(fullname);
     if (!/^t4_[A-Za-z0-9]+$/u.test(fullname)) {
       throw new Error(`Invalid Reddit private-message fullname ${fullname}`);
     }
@@ -379,6 +395,7 @@ export class RedditMutationClient {
     body: string,
     options: { readonly hidden?: boolean; readonly internal?: boolean } = {},
   ): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.replyModmail(conversationId, body, options);
     const id = validModmailId(conversationId);
     const text = body.trim();
     if (text.length === 0) throw new Error('Reddit modmail reply body cannot be empty');
@@ -398,6 +415,7 @@ export class RedditMutationClient {
   }
 
   public async archiveModmail(conversationId: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.archiveModmail(conversationId);
     await redditChain(this.rpc, [
       { kind: 'get', name: 'modMail' },
       { kind: 'call', name: 'archiveConversation', args: [validModmailId(conversationId)] },
@@ -405,6 +423,7 @@ export class RedditMutationClient {
   }
 
   public async muteModmail(conversationId: string, hours: 72 | 168 | 672): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.muteModmail(conversationId, hours);
     await redditChain(this.rpc, [
       { kind: 'get', name: 'modMail' },
       {
@@ -416,6 +435,7 @@ export class RedditMutationClient {
   }
 
   public async unmuteModmail(conversationId: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.unmuteModmail(conversationId);
     await redditChain(this.rpc, [
       { kind: 'get', name: 'modMail' },
       { kind: 'call', name: 'unmuteConversation', args: [validModmailId(conversationId)] },
@@ -423,6 +443,7 @@ export class RedditMutationClient {
   }
 
   public async muteUser(subreddit: string, username: string, note: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.muteUser(subreddit, username, note);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'muteUser', [{
       subredditName: subreddit,
@@ -432,11 +453,13 @@ export class RedditMutationClient {
   }
 
   public async unmuteUser(subreddit: string, username: string): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.unmuteUser(subreddit, username);
     assertRedditStateMutationAllowed(username);
     await redditCall(this.rpc, 'unmuteUser', [username, subreddit]);
   }
 
   public async sticky(postId: string, slot: 1 | 2): Promise<void> {
+    if (this.forceLegacy) return await this.legacyMutation!.sticky(postId, slot);
     await redditChain(this.rpc, [
       { kind: 'call', name: 'getPostById', args: [postId.startsWith('t3_') ? postId : `t3_${postId}`] },
       { kind: 'call', name: 'sticky', args: [slot] },
