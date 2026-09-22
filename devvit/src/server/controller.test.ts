@@ -3,6 +3,7 @@ import {
   decodeValue,
   encodeResult,
   executeAdapterCommand,
+  parseAdapterCommand,
   validateCommand,
   type AdapterCommand,
 } from './controller.ts';
@@ -95,6 +96,30 @@ describe('generic Devvit Reddit adapter controller', () => {
     expect([...decoded.bytes]).toEqual([1, 2, 3]);
     expect(decoded.wide).toBe(9_007_199_254_740_993n);
     expect(decoded.map.get('a')).toBe(1);
+  });
+
+  test('parses generic JSON commands without trusting TypeScript casts', () => {
+    expect(parseAdapterCommand({
+      id: 'json:1',
+      root: 'reddit',
+      steps: [
+        { kind: 'get', name: 'modMail' },
+        { kind: 'call', name: 'getConversation', args: [{ conversationId: 'abc', markRead: false }] },
+      ],
+    })).toEqual({
+      id: 'json:1',
+      root: 'reddit',
+      steps: [
+        { kind: 'get', name: 'modMail' },
+        { kind: 'call', name: 'getConversation', args: [{ conversationId: 'abc', markRead: false }] },
+      ],
+    });
+
+    expect(() => parseAdapterCommand({
+      id: 'bad',
+      root: 'reddit',
+      steps: [{ kind: 'call', name: 'getThing', args: 'not-an-array' }],
+    })).toThrow('args must be an array');
   });
 
   test('rejects prototype traversal and unbounded commands', () => {
