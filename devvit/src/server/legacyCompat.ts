@@ -102,14 +102,28 @@ const redditList = async (
 const listing = (
   children: readonly Wire[],
   kind: 't1' | 't2' | 't3' | 't4' | 't5' | '',
+  after: string | null = null,
 ): Wire => ({
   kind: 'Listing',
   data: {
-    after: null,
+    after,
     before: null,
     children: children.map(data => kind.length === 0 ? data : { kind, data }),
   },
 });
+
+const cursorFrom = (
+  values: readonly Wire[],
+  requested: number,
+  prefix: 't2_' | 't3_',
+): string | null => {
+  if (values.length < requested) return null;
+  const last = values.at(-1);
+  if (last === undefined) return null;
+  const raw = map(last, 'Devvit listing cursor item');
+  const id = maybeText(raw['id']);
+  return id === null ? null : fullname(id, prefix);
+};
 
 const appUserData = (value: Wire): Wire => {
   const raw = map(value, 'Devvit app user');
@@ -125,12 +139,21 @@ const appUserData = (value: Wire): Wire => {
 
 const moderatorData = (value: Wire): Wire => {
   const raw = map(value, 'Devvit moderator');
-  const permissions = raw['permissions'];
-  const modPermissions = raw['modPermissions'];
+  const moderatorInfo = raw['moderatorInfo'] === undefined || raw['moderatorInfo'] === null
+    ? null
+    : map(raw['moderatorInfo'], 'Devvit moderator info');
+  const directPermissions = moderatorInfo?.['modPermissions'];
+  const accountPermissions = raw['modPermissions'];
   let decoded: readonly Wire[] = [];
-  if (Array.isArray(permissions)) decoded = permissions.filter(item => typeof item === 'string');
-  else if (modPermissions !== null && modPermissions !== undefined && !Array.isArray(modPermissions) && typeof modPermissions === 'object') {
-    decoded = Object.values(modPermissions).flatMap(item =>
+  if (Array.isArray(directPermissions)) {
+    decoded = directPermissions.filter(item => typeof item === 'string');
+  } else if (
+    accountPermissions !== null
+    && accountPermissions !== undefined
+    && !Array.isArray(accountPermissions)
+    && typeof accountPermissions === 'object'
+  ) {
+    decoded = Object.values(accountPermissions).flatMap(item =>
       Array.isArray(item) ? item.filter(child => typeof child === 'string') : []);
   }
   return {
@@ -220,9 +243,9 @@ const commentData = (value: Wire): Wire => {
     body: text(raw['body']),
     permalink: text(raw['permalink']),
     created_utc: dateSeconds(raw['createdAt']),
-    distinguished: maybeText(raw['distinguished']),
+    distinguished: maybeText(raw['distinguishedBy']),
     stickied: bool(raw['stickied']),
-    removed_by_category: maybeText(raw['removedByCategory']),
+    removed_by_category: null,
     score: Math.floor(number(raw['score'])),
   };
 };
@@ -250,16 +273,16 @@ const subredditBody = async (name: string, roots: AdapterRoots): Promise<Wire> =
       name: fullname(rawId, 't5_'),
       display_name: text(info['name'], name),
       title: text(info['title']),
-      subscribers: info['subscribers'] === undefined ? null : number(info['subscribers']),
+      subscribers: info['subscribersCount'] === undefined ? null : number(info['subscribersCount']),
       user_is_moderator: moderators.some(value => {
         const row = map(value, 'Devvit moderator');
         return text(row['username'] ?? row['name']).toLowerCase() === username;
       }),
-      user_flair_enabled_in_sr: authorFlair === null ? null : bool(authorFlair['enabled']),
-      user_flair_self_assign_enabled: authorFlair === null ? null : bool(authorFlair['usersCanAssign']),
-      link_flair_enabled: postFlair === null ? null : bool(postFlair['enabled']),
-      over18: bool(info['nsfw']),
-      submission_type: maybeText(info['type'] ?? info['submissionType']),
+      user_flair_enabled_in_sr: authorFlair === null ? null : bool(authorFlair['isEnabled']),
+      user_flair_self_assign_enabled: authorFlair === null ? null : bool(authorFlair['isSelfAssignabled']),
+      link_flair_enabled: postFlair === null ? null : bool(postFlair['isEnabled']),
+      over18: info['isNsfw'] === undefined ? null : bool(info['isNsfw']),
+      submission_type: null,
     },
   };
 };
@@ -274,15 +297,17 @@ const postListing = async (
   method: 'getHotPosts' | 'getNewPosts',
   name: string,
   limit: number,
-): Promise<Wire> =>
-  listing(
-    (await redditList(roots, method, [{
-      subredditName: name,
-      limit,
-      pageSize: Math.min(100, limit),
-    }])).map(postData),
-    't3',
-  );
+  after: string | null,
+): Promise<Wire> => {
+  const options: Record<string, Wire> = {
+    subredditName: name,
+    limit,
+    pageSize: Math.min(100, limit),
+  };
+  if (after !== null) options['after'] = after;
+  const values = await redditList(roots, method, [options]);
+  return listing(values.map(postData), 't3', cursorFrom(values, limit, 't3_'));
+};
 
 const infoListing = async (roots: AdapterRoots, ids: readonly string[]): Promise<Wire> => {
   const children: Wire[] = [];
@@ -471,24 +496,26 @@ export const handleLegacyRead = async (
       : kind === 'banned'
         ? 'getBannedUsers'
         : 'getMutedUsers';
-    const values = await redditList(roots, method, [{
+    const limit = positiveLimit(query['limit'], 100, 1000);
+    const options: Record<string, Wire> = {
       subredditName: name,
-      limit: positiveLimit(query['limit'], 100, 1000),
-      pageSize: 100,
-    }]);
+      limit,
+      pageSize: Math.min(100, limit),
+    };
+    if (query['after'] !== undefined) options['after'] = query['after'];
+    if ((kind === 'banned' || kind === 'muted') && query['user'] !== undefined) {
+      options['username'] = query['user'];
+    }
+    const values = await redditList(roots, method, [options]);
     return {
       supported: true,
       status: 200,
-      body: listing(values.map(kind === 'moderators' ? moderatorData : relationshipData), ''),
+      body: listing(
+        values.map(kind === 'moderators' ? moderatorData : relationshipData),
+        '',
+        cursorFrom(values, limit, 't2_'),
+      ),
     };
-  }
-
-  const flair = /^\/r\/([^/]+)\/api\/(user_flair_v2|link_flair_v2)$/u.exec(request.path);
-  if (flair !== null) {
-    const name = decodeURIComponent(flair[1] ?? '');
-    const method = flair[2] === 'user_flair_v2' ? 'getUserFlairTemplates' : 'getPostFlairTemplates';
-    const values = array(await redditCall(roots, method, [name]), 'Devvit flair templates');
-    return { supported: true, status: 200, body: values.map(flairData) };
   }
 
   const rules = /^\/r\/([^/]+)\/about\/rules$/u.exec(request.path);
@@ -507,7 +534,13 @@ export const handleLegacyRead = async (
     return {
       supported: true,
       status: 200,
-      body: await postListing(roots, posts[2] === 'hot' ? 'getHotPosts' : 'getNewPosts', name, limit),
+      body: await postListing(
+        roots,
+        posts[2] === 'hot' ? 'getHotPosts' : 'getNewPosts',
+        name,
+        limit,
+        query['after'] ?? null,
+      ),
     };
   }
 
