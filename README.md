@@ -140,7 +140,7 @@ bun run ci
 
 CI runs strict TypeScript checks, loose-type checks, ownership and architecture-boundary checks, then the full Bun test suite.
 
-For host validation use `scripts/hostCi.sh`. It creates a disposable clone and does not open or copy the production `data/reputation.pb`.
+For host validation run `scripts/hostCi.sh` from the checked-out candidate. It validates that exact checkout while keeping the temporary Node runtime and build output outside the repository.
 
 ## Production status
 
