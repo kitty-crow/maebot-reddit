@@ -300,6 +300,9 @@ export const handleLegacyMutation = async (
   if (request.method === 'POST' && flairTemplate !== null) {
     const type = form['flair_type'];
     if (type !== 'USER_FLAIR' && type !== 'LINK_FLAIR') return { supported: false };
+    // Devvit 0.14.4 hardcodes legacy flair CSS class to empty when creating
+    // templates. Any caller that needs a CSS class must retain OAuth parity.
+    if ((form['css_class'] ?? '').length > 0) return { supported: false };
     await call(
       roots,
       type === 'USER_FLAIR' ? 'createUserFlairTemplate' : 'createPostFlairTemplate',
