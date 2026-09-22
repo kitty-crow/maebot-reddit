@@ -265,6 +265,43 @@ describe('Devvit legacy Reddit mutation compatibility', () => {
     expect(calls).toEqual([]);
   });
 
+  test('invalid Mod Note labels and context ids fail closed before Devvit', async () => {
+    const calls: unknown[] = [];
+    const roots: AdapterRoots = {
+      reddit: {
+        async addModNote(options: unknown) {
+          calls.push(options);
+          return { id: 'ModNote_should-not-run' };
+        },
+      },
+      media: {},
+    };
+
+    expect(await handleLegacyMutation({
+      method: 'POST',
+      path: '/api/mod/notes',
+      form: {
+        subreddit: 'catgirlcoin',
+        user: 'Member',
+        note: 'note',
+        label: 'MADE_UP_LABEL',
+      },
+    }, roots)).toEqual({ supported: false });
+
+    expect(await handleLegacyMutation({
+      method: 'POST',
+      path: '/api/mod/notes',
+      form: {
+        subreddit: 'catgirlcoin',
+        user: 'Member',
+        note: 'note',
+        reddit_id: 't5_not-a-post-or-comment',
+      },
+    }, roots)).toEqual({ supported: false });
+
+    expect(calls).toEqual([]);
+  });
+
   test('unsupported old mutations fail closed so OAuth can remain the fallback', async () => {
     const roots: AdapterRoots = { reddit: {}, media: {} };
 
