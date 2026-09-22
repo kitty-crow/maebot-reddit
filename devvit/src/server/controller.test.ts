@@ -43,7 +43,6 @@ describe('generic Devvit Reddit adapter controller', () => {
           return new Model(id);
         },
       },
-      media: {},
     })).toEqual({ id: 'abc', label: 'model' });
   });
 
@@ -72,7 +71,6 @@ describe('generic Devvit Reddit adapter controller', () => {
           },
         },
       },
-      media: {},
     });
 
     expect(marked).toBe('b');
