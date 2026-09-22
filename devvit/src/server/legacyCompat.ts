@@ -174,21 +174,6 @@ const relationshipData = (value: Wire): Wire => {
   };
 };
 
-const flairData = (value: Wire): Wire => {
-  const raw = map(value, 'Devvit flair');
-  return {
-    id: text(raw['id']),
-    text: text(raw['text']),
-    css_class: maybeText(raw['cssClass']),
-    text_color: maybeText(raw['textColor']),
-    background_color: maybeText(raw['backgroundColor']),
-    mod_only: bool(raw['modOnly']),
-    text_editable: bool(raw['allowUserEdits']),
-    allowable_content: maybeText(raw['allowableContent']),
-    max_emojis: raw['maxEmojis'] === undefined ? null : number(raw['maxEmojis']),
-  };
-};
-
 const ruleData = (value: Wire): Wire => {
   const raw = map(value, 'Devvit rule');
   return {
@@ -222,30 +207,6 @@ const postData = (value: Wire): Wire => {
     locked: bool(raw['locked']),
     over_18: bool(raw['nsfw']),
     crosspost_parent: maybeText(raw['crosspostParentId']),
-    score: Math.floor(number(raw['score'])),
-  };
-};
-
-const commentData = (value: Wire): Wire => {
-  const raw = map(value, 'Devvit comment');
-  const rawId = text(raw['id']);
-  return {
-    id: bare(rawId, 't1_'),
-    name: fullname(rawId, 't1_'),
-    subreddit: text(raw['subredditName']),
-    link_id: fullname(text(raw['postId'] ?? raw['linkId']), 't3_'),
-    parent_id: maybeText(raw['parentId']),
-    link_title: maybeText(raw['postTitle'] ?? raw['linkTitle']),
-    link_author: maybeText(raw['postAuthorName'] ?? raw['linkAuthor']),
-    link_permalink: maybeText(raw['postPermalink'] ?? raw['linkPermalink']),
-    link_flair_text: maybeText(raw['postFlairText'] ?? raw['linkFlairText']),
-    author: maybeText(raw['authorName']) ?? '[deleted]',
-    body: text(raw['body']),
-    permalink: text(raw['permalink']),
-    created_utc: dateSeconds(raw['createdAt']),
-    distinguished: maybeText(raw['distinguishedBy']),
-    stickied: bool(raw['stickied']),
-    removed_by_category: null,
     score: Math.floor(number(raw['score'])),
   };
 };
@@ -309,13 +270,33 @@ const postListing = async (
   return listing(values.map(postData), 't3', cursorFrom(values, limit, 't3_'));
 };
 
+const scoreThing = (
+  value: Wire,
+  kind: 't1' | 't3',
+): Wire => {
+  const raw = map(value, `Devvit ${kind === 't3' ? 'post' : 'comment'} score`);
+  const rawId = text(raw['id']);
+  return {
+    id: bare(rawId, `${kind}_`),
+    name: fullname(rawId, `${kind}_`),
+    score: Math.floor(number(raw['score'])),
+    archived: raw['archived'] === undefined ? false : bool(raw['archived']),
+  };
+};
+
 const infoListing = async (roots: AdapterRoots, ids: readonly string[]): Promise<Wire> => {
   const children: Wire[] = [];
   for (const id of ids) {
     if (id.startsWith('t3_')) {
-      children.push({ kind: 't3', data: postData(await redditCall(roots, 'getPostById', [id])) });
+      children.push({
+        kind: 't3',
+        data: scoreThing(await redditCall(roots, 'getPostById', [id]), 't3'),
+      });
     } else if (id.startsWith('t1_')) {
-      children.push({ kind: 't1', data: commentData(await redditCall(roots, 'getCommentById', [id])) });
+      children.push({
+        kind: 't1',
+        data: scoreThing(await redditCall(roots, 'getCommentById', [id]), 't1'),
+      });
     }
   }
   return {
