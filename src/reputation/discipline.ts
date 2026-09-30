@@ -35,7 +35,7 @@ export const disciplineTransition = (input: DisciplineTransitionInput): Discipli
     const enteredUncivil = input.beforeStatus !== 'uncivil';
     const newMarkWhileUncivil = input.beforeStatus === 'uncivil' && input.violation;
     if (enteredUncivil || newMarkWhileUncivil) {
-      // One offending event adds one thirty-day period regardless of whether a
+      // One offending event adds one seven-day period regardless of whether a
       // severe deduction jumped across several numerical reputation points.
       mute = extendUncivilMute(mute, input.atMs);
     }
