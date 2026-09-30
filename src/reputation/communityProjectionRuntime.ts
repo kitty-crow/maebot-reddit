@@ -106,25 +106,25 @@ export class CommunityProjectionRuntime {
       // moderation. Never remove it merely because Mae currently wants no mute.
       if (!wanted && !current.redditMuted) continue;
 
-      if (!wanted && current.redditMuted && !live) {
-        // Reddit already reflects the desired unmuted state. Repair only Mae's
-        // stale checkpoint; no remote mutation is necessary.
-        await this.projection.markMute(this.targetSubreddit, desired.username, 'unmute', now);
-        continue;
-      }
-
-      // Live Reddit state is authoritative for whether the protection actually
-      // exists. The local timestamp is useful only while Reddit still reports
-      // the mute; if a human removed it, force an immediate re-apply.
       const action = redditMuteAction(
         { muteUntil: desired.muteUntil, permanent: desired.permanent },
-        {
-          redditMuted: live,
-          appliedAt: live ? current.appliedAt : null,
-        },
+        current,
         now,
       );
       if (action === null) continue;
+
+      if (action === 'mute' && live && !current.redditMuted) {
+        // A human-owned live mute already provides the immediate restriction.
+        // Do not re-mute, notify the user again, or claim ownership of it.
+        continue;
+      }
+
+      if (action === 'unmute' && !live) {
+        // Reddit already reflects the desired unmuted state. Clear only Mae's
+        // application checkpoint; no remote mutation is necessary.
+        await this.projection.markMute(this.targetSubreddit, desired.username, 'unmute', now);
+        continue;
+      }
 
       try {
         if (action === 'mute') {
@@ -142,10 +142,10 @@ export class CommunityProjectionRuntime {
         applied += 1;
       } catch (error) {
         failed += 1;
-        // A failed renewal does not expose a newly banned user while Reddit
-        // still reports an active mute. A failed attempt to establish a missing
-        // permanent mute does, so block the corresponding target ban.
-        if (desired.permanent && !live) blockedPermanentUsers.add(key);
+        // A failed attempt to establish the one initial permanent mute leaves a
+        // newly banned user without the intended communication restriction, so
+        // block the corresponding target ban for this reconciliation pass.
+        if (desired.permanent && action === 'mute' && !live) blockedPermanentUsers.add(key);
         console.error(
           `[Reddit reputation] r/${this.targetSubreddit} ${action} projection failed for u/${desired.username}: ${safeError(error)}`,
         );
@@ -184,7 +184,7 @@ export class CommunityProjectionRuntime {
   }
 
   private async reconcileFlairs(raw: Json, now: number): Promise<ReconcileResult & { readonly skipped: boolean }> {
-    if (now < this.nextFlairAt) return { applied: 0, failed: 0, skipped: true };
+    if (now < this.nextFlairAt) return { restored: 0, failed: 0, skipped: true } as never;
     this.nextFlairAt = now + this.flairIntervalMs;
     const assignments = await this.reader.userFlairAssignments(this.targetSubreddit);
     const restores = await communityFlairRestoresFromFile(
