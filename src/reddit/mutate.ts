@@ -132,6 +132,12 @@ const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchPar
   user_flair_allowed: String(emoji.userFlairAllowed),
 });
 
+const muteDurationDays = (note: string): number => {
+  if (note === 'Mae uncivil reputation state') return 7;
+  if (note === 'Mae permanent reputation enforcement') return 30;
+  return 28;
+};
+
 export class RedditMutationClient {
   private readonly fetcher: RedditMutationFetch;
   private readonly uploadFetcher: RedditMutationFetch;
@@ -415,7 +421,7 @@ export class RedditMutationClient {
       api_type: 'json',
       name: username,
       type: 'muted',
-      duration: '28',
+      duration: String(muteDurationDays(note)),
       note: note.slice(0, 300),
     });
     await this.form(pathFor(subreddit, '/api/friend'), form);
