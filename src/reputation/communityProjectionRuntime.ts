@@ -184,7 +184,7 @@ export class CommunityProjectionRuntime {
   }
 
   private async reconcileFlairs(raw: Json, now: number): Promise<ReconcileResult & { readonly skipped: boolean }> {
-    if (now < this.nextFlairAt) return { restored: 0, failed: 0, skipped: true } as never;
+    if (now < this.nextFlairAt) return { applied: 0, failed: 0, skipped: true };
     this.nextFlairAt = now + this.flairIntervalMs;
     const assignments = await this.reader.userFlairAssignments(this.targetSubreddit);
     const restores = await communityFlairRestoresFromFile(
