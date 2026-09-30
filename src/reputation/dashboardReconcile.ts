@@ -26,6 +26,7 @@ type Desired = {
   readonly username: string;
   readonly banned: boolean;
   readonly muted: boolean;
+  readonly muteApplied: boolean;
   readonly desiredFlairId: string | null;
   readonly desiredFlairText: string | null;
   readonly currentFlairId: string | null;
@@ -73,10 +74,12 @@ const desiredFrom = (value: JsonMap, username: string, now = Date.now()): Desire
   const record = isMap(discipline) ? discipline[key(canonicalUsername)] : undefined;
   const muteUntil = isMap(record) ? integer(record['muteUntil']) : null;
   const muted = isMap(record) && (bool(record['mutePermanent']) || (muteUntil !== null && muteUntil > now));
+  const muteApplied = isMap(record) && (bool(record['redditMuted']) || integer(record['muteAppliedAt']) !== null);
   return {
     username: canonicalUsername,
     banned,
     muted,
+    muteApplied,
     desiredFlairId: text(raw['desiredFlairTemplateId']),
     desiredFlairText: text(raw['desiredFlairText']),
     currentFlairId: text(raw['currentFlairTemplateId']),
@@ -169,8 +172,14 @@ export class DashboardRedditReconciler {
       if (!isMap(discipline)) return value;
       const record = discipline[key(username)];
       if (!isMap(record)) return value;
-      record['redditMuted'] = muted;
-      record['muteAppliedAt'] = muted ? Date.now() : null;
+      if (muted) {
+        if (bool(record['redditMuted']) || integer(record['muteAppliedAt']) !== null) return value;
+        record['redditMuted'] = true;
+        record['muteAppliedAt'] = Date.now();
+      } else {
+        record['redditMuted'] = false;
+        record['muteAppliedAt'] = null;
+      }
       return value;
     });
   }
@@ -209,17 +218,21 @@ export class DashboardRedditReconciler {
     }
     if (desired.banned) return;
 
-    if (desired.muted !== state.muted) {
-      if (desired.muted) {
+    if (desired.muted) {
+      if (!desired.muteApplied && !state.muted) {
         await this.writer.muteUser(this.subreddit, desired.username, 'Mae canonical moderation state');
+        await this.markMuteApplied(desired.username, true);
         console.log(`[Dashboard moderation] Reddit muted u/${desired.username}.`);
-      } else {
+      }
+      // If Reddit already has a human-owned mute, leave it untouched and do
+      // not claim it. If Mae already applied this sanction once, do not renew
+      // it after Reddit's native mute expires or a moderator removes it.
+    } else if (desired.muteApplied) {
+      if (state.muted) {
         await this.writer.unmuteUser(this.subreddit, desired.username);
         console.log(`[Dashboard moderation] Reddit unmuted u/${desired.username}.`);
       }
-      await this.markMuteApplied(desired.username, desired.muted);
-    } else {
-      await this.markMuteApplied(desired.username, state.muted);
+      await this.markMuteApplied(desired.username, false);
     }
 
     if (desired.desiredFlairId !== null && !sameFlair(state.flair, desired)) {

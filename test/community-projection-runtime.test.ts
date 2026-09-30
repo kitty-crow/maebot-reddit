@@ -178,16 +178,17 @@ describe('NyaOnEarth moderation projection', () => {
     });
   });
 
-  test('a stale Mae checkpoint is repaired when Reddit no longer reports the permanent mute', async () => {
+  test('an already-applied permanent mute is not renewed after Reddit stops reporting it', async () => {
     const f = await fixture();
     await f.projection.markMute('nyaonearth', 'BannedUser', 'mute', 1_000_000);
+    await writeFile(f.catalogueFile, catalogue);
 
     const result = await f.runtime.tick(2_000_000);
     expect(result.failed).toBe(0);
-    expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
+    expect(f.writer.order).toEqual(['ban:nyaonearth:BannedUser']);
     expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
       redditMuted: true,
-      appliedAt: 2_000_000,
+      appliedAt: 1_000_000,
     });
   });
 
