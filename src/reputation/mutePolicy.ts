@@ -1,4 +1,4 @@
-export const UNCIVIL_MUTE_DAYS = 30;
+export const UNCIVIL_MUTE_DAYS = 7;
 export const UNCIVIL_MUTE_MS = UNCIVIL_MUTE_DAYS * 24 * 60 * 60 * 1_000;
 
 export type ReputationMuteState = {
@@ -59,8 +59,8 @@ export const redditMuteAction = (
   // Reddit sends a user-visible moderation message whenever a subreddit mute is
   // applied. Mae therefore projects each canonical mute sanction to Reddit at
   // most once. The durable application checkpoint deliberately remains set
-  // after Reddit's native 28-day mute expires, so a thirty-day uncivil debt or
-  // a permanent ban never turns into monthly mute-notification spam.
+  // after Reddit's native mute expires, so a ban never turns into recurring
+  // mute-notification spam.
   if (applied.redditMuted || applied.appliedAt !== null) return null;
   return 'mute';
 };
