@@ -112,4 +112,35 @@ describe('Dashboard Reddit canonical reconciliation', () => {
     await runtime.reconcileAll();
     expect(calls).toEqual(['mute:alice']);
   });
+
+  test('does not renew a canonical mute after Mae already applied it once', async () => {
+    const canonical = state('ordinary', true, false);
+    const discipline = canonical['discipline'];
+    if (typeof discipline !== 'object' || discipline === null || Array.isArray(discipline)) throw new Error('bad discipline');
+    const alice = discipline['alice'];
+    if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad mute');
+    alice['redditMuted'] = true;
+    alice['muteAppliedAt'] = Date.now() - (29 * 24 * 60 * 60 * 1_000);
+
+    const { runtime, calls } = await fixture(canonical);
+    await runtime.reconcileAll();
+    expect(calls).toEqual([]);
+  });
+
+  test('does not claim or reapply a live human-owned mute', async () => {
+    const { store, runtime, live, calls } = await fixture(state('ordinary', true, false));
+    live.muted.push({ username: 'alice', note: 'manual', date: 1 });
+
+    await runtime.reconcileAll();
+
+    expect(calls).toEqual([]);
+    const raw = await store.read();
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('bad root');
+    const discipline = raw['discipline'];
+    if (typeof discipline !== 'object' || discipline === null || Array.isArray(discipline)) throw new Error('bad discipline');
+    const alice = discipline['alice'];
+    if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad mute');
+    expect(alice['redditMuted']).toBe(false);
+    expect(alice['muteAppliedAt']).toBe(null);
+  });
 });
