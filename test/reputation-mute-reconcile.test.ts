@@ -9,7 +9,7 @@ const day = 24 * 60 * 60 * 1_000;
 const start = 1_000_000;
 
 describe('Reddit modmail mute reconciliation', () => {
-  test('a new thirty-day Mae mute immediately applies one Reddit mute', () => {
+  test('a new seven-day Mae mute immediately applies one Reddit mute', () => {
     expect(redditMuteAction(
       { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false },
       { redditMuted: false, appliedAt: null },
@@ -17,33 +17,32 @@ describe('Reddit modmail mute reconciliation', () => {
     )).toBe('mute');
   });
 
-  test('a thirty-day Mae mute is not renewed when Reddit native duration runs out', () => {
+  test('a seven-day Mae mute is not renewed', () => {
     const desired = { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false };
     const applied = { redditMuted: true, appliedAt: start };
-    expect(redditMuteAction(desired, applied, start + 27 * day)).toBeNull();
-    expect(redditMuteAction(desired, applied, start + 29 * day)).toBeNull();
+    expect(redditMuteAction(desired, applied, start + 6 * day)).toBeNull();
   });
 
   test('Mae clears her application checkpoint when the canonical mute debt ends', () => {
     expect(redditMuteAction(
-      { muteUntil: start + 30 * day, permanent: false },
+      { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false },
       { redditMuted: true, appliedAt: start },
-      start + 30 * day,
+      start + UNCIVIL_MUTE_MS,
     )).toBe('unmute');
   });
 
   test('cumulative uncivil debt does not turn into repeated Reddit mute notifications', () => {
     expect(redditMuteAction(
-      { muteUntil: start + 60 * day, permanent: false },
+      { muteUntil: start + 14 * day, permanent: false },
       { redditMuted: true, appliedAt: start },
-      start + 54 * day,
+      start + 10 * day,
     )).toBeNull();
   });
 
   test('permanent Mae communication restriction gets only one Reddit mute application', () => {
     const desired = { muteUntil: null, permanent: true };
     const applied = { redditMuted: true, appliedAt: start };
-    expect(redditMuteAction(desired, applied, start + 27 * day)).toBeNull();
+    expect(redditMuteAction(desired, applied, start + 29 * day)).toBeNull();
     expect(redditMuteAction(desired, applied, start + 365 * day)).toBeNull();
   });
 
@@ -62,7 +61,7 @@ describe('Reddit modmail mute reconciliation', () => {
       },
       discipline: {
         alice: {
-          muteUntil: start + 30 * day,
+          muteUntil: start + UNCIVIL_MUTE_MS,
           mutePermanent: false,
           redditMuted: false,
           muteAppliedAt: null,
@@ -92,7 +91,7 @@ describe('Reddit modmail mute reconciliation', () => {
     ]);
   });
 
-  test('bootstrap-seeded uncivil user receives one normal thirty-day restriction', () => {
+  test('bootstrap-seeded uncivil user receives one normal seven-day restriction', () => {
     const initial = {
       users: {
         alice: { username: 'Alice', status: 'uncivil' },
@@ -114,8 +113,7 @@ describe('Reddit modmail mute reconciliation', () => {
         },
       },
     };
-    expect(reputationMuteEffects(applied, start + 27 * day)).toEqual([]);
-    expect(reputationMuteEffects(applied, start + 29 * day)).toEqual([]);
+    expect(reputationMuteEffects(applied, start + 6 * day)).toEqual([]);
     expect(reputationMuteEffects(applied, start + UNCIVIL_MUTE_MS)).toEqual([{
       username: 'Alice', action: 'unmute', note: 'Mae reputation mute ended',
     }]);
@@ -136,8 +134,8 @@ describe('Reddit modmail mute reconciliation', () => {
       },
     };
 
-    expect(reputationMuteEffects(raw, start + 28 * day)).toEqual([]);
-    expect(reputationMuteEffects(raw, start + 56 * day)).toEqual([]);
+    expect(reputationMuteEffects(raw, start + 30 * day)).toEqual([]);
+    expect(reputationMuteEffects(raw, start + 60 * day)).toEqual([]);
     expect(reputationMuteEffects(raw, start + 365 * day)).toEqual([]);
   });
 });

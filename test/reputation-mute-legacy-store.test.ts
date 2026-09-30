@@ -4,7 +4,7 @@ import { reputationDesiredMutes, reputationMuteEffects } from '../src/reputation
 const now = 1_000_000;
 const seededAtSeconds = 900;
 const seededAtMs = seededAtSeconds * 1_000;
-const thirtyDaysMs = 30 * 24 * 60 * 60 * 1_000;
+const sevenDaysMs = 7 * 24 * 60 * 60 * 1_000;
 
 describe('legacy reputation mute reconciliation', () => {
   test('a pre-discipline snapshot derives communication restrictions from canonical statuses', () => {
@@ -24,7 +24,7 @@ describe('legacy reputation mute reconciliation', () => {
       { username: 'BannedUser', muteUntil: null, permanent: true },
       { username: 'OrdinaryUser', muteUntil: null, permanent: false },
       { username: 'ScamUser', muteUntil: null, permanent: true },
-      { username: 'UncivilUser', muteUntil: seededAtMs + thirtyDaysMs, permanent: false },
+      { username: 'UncivilUser', muteUntil: seededAtMs + sevenDaysMs, permanent: false },
     ]);
 
     expect(reputationMuteEffects(raw, now)).toEqual([
@@ -35,7 +35,7 @@ describe('legacy reputation mute reconciliation', () => {
 
     expect(reputationDesiredMutes(raw, now + 10_000)[3]).toEqual({
       username: 'UncivilUser',
-      muteUntil: seededAtMs + thirtyDaysMs,
+      muteUntil: seededAtMs + sevenDaysMs,
       permanent: false,
     });
   });

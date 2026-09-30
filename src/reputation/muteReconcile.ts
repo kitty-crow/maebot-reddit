@@ -46,7 +46,7 @@ const desiredFor = (
     return {
       // Prefer the persisted application timestamp when a discipline record
       // exists. Legacy bootstrap users have no such record, so anchor their
-      // one-time thirty-day restriction to the canonical seededAt timestamp
+      // one-time seven-day restriction to the canonical seededAt timestamp
       // rather than sliding the deadline forward on every poll.
       muteUntil: (appliedAt ?? legacyAnchorMs ?? nowMs) + UNCIVIL_MUTE_MS,
       permanent: false,

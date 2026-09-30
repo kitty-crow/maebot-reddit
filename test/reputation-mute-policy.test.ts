@@ -10,21 +10,21 @@ import {
 const DAY = 24 * 60 * 60 * 1_000;
 
 describe('uncivil modmail mute policy', () => {
-  test('first uncivil action creates a fresh thirty-day mute', () => {
+  test('first uncivil action creates a fresh seven-day mute', () => {
     const now = 1_000_000;
     expect(extendUncivilMute({ muteUntil: null, permanent: false }, now))
-      .toEqual({ muteUntil: now + 30 * DAY, permanent: false });
+      .toEqual({ muteUntil: now + 7 * DAY, permanent: false });
   });
 
-  test('a new uncivil mark adds thirty days to remaining mute time', () => {
+  test('a new uncivil mark adds seven days to remaining mute time', () => {
     const now = 1_000_000;
     const existing = { muteUntil: now + 4 * DAY, permanent: false };
     const next = extendUncivilMute(existing, now);
-    expect(next.muteUntil).toBe(now + 34 * DAY);
-    expect(muteRemainingMs(next, now)).toBe(34 * DAY);
+    expect(next.muteUntil).toBe(now + 11 * DAY);
+    expect(muteRemainingMs(next, now)).toBe(11 * DAY);
   });
 
-  test('an expired mute starts a new thirty-day period instead of extending the old date', () => {
+  test('an expired mute starts a new seven-day period instead of extending the old date', () => {
     const now = 10_000_000;
     const expired = { muteUntil: now - DAY, permanent: false };
     expect(extendUncivilMute(expired, now))
@@ -35,7 +35,7 @@ describe('uncivil modmail mute policy', () => {
     expect(clearRedeemedMute()).toEqual({ muteUntil: null, permanent: false });
   });
 
-  test('permanent bans produce a permanent mute that cannot be extended back to temporary', () => {
+  test('permanent bans produce a permanent mute state that cannot be extended back to temporary', () => {
     const current = permanentMute();
     expect(current).toEqual({ muteUntil: null, permanent: true });
     expect(extendUncivilMute(current, 123)).toEqual(current);
