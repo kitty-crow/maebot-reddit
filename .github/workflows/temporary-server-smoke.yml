@@ -1,0 +1,28 @@
+name: Temporary server store compatibility
+on:
+  push:
+    branches: [test/server-refactor-1dfe7851]
+permissions:
+  contents: read
+jobs:
+  storage-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Fetch only the public server submodule
+        run: git submodule update --init vendor/server
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install the server package's own dependencies
+        run: bun install --cwd vendor/server
+      - name: Resolve only the package-root storage dependencies
+        run: |
+          mkdir -p node_modules/@kittycrypto
+          ln -s ../../vendor/server node_modules/@kittycrypto/server
+          ln -s ../vendor/server/node_modules/protobufjs node_modules/protobufjs
+      - name: Exercise the consumer's real store wrapper
+        run: bun test .github/temporary-server-store.test.ts
