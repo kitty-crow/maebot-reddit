@@ -25,4 +25,4 @@ jobs:
           ln -s ../../vendor/server node_modules/@kittycrypto/server
           ln -s ../vendor/server/node_modules/protobufjs node_modules/protobufjs
       - name: Exercise the consumer's real store wrapper
-        run: bun test .github/temporary-server-store.test.ts
+        run: bun test ./.github/temporary-server-store.test.ts
