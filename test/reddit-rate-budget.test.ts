@@ -50,11 +50,11 @@ describe('shared Reddit rate budget', () => {
     expect(sleeps).toEqual([]);
 
     await first.acquire();
-    expect(sleeps.length).toBe(1);
-    expect(sleeps[0]).toBeGreaterThanOrEqual(60_000);
+    expect(sleeps.length).toBeGreaterThanOrEqual(60);
+    expect(sleeps.reduce((total, ms) => total + ms, 0)).toBeGreaterThanOrEqual(60_000);
   }, 15_000);
 
-  test('paces independent instances through one shared one-second request slot', async () => {
+  test('paces independent instances through one shared 800ms request slot', async () => {
     const file = await stateFile();
     let now = 1_000;
     const sleeps: number[] = [];
@@ -76,7 +76,7 @@ describe('shared Reddit rate budget', () => {
     }));
     await second.acquire();
 
-    expect(sleeps).toEqual([1_000]);
+    expect(sleeps).toEqual([800]);
   });
 
   test('a 429 blocks the shared budget for the reset window instead of retrying immediately', async () => {
@@ -99,4 +99,67 @@ describe('shared Reddit rate budget', () => {
     expect(sleeps.length).toBe(1);
     expect(sleeps[0]).toBeGreaterThanOrEqual(10 * 60_000);
   });
+  test('an owner override releases the shared local reserve immediately', async () => {
+    const file = await stateFile();
+    let now = 10_000;
+    const options = {
+      stateFile: file,
+      minimumIntervalMs: 0,
+      now: () => now,
+      sleep: async (ms: number) => { now += ms; },
+    } as const;
+    const first = new RedditRateBudget('client', options);
+    const second = new RedditRateBudget('client', options);
+    await first.acquire();
+    await first.observe(new Response('', {
+      status: 200,
+      headers: { 'x-ratelimit-remaining': '5', 'x-ratelimit-reset': '60' },
+    }));
+    expect((await second.forceUnblock()).ok).toBe(true);
+    await first.acquire();
+    await second.acquire();
+    expect(now).toBe(10_000);
+  });
+
+  test('a force command cannot bypass an upstream 429 cooldown', async () => {
+    const file = await stateFile();
+    let now = 10_000;
+    const options = {
+      stateFile: file, minimumIntervalMs: 0, now: () => now,
+      sleep: async (ms: number) => { now += ms; },
+    } as const;
+    const first = new RedditRateBudget('client', options);
+    const second = new RedditRateBudget('client', options);
+    await first.acquire();
+    await first.observe(new Response('', { status: 429 }));
+    const denied = await second.forceUnblock();
+    expect(denied.ok).toBe(false);
+    expect(denied.detail).toContain('429');
+  });
+
+  test('a waiting local soft block rechecks for override within one second', async () => {
+    const file = await stateFile();
+    let now = 10_000;
+    let second: RedditRateBudget;
+    let sleeps = 0;
+    const options = {
+      stateFile: file, minimumIntervalMs: 0, now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+        sleeps += 1;
+        if (sleeps === 1) expect((await second.forceUnblock()).ok).toBe(true);
+      },
+    } as const;
+    const first = new RedditRateBudget('client', options);
+    second = new RedditRateBudget('client', options);
+    await first.acquire();
+    await first.observe(new Response('', {
+      status: 200,
+      headers: { 'x-ratelimit-remaining': '5', 'x-ratelimit-reset': '60' },
+    }));
+    await first.acquire();
+    expect(sleeps).toBe(1);
+    expect(now).toBe(11_000);
+  });
+
 });
