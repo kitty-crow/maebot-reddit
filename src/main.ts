@@ -261,7 +261,7 @@ const questionPollMs = 15_000;
 const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, questionEvents, moderationReviews);
-internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);
+internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter, modmail);
 internal?.start();
 if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
