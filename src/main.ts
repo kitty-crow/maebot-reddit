@@ -43,6 +43,7 @@ import { RedditReadClient } from './reddit/client.ts';
 import { safeError } from './reddit/error.ts';
 import { RedditMediaClient } from './reddit/media.ts';
 import { RedditMutationClient } from './reddit/mutate.ts';
+import { RedditRateBudget } from './reddit/rateBudget.ts';
 import { DailyReviewClient } from './review/client.ts';
 import { RedditStateStore } from './store/state.ts';
 import { TwitterRedditBridge } from './twitter/bridge.ts';
@@ -262,17 +263,18 @@ const internal = internalCfg === null
   ? null
   : new RedditInternalHttpServer(internalCfg, questionEvents, moderationReviews);
 internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter, modmail);
-internal?.start();
-if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
-
 let ticking = false;
+let forcePending = false;
 let nextQuestionAt = 0;
 let nextModmailAt = 0;
 let nextModerationAt = 0;
 let nextDmAt = 0;
 let nextMirrorAt = 0;
-const tick = async (): Promise<void> => {
-  if (ticking) return;
+const tick = async (force = false): Promise<void> => {
+  if (ticking) {
+    if (force) forcePending = true;
+    return;
+  }
   ticking = true;
   try {
     const now = Date.now();
@@ -281,7 +283,7 @@ const tick = async (): Promise<void> => {
     const weeklyResult = await weekly.sync();
 
     let modmailResult = null;
-    if (now >= nextModmailAt) {
+    if (force || now >= nextModmailAt) {
       nextModmailAt = now + modmailPollMs;
       try {
         modmailResult = await modmail.tick();
@@ -298,7 +300,7 @@ const tick = async (): Promise<void> => {
       }
     }
     let dmResult = null;
-    if (directMessages !== null && dmCfg !== null && now >= nextDmAt) {
+    if (directMessages !== null && dmCfg !== null && (force || now >= nextDmAt)) {
       nextDmAt = now + dmPollMs;
       try {
         dmResult = await directMessages.tick(dmCfg.batchSize);
@@ -308,7 +310,7 @@ const tick = async (): Promise<void> => {
     }
 
     let moderationResult = null;
-    if (moderation !== null && now >= nextModerationAt) {
+    if (moderation !== null && (force || now >= nextModerationAt)) {
       nextModerationAt = now + moderationPollMs;
       try {
         moderationResult = await moderation.tick();
@@ -325,7 +327,7 @@ const tick = async (): Promise<void> => {
       }
     }
     let questionResult = null;
-    if (questions !== null && now >= nextQuestionAt) {
+    if (questions !== null && (force || now >= nextQuestionAt)) {
       nextQuestionAt = now + questionPollMs;
       try {
         questionResult = await questions.tick();
@@ -337,13 +339,13 @@ const tick = async (): Promise<void> => {
     let projectionResult = null;
     if (communityProjection !== null) {
       try {
-        projectionResult = await communityProjection.tick();
+        projectionResult = await communityProjection.tick(Date.now(), force);
       } catch (error) {
         console.error(`[Reddit reputation] community projection failed: ${safeError(error)}`);
       }
     }
     let mirror = null;
-    if (postMirror !== null && now >= nextMirrorAt) {
+    if (postMirror !== null && (force || now >= nextMirrorAt)) {
       nextMirrorAt = now + mirrorPollMs;
       try {
         mirror = await postMirror.tick();
@@ -438,8 +440,23 @@ const tick = async (): Promise<void> => {
     }
   } finally {
     ticking = false;
+    if (forcePending) {
+      forcePending = false;
+      void tick(true).catch(error => console.error('[Reddit runtime] forced drain failed:', safeError(error)));
+    }
   }
 };
+
+const rateControl = new RedditRateBudget(redditCfg.auth.clientId);
+internal?.useRateDrain(async () => {
+  const result = await rateControl.forceUnblock();
+  if (result.ok) {
+    void tick(true).catch(error => console.error('[Reddit runtime] forced drain failed:', safeError(error)));
+  }
+  return result;
+});
+internal?.start();
+if (internal !== null) console.log(`Reddit internal event API listening on ${internal.address()}.`);
 
 const exists = async (path: string): Promise<boolean> => {
   try {
@@ -506,7 +523,7 @@ if (questions !== null) {
   );
 }
 console.log(
-  `Reddit API polling cadence: moderation=${moderationPollMs}ms modmail=${modmailPollMs}ms dm=${dmPollMs}ms questions=${questionPollMs}ms mirror=${mirrorPollMs}ms; shared quota gate caps Data API traffic at 1 request/second.`,
+  `Reddit API polling cadence: moderation=${moderationPollMs}ms modmail=${modmailPollMs}ms dm=${dmPollMs}ms questions=${questionPollMs}ms mirror=${mirrorPollMs}ms; shared quota gate defaults to 800ms between requests and honours Reddit quota headers.`,
 );
 
 if (privateModmail !== null) {
