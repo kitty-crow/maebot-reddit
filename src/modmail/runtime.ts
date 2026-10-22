@@ -1,7 +1,7 @@
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
-import { ModmailReplyOutbox } from './outbox.ts';
+import { ModmailReplyOutbox, type ModmailReplyIntent } from './outbox.ts';
 import { ModmailStore } from './store.ts';
 
 export type ModmailReader = Pick<RedditReadClient, 'modmailConversations' | 'modmailConversation'>;
@@ -31,6 +31,7 @@ const communities = (value: string | readonly string[]): readonly string[] => {
 
 export class ModmailRuntime {
   private readonly subreddits: readonly string[];
+  private deliveryTail: Promise<void> = Promise.resolve();
 
   public constructor(
     subreddits: string | readonly string[],
@@ -54,26 +55,38 @@ export class ModmailRuntime {
     }
   }
 
-  private async applyReplies(): Promise<{ readonly applied: number; readonly failed: number }> {
-    if (this.outbox === null) return { applied: 0, failed: 0 };
-    let applied = 0;
-    let failed = 0;
-    for (const reply of await this.outbox.pending()) {
-      try {
-        const before = await this.reader.modmailConversation(reply.conversationId, false);
-        if (before.state === 'archived') {
-          if (await this.outbox.cancel(reply.key, 'conversation archived before delivery')) {
-            console.warn(`[Reddit modmail] outbound reply ${reply.key} cancelled because conversation ${reply.conversationId} is archived.`);
-          }
-          failed += 1;
-          continue;
+  /**
+   * Serialize outbound sends across the timer and authenticated HTTP requests.
+   * Reddit cannot deduplicate POST requests by our local key, so checking remote
+   * history and posting must never race for the same reply.
+   */
+  private async withDeliveryLock<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.deliveryTail.then(operation, operation);
+    this.deliveryTail = pending.then(() => undefined, () => undefined);
+    return await pending;
+  }
+
+  /**
+   * Send a single persisted reply immediately. A successful Reddit mutation is
+   * recorded before refreshing the local transcript, so a failed follow-up read
+   * cannot cause the moderator's reply to be posted twice.
+   */
+  private async applyReply(reply: ModmailReplyIntent, outbox: ModmailReplyOutbox): Promise<boolean> {
+    try {
+      const before = await this.reader.modmailConversation(reply.conversationId, false);
+      if (before.state === 'archived') {
+        if (await outbox.cancel(reply.key, 'conversation archived before delivery')) {
+          console.warn(`[Reddit modmail] outbound reply ${reply.key} cancelled because conversation ${reply.conversationId} is archived.`);
         }
-        const alreadyPresent = before.messages.some(message =>
-          message.bodyMarkdown.trim() === reply.bodyMarkdown
-          && message.createdAt >= Math.max(0, reply.createdAt - 60)
-          && (message.participatingAs === 'moderator' || message.author?.isModerator === true));
-        if (!alreadyPresent) await this.writer.replyModmail(reply.conversationId, reply.bodyMarkdown);
-        await this.outbox.markApplied(reply.key);
+        return false;
+      }
+      const alreadyPresent = before.messages.some(message =>
+        message.bodyMarkdown.trim() === reply.bodyMarkdown
+        && message.createdAt >= Math.max(0, reply.createdAt - 60)
+        && (message.participatingAs === 'moderator' || message.author?.isModerator === true));
+      if (!alreadyPresent) await this.writer.replyModmail(reply.conversationId, reply.bodyMarkdown);
+      await outbox.markApplied(reply.key);
+      try {
         const after = alreadyPresent ? before : await this.reader.modmailConversation(reply.conversationId, false);
         await this.store.sync([after], Math.floor(Date.now() / 1_000), this.subreddits);
         await this.store.markReplyOrigin(
@@ -82,18 +95,59 @@ export class ModmailRuntime {
           reply.moderator.platform,
           reply.createdAt,
         );
-        applied += 1;
       } catch (error) {
-        failed += 1;
-        const safe = safeError(error);
-        await this.outbox.markFailed(reply.key, safe);
-        console.error(`[Reddit modmail] outbound reply ${reply.key} failed: ${safe}`);
+        console.error(`[Reddit modmail] reply ${reply.key} delivered, but transcript refresh failed: ${safeError(error)}`);
       }
+      return true;
+    } catch (error) {
+      const safe = safeError(error);
+      await outbox.markFailed(reply.key, safe);
+      console.error(`[Reddit modmail] outbound reply ${reply.key} failed: ${safe}`);
+      return false;
     }
-    return { applied, failed };
+  }
+
+  /**
+   * Called by the authenticated HTTP reply endpoint, rather than a timer.
+   * Pending replies for the same conversation run in durable creation order.
+   * An idempotent retry of an applied key confirms delivery without re-posting.
+   */
+  public async deliverReply(key: string): Promise<boolean> {
+    const outbox = this.outbox;
+    if (outbox === null) return false;
+    return await this.withDeliveryLock(async () => {
+      const target = await outbox.get(key);
+      if (target === null || target.cancelledAt !== null) return false;
+      if (target.appliedAt !== null) return true;
+      const pending = await outbox.pending();
+      for (const reply of pending) {
+        if (reply.conversationId !== target.conversationId) continue;
+        if (!(await this.applyReply(reply, outbox))) return false;
+        if (reply.key === key) return true;
+      }
+      const status = await outbox.get(key);
+      return status !== null && status.appliedAt !== null;
+    });
+  }
+
+  /** Periodic recovery is kept only for previously failed or orphaned sends. */
+  private async applyReplies(): Promise<{ readonly applied: number; readonly failed: number }> {
+    const outbox = this.outbox;
+    if (outbox === null) return { applied: 0, failed: 0 };
+    return await this.withDeliveryLock(async () => {
+      let applied = 0;
+      let failed = 0;
+      for (const reply of await outbox.pending()) {
+        if (await this.applyReply(reply, outbox)) applied += 1;
+        else failed += 1;
+      }
+      return { applied, failed };
+    });
   }
 
   public async tick(): Promise<ModmailRuntimeTick> {
+    // Recover outbound replies before slower incoming Modmail inventory reads.
+    const replies = await this.applyReplies();
     const pages = await Promise.all(
       this.subreddits.map(async subreddit => await this.reader.modmailConversations(subreddit, 100)),
     );
@@ -105,7 +159,6 @@ export class ModmailRuntime {
       Math.floor(Date.now() / 1_000),
       this.subreddits,
     );
-    const replies = await this.applyReplies();
     return {
       relayed: events.length,
       repliesApplied: replies.applied,

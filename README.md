@@ -37,7 +37,7 @@ Reddit Modmail and direct messages deliberately have different ownership rules.
 - Participant messages are semantically audited with durable private context.
 - Mae does **not** generate ordinary conversational Modmail replies.
 - Human moderators may reply from Reddit, Discord, Telegram or Mae Tickets.
-- Cross-platform replies are attributed to the human moderator and queued through one durable Reddit outbox.
+- Cross-platform replies are attributed to the human moderator and recorded in one durable Reddit outbox. Authenticated Mae Tickets sends synchronously trigger delivery to Reddit, immediately refresh the canonical conversation, and return a true delivery acknowledgement; the periodic worker only provides recovery and retries.
 - Initial adapter activation skips existing relay history instead of flooding moderator channels.
 - Platform-origin metadata suppresses only proven self-echoes.
 - The moderator browser application and ticket/security sessions are owned by the independent `mae-tickets` service, not this process.

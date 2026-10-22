@@ -6,7 +6,7 @@ test('Reddit Modmail transport is not gated by the LLM moderation feature flag',
   expect(source).toContain('const modmailReader = moderationReader ?? new RedditReadClient(redditCfg.auth);');
   expect(source).toContain('const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.auth);');
   expect(source).toContain('const modmail = new ModmailRuntime(');
-  expect(source).toContain('internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter);');
+  expect(source).toContain('internal?.useModmail(modmailStore, modmailOutbox, modmailMedia, reputation, modmailWriter, modmail);');
   expect(source).not.toContain('const modmail = moderationReader === null || moderationWriter === null');
 });
 

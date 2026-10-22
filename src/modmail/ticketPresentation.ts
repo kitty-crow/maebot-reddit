@@ -93,7 +93,10 @@ const appliedMatch = (
   return selected;
 };
 
-const relayView = (reply: ModmailReplyIntent, message: ModmailMessage): RedditTicketMessageView => ({
+const relayView = (
+  reply: ModmailReplyIntent,
+  message: Pick<ModmailMessage, 'id' | 'createdAt'>,
+): RedditTicketMessageView => ({
   id: message.id,
   bodyMarkdown: reply.text,
   createdAt: message.createdAt,
@@ -141,6 +144,18 @@ export const presentRedditModmailTicket = (
       attachments: [],
     };
   });
+
+  // A native POST may succeed before Reddit's conversation GET echoes it back.
+  // Project only confirmed, unmatched outbox replies so Mae Tickets updates
+  // immediately without falsely displaying queued or failed replies as sent.
+  for (const reply of appliedReplies) {
+    if (reply.appliedAt === null || used.has(reply.key)) continue;
+    messages.push(relayView(reply, {
+      id: `mae-confirmed:${reply.key}`,
+      createdAt: reply.appliedAt,
+    }));
+  }
+  messages.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 
   const participantProvenance = redditProvenance(conversation.participant);
   return {

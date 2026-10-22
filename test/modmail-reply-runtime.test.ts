@@ -110,6 +110,34 @@ const fixture = async () => {
 };
 
 describe('cross-platform Reddit Modmail reply runtime', () => {
+  test('authenticated send delivers immediately and repeated idempotency keys never post twice', async () => {
+    const { outbox, writer, runtime, relay } = await fixture();
+    const key = 'ticket:session:immediate';
+    await outbox.queue({
+      key,
+      conversationId: 'abc123',
+      moderator: { platform: 'discord', userId: '42', handle: 'AliceMod' },
+      text: 'Please check your Modmail now.',
+      createdAt: 150,
+    });
+
+    expect(await runtime.deliverReply(key)).toBe(true);
+    expect(writer.calls).toBe(1);
+    expect(await outbox.pending()).toHaveLength(0);
+    expect((await relay.eventsAfter(0)).events).toHaveLength(1);
+
+    expect(await runtime.deliverReply(key)).toBe(true);
+    expect(writer.calls).toBe(1);
+    expect((await runtime.tick()).repliesApplied).toBe(0);
+    expect(writer.calls).toBe(1);
+  });
+
+  test('returns unconfirmed for missing delivery keys without posting', async () => {
+    const { writer, runtime } = await fixture();
+    expect(await runtime.deliverReply('ticket:missing')).toBe(false);
+    expect(writer.calls).toBe(0);
+  });
+
   test('posts one attributed Discord reply and relays the canonical Reddit message to other consumers', async () => {
     const { relay, outbox, writer, runtime } = await fixture();
     await outbox.queue({
