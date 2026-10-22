@@ -183,8 +183,8 @@ export class CommunityProjectionRuntime {
     return { applied, failed };
   }
 
-  private async reconcileFlairs(raw: Json, now: number): Promise<ReconcileResult & { readonly skipped: boolean }> {
-    if (now < this.nextFlairAt) return { applied: 0, failed: 0, skipped: true };
+  private async reconcileFlairs(raw: Json, now: number, force = false): Promise<ReconcileResult & { readonly skipped: boolean }> {
+    if (!force && now < this.nextFlairAt) return { applied: 0, failed: 0, skipped: true };
     this.nextFlairAt = now + this.flairIntervalMs;
     const assignments = await this.reader.userFlairAssignments(this.targetSubreddit);
     const restores = await communityFlairRestoresFromFile(
@@ -215,7 +215,7 @@ export class CommunityProjectionRuntime {
     return { applied, failed, skipped: false };
   }
 
-  public async tick(now = Date.now()): Promise<CommunityProjectionTick> {
+  public async tick(now = Date.now(), force = false): Promise<CommunityProjectionTick> {
     const raw = await this.reputation.raw();
     const moderationDue = now >= this.nextModerationAt;
     let mutes: MuteReconcileResult = {
@@ -235,7 +235,7 @@ export class CommunityProjectionRuntime {
     const bans = moderationDue
       ? await this.reconcileBans(raw, mutes.blockedPermanentUsers)
       : { applied: 0, failed: 0 };
-    const flairs = await this.reconcileFlairs(raw, now);
+    const flairs = await this.reconcileFlairs(raw, now, force);
     return {
       applied: mutes.applied + bans.applied + flairs.applied,
       failed: mutes.failed + bans.failed + flairs.failed,
