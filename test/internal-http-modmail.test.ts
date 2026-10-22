@@ -7,6 +7,7 @@ import { ModerationReviewStore } from '../src/mod/review.ts';
 import { ModmailMediaService } from '../src/modmail/media/service.ts';
 import { ModmailMediaStore } from '../src/modmail/media/store.ts';
 import { ModmailReplyOutbox } from '../src/modmail/outbox.ts';
+import { ModmailRuntime } from '../src/modmail/runtime.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
 import type { ModmailConversation } from '../src/modmail/types.ts';
 import { QuestionEventStore } from '../src/questions/events.ts';
@@ -78,7 +79,7 @@ type ReputationSnapshot = {
   readonly status: string;
 };
 
-const fixture = async (withReputation: boolean) => {
+const fixture = async (withReputation: boolean, immediate = false) => {
   const root = await mkdtemp(join(tmpdir(), 'mae-internal-modmail-'));
   roots.push(root);
   const modmail = new ModmailStore(join(root, 'modmail.pb'));
@@ -90,6 +91,36 @@ const fixture = async (withReputation: boolean) => {
     new ModmailMediaStore(join(root, 'media.pb')),
   );
   const archived: string[] = [];
+  let current = conversation();
+  let writes = 0;
+  const runtime = new ModmailRuntime(
+    'nyaonearth',
+    {
+      modmailConversations: async () => ({ conversations: [current], after: null }),
+      modmailConversation: async () => current,
+    },
+    {
+      replyModmail: async (_id, body) => {
+        writes += 1;
+        const at = Math.floor(Date.now() / 1_000);
+        current = {
+          ...current,
+          lastUpdatedAt: at,
+          messages: [...current.messages, {
+            id: `m${writes + 1}`,
+            conversationId: current.id,
+            author: { id: 'mae', name: 'this_is_the_mae', isModerator: true, isAdmin: false, isParticipant: false, isHidden: false, isDeleted: false },
+            bodyMarkdown: body,
+            createdAt: at,
+            isInternal: false,
+            participatingAs: 'moderator',
+          }],
+        };
+      },
+    },
+    modmail,
+    outbox,
+  );
   const server = new RedditInternalHttpServer(
     { host: '127.0.0.1', port: 0, token: 'secret' },
     new QuestionEventStore(join(root, 'questions.pb')),
@@ -102,12 +133,57 @@ const fixture = async (withReputation: boolean) => {
     media,
     withReputation ? { user: async () => canonicalUser } : null,
     { archiveModmail: async id => { archived.push(id); } },
+    immediate ? runtime : null,
   );
   server.start();
-  return { server, base: server.address(), outbox, modmail, archived };
+  return { server, base: server.address(), outbox, modmail, archived, writes: () => writes };
 };
 
 describe('Reddit internal Modmail API', () => {
+  test('posts to Reddit during the HTTP request and immediately exposes the reply in Tickets', async () => {
+    const { server, base, outbox, writes } = await fixture(false, true);
+    const payload = {
+      key: 'ticket:session:request-1',
+      conversationId: 'abc123',
+      platform: 'discord',
+      userId: '42',
+      handle: 'AliceMod',
+      text: 'Immediate answer from Mae Tickets.',
+      attachmentIds: [],
+    };
+    const send = async (): Promise<Response> => await fetch(`${base}/v1/modmail/replies`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    try {
+      const first = await send();
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ queued: true, delivered: true });
+      expect(writes()).toBe(1);
+      expect(await outbox.pending()).toHaveLength(0);
+
+      const ticket = await fetch(`${base}/v1/modmail/conversations/abc123`, {
+        headers: { authorization: 'Bearer secret' },
+      });
+      const data = await ticket.json() as {
+        ticketView: { messages: readonly { bodyMarkdown: string; sender: string; origin: string }[] };
+      };
+      expect(data.ticketView.messages.at(-1)).toMatchObject({
+        bodyMarkdown: 'Immediate answer from Mae Tickets.',
+        sender: 'AliceMod',
+        origin: 'discord',
+      });
+
+      const duplicate = await send();
+      expect(duplicate.status).toBe(200);
+      expect(await duplicate.json()).toMatchObject({ queued: true, delivered: true });
+      expect(writes()).toBe(1);
+    } finally {
+      server.stop();
+    }
+  });
+
   test('returns canonical Reddit data plus the Mae Tickets presentation for NyaOnEarth', async () => {
     const { server, base } = await fixture(true);
     try {

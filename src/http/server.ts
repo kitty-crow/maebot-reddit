@@ -3,6 +3,7 @@ import type { ModerationReviewStore } from '../mod/review.ts';
 import type { ModmailMediaService } from '../modmail/media/service.ts';
 import type { ModmailMediaAttachment } from '../modmail/media/types.ts';
 import type { ModmailReplyAttachment, ModmailReplyOutbox } from '../modmail/outbox.ts';
+import type { ModmailRuntime } from '../modmail/runtime.ts';
 import type { ModmailStore } from '../modmail/store.ts';
 import { presentRedditModmailTicket } from '../modmail/ticketPresentation.ts';
 import type { QuestionEventStore } from '../questions/events.ts';
@@ -219,6 +220,7 @@ export class RedditInternalHttpServer {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private modmail: ModmailStore | null = null;
   private modmailReplies: ModmailReplyOutbox | null = null;
+  private modmailDelivery: Pick<ModmailRuntime, 'deliverReply'> | null = null;
   private modmailMedia: ModmailMediaService | null = null;
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
@@ -237,10 +239,12 @@ export class RedditInternalHttpServer {
     media: ModmailMediaService,
     reputation: ModmailReputationReader | null = null,
     closer: ModmailCloser | null = null,
+    delivery: Pick<ModmailRuntime, 'deliverReply'> | null = null,
   ): void {
     if (this.server !== null) throw new Error('Modmail services must be attached before the Reddit internal API starts');
     this.modmail = store;
     this.modmailReplies = replies;
+    this.modmailDelivery = delivery;
     this.modmailMedia = media;
     this.modmailReputation = reputation;
     this.modmailCloser = closer;
@@ -357,7 +361,20 @@ export class RedditInternalHttpServer {
       text,
       attachments,
     });
-    return this.record(req, url, json({ queued: true, reply: queued }, 202), `conversation=${id} key=${key}`);
+    // Human-initiated sends bypass polling, while the durable outbox preserves retries.
+    let delivered = false;
+    if (this.modmailDelivery !== null) {
+      try {
+        delivered = await this.modmailDelivery.deliverReply(queued.key);
+      } catch (error) {
+        this.logger(`[Reddit internal API] immediate Modmail delivery failed for ${key}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    return this.record(
+      req, url,
+      json({ queued: true, delivered, reply: queued }, delivered ? 200 : 202),
+      `conversation=${id} key=${key} delivered=${delivered}`,
+    );
   }
 
   private async media(req: Request, url: URL, id: string): Promise<Response> {

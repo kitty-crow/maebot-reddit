@@ -203,8 +203,10 @@ describe('Mae Nya authorship on the Reddit ticket relay', () => {
           participatingAs: 'moderator',
         },
       ]), applied);
-      expect(native.messages[1]?.authorNyaId).toBeUndefined();
-      expect(native.messages[1]?.origin).toBe('reddit');
+      const nativeMessage = native.messages.find(message => message.id === 'm-native');
+      expect(nativeMessage?.authorNyaId).toBeUndefined();
+      expect(nativeMessage?.origin).toBe('reddit');
+      expect(native.messages.some(message => message.id === `mae-confirmed:${queued.key}`)).toBe(true);
     } finally {
       server.stop();
     }
