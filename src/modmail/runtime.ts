@@ -125,7 +125,8 @@ export class ModmailRuntime {
         if (!(await this.applyReply(reply, outbox))) return false;
         if (reply.key === key) return true;
       }
-      return (await outbox.get(key))?.appliedAt !== null;
+      const status = await outbox.get(key);
+      return status !== null && status.appliedAt !== null;
     });
   }
 
