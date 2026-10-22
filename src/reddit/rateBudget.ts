@@ -19,8 +19,11 @@ export type RedditRateBudgetOptions = {
   readonly stateFile?: string;
 };
 
-const DEFAULT_RESERVE = 10;
-const DEFAULT_MINIMUM_INTERVAL_MS = 1_000;
+const DEFAULT_RESERVE = 5;
+const DEFAULT_MINIMUM_INTERVAL_MS = 800;
+const OVERRIDE_MINIMUM_INTERVAL_MS = 650;
+const OVERRIDE_WINDOW_MS = 120_000;
+const SOFT_WAIT_POLL_MS = 1_000;
 const UNKNOWN_RESET_MS = 60_000;
 const UNKNOWN_429_RESET_MS = 10 * 60_000;
 const PROBE_LEASE_MS = 30_000;
@@ -35,6 +38,8 @@ const initial = (): JsonMap => ({
   remaining: null,
   resetAtMs: null,
   blockedUntilMs: null,
+  hardBlockedUntilMs: null,
+  overrideUntilMs: null,
   probeUntilMs: null,
   nextAllowedAtMs: null,
   updatedAtMs: 0,
@@ -96,6 +101,37 @@ export class RedditRateBudget {
     this.store = new Store(options.stateFile ?? stateFileFor(clientId), initial());
   }
 
+  /**
+   * A short-lived override of Mae's local reserve, shared across processes.
+   * Actual Reddit HTTP 429 cooldowns cannot be bypassed.
+   */
+  public async forceUnblock(): Promise<{ readonly ok: boolean; readonly detail: string }> {
+    let blocked = false;
+    await this.store.edit(current => {
+      const value = root(current);
+      const now = this.now();
+      const hardUntil = integerOrNull(value['hardBlockedUntilMs']);
+      const legacyBlockedUntil = integerOrNull(value['blockedUntilMs']);
+      const remaining = finiteOrNull(value['remaining']);
+      if (
+        (hardUntil !== null && hardUntil > now)
+        || (hardUntil === null && remaining === 0 && legacyBlockedUntil !== null && legacyBlockedUntil > now)
+      ) {
+        blocked = true;
+        return value;
+      }
+      value['overrideUntilMs'] = now + OVERRIDE_WINDOW_MS;
+      value['blockedUntilMs'] = null;
+      value['probeUntilMs'] = null;
+      value['nextAllowedAtMs'] = now;
+      value['updatedAtMs'] = now;
+      return value;
+    });
+    return blocked
+      ? { ok: false, detail: 'Reddit returned HTTP 429; its retry window cannot be overridden' }
+      : { ok: true, detail: 'Local quota reserve released for two minutes; Reddit HTTP 429 remains enforced' };
+  }
+
   public async acquire(): Promise<void> {
     for (;;) {
       let waitMs = 0;
@@ -107,6 +143,9 @@ export class RedditRateBudget {
         let blockedUntilMs = integerOrNull(value['blockedUntilMs']);
         const probeUntilMs = integerOrNull(value['probeUntilMs']);
         const nextAllowedAtMs = integerOrNull(value['nextAllowedAtMs']);
+        const hardUntil = integerOrNull(value['hardBlockedUntilMs']);
+        const overrideUntil = integerOrNull(value['overrideUntilMs']);
+        const forced = overrideUntil !== null && overrideUntil > now;
 
         if (resetAtMs !== null && resetAtMs <= now) {
           remaining = null;
@@ -115,11 +154,18 @@ export class RedditRateBudget {
           value['remaining'] = null;
           value['resetAtMs'] = null;
           value['blockedUntilMs'] = null;
+          value['hardBlockedUntilMs'] = null;
           value['probeUntilMs'] = null;
         }
 
-        if (blockedUntilMs !== null && blockedUntilMs > now) {
-          waitMs = blockedUntilMs - now;
+        // Provider cooldowns cannot be overridden. Poll soft waits so a
+        // dashboard operator can release them without restarting Reddit.
+        if (hardUntil !== null && hardUntil > now) {
+          waitMs = hardUntil - now;
+          return value;
+        }
+        if (blockedUntilMs !== null && blockedUntilMs > now && !forced) {
+          waitMs = Math.min(SOFT_WAIT_POLL_MS, blockedUntilMs - now);
           return value;
         }
 
@@ -134,12 +180,12 @@ export class RedditRateBudget {
             return value;
           }
           value['probeUntilMs'] = now + PROBE_LEASE_MS;
-          value['nextAllowedAtMs'] = now + this.minimumIntervalMs;
+          value['nextAllowedAtMs'] = now + (forced ? Math.min(this.minimumIntervalMs, OVERRIDE_MINIMUM_INTERVAL_MS) : this.minimumIntervalMs);
           value['updatedAtMs'] = now;
           return value;
         }
 
-        if (remaining <= this.reserve) {
+        if (remaining <= this.reserve && !forced) {
           const reset = resetAtMs ?? now + UNKNOWN_RESET_MS;
           const block = Math.max(now + RESET_GRACE_MS, reset + RESET_GRACE_MS);
           value['resetAtMs'] = reset;
@@ -150,7 +196,7 @@ export class RedditRateBudget {
         }
 
         value['remaining'] = Math.max(0, remaining - 1);
-        value['nextAllowedAtMs'] = now + this.minimumIntervalMs;
+        value['nextAllowedAtMs'] = now + (forced ? Math.min(this.minimumIntervalMs, OVERRIDE_MINIMUM_INTERVAL_MS) : this.minimumIntervalMs);
         value['updatedAtMs'] = now;
         return value;
       });
@@ -192,6 +238,8 @@ export class RedditRateBudget {
         value['remaining'] = 0;
         value['resetAtMs'] = blockedUntil;
         value['blockedUntilMs'] = blockedUntil;
+        value['hardBlockedUntilMs'] = blockedUntil;
+        value['overrideUntilMs'] = null;
       }
 
       return value;
