@@ -27,6 +27,7 @@ export type RedditInternalHttpLogger = (line: string) => void;
 
 type ModmailReputationReader = Pick<ReputationStore, 'user'>;
 type ModmailCloser = Pick<RedditMutationClient, 'archiveModmail'>;
+type RateDrainControl = () => Promise<{ readonly ok: boolean; readonly detail: string }>;
 
 type IncomingManagedAttachment = Omit<ModmailReplyAttachment, 'conversationId' | 'deliveryUrl'> & {
   readonly sourceId: string | null;
@@ -225,6 +226,7 @@ export class RedditInternalHttpServer {
   private modmailReputation: ModmailReputationReader | null = null;
   private modmailCloser: ModmailCloser | null = null;
   private userModeration: ManualReputationModeration | null = null;
+  private rateDrain: RateDrainControl | null = null;
 
   public constructor(
     private readonly cfg: RedditInternalHttpCfg,
@@ -260,6 +262,12 @@ export class RedditInternalHttpServer {
   public useUserModeration(service: ManualReputationModeration): void {
     if (this.server !== null) throw new Error('User moderation must be attached before the Reddit internal API starts');
     this.userModeration = service;
+  }
+
+  /** Registered by the live Reddit runtime, never by the Dashboard. */
+  public useRateDrain(control: RateDrainControl): void {
+    if (this.server !== null) throw new Error('Rate drain control must be attached before the internal API starts');
+    this.rateDrain = control;
   }
 
   public start(): void {
@@ -462,6 +470,17 @@ export class RedditInternalHttpServer {
       return this.record(req, url, json({ ok: true }));
     }
     if (!this.authorised(req)) return this.record(req, url, json({ error: 'unauthorised' }, 401));
+
+    if (req.method === 'POST' && url.pathname === '/v1/rate/force-drain') {
+      if (this.rateDrain === null) return this.record(req, url, json({ error: 'rate control unavailable' }, 503));
+      try {
+        const result = await this.rateDrain();
+        return this.record(req, url, json(result, result.ok ? 202 : 409), result.detail);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'rate control failed';
+        return this.record(req, url, json({ error: detail }, 503));
+      }
+    }
 
     if (req.method === 'GET' && url.pathname === '/v1/question-events') {
       const after = nonNegativeInt(url.searchParams.get('after'), 0);
