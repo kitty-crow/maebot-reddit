@@ -85,6 +85,54 @@ test('Reddit ticket presentation emits stable actor provenance for native and re
   });
 });
 
+test('confirmed Reddit replies appear instantly until the canonical Modmail read catches up', () => {
+  const conversation: ModmailConversation = {
+    id: 'abc123',
+    subreddit: 'catgirlcoin',
+    subject: 'Example',
+    participant,
+    kind: 'sr_user',
+    state: 'inprogress',
+    isInternal: false,
+    isAuto: false,
+    lastUpdatedAt: 100,
+    messages: [],
+  };
+  const reply: ModmailReplyIntent = {
+    key: 'ticket:session:confirmed',
+    conversationId: 'abc123',
+    moderator: { platform: 'discord', userId: '42', handle: 'AliceMod' },
+    text: 'Sent right now.',
+    attachments: [],
+    bodyMarkdown: '**Reply from AliceMod via Discord:**\\n\\nSent right now.',
+    createdAt: 200,
+    appliedAt: 201,
+    cancelledAt: null,
+    lastError: null,
+  };
+
+  expect(presentRedditModmailTicket(conversation, [{ ...reply, appliedAt: null }]).messages).toHaveLength(0);
+  const immediate = presentRedditModmailTicket(conversation, [reply]);
+  expect(immediate.messages).toHaveLength(1);
+  expect(immediate.messages[0]).toMatchObject({
+    id: 'mae-confirmed:ticket:session:confirmed',
+    sender: 'AliceMod',
+    origin: 'discord',
+    bodyMarkdown: 'Sent right now.',
+  });
+
+  const caughtUp = presentRedditModmailTicket({
+    ...conversation,
+    messages: [{
+      id: 'm2', conversationId: 'abc123', author: redditModerator,
+      bodyMarkdown: reply.bodyMarkdown, createdAt: 202,
+      isInternal: false, participatingAs: 'moderator',
+    }],
+  }, [reply]);
+  expect(caughtUp.messages).toHaveLength(1);
+  expect(caughtUp.messages[0]?.id).toBe('m2');
+});
+
 test('Reddit ticket presentation omits unavailable provenance rather than emitting undefined fields', () => {
   const conversation: ModmailConversation = {
     id: 'deleted123',
