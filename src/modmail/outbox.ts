@@ -235,6 +235,11 @@ export class ModmailReplyOutbox {
     return (await this.replies()).filter(reply => reply.appliedAt === null && !cancelled(reply));
   }
 
+  /** Resolve a durable idempotency key, including an already-delivered reply. */
+  public async get(key: string): Promise<ModmailReplyIntent | null> {
+    return (await this.replies()).find(reply => reply.key === key) ?? null;
+  }
+
   public async appliedForConversation(conversationId: string): Promise<readonly ModmailReplyIntent[]> {
     return (await this.replies()).filter(reply =>
       reply.conversationId === conversationId && reply.appliedAt !== null);
