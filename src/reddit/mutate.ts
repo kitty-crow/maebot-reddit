@@ -6,7 +6,7 @@ import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
 import { rateLimitedRedditFetch } from './rateBudget.ts';
-import { RedditUserReachability } from './userReachability.ts';
+import { RedditOperationDeferred, RedditUserReachability } from './userReachability.ts';
 import type { RedditFlairTemplate } from './types.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -174,19 +174,22 @@ export class RedditMutationClient {
   }
 
   /**
-   * Gate every user-targeted mutation on a single persistent reachability
-   * checkpoint. A 403 settles that user's pending work as SKIPPED and prevents
-   * further API calls; it is not evidence of a suspended Reddit account.
+   * A single HTTP 403 is ambiguous (permissions/template/account). Hold only
+   * this precise user + endpoint + operation, without changing reputation or
+   * settling any outstanding moderation effects as "completed".
    */
   private async userMutation(username: string, operation: string, path: string, form: URLSearchParams): Promise<void> {
-    if (this.reachability !== null && await this.reachability.isUnreachable(username)) return;
+    if (this.reachability !== null) {
+      if (await this.reachability.isUnreachable(username)) return;
+      const until = await this.reachability.operationHoldUntil(username, operation, path);
+      if (until !== null) throw new RedditOperationDeferred(username, operation, until);
+    }
     try {
       await this.form(path, form);
     } catch (error) {
       if (error instanceof RedditError && error.status === 403 && this.reachability !== null) {
-        await this.reachability.markUnreachable(username, operation, `${error.kind}: ${error.message}`);
-        console.warn(`[Reddit users] u/${username} unreachable after HTTP 403 during ${operation}; remaining actions settled as skipped`);
-        return;
+        const until = await this.reachability.holdForbiddenOperation(username, operation, path, `${error.kind}: ${error.message}`);
+        console.warn(`[Reddit moderation] HTTP 403 for u/${username} on ${path}; only ${operation} deferred until ${new Date(until).toISOString()}; account NOT marked unreachable`);
       }
       throw error;
     }
