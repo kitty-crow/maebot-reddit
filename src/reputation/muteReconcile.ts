@@ -66,7 +66,7 @@ export const reputationDesiredMutes = (
 
   const desired: ReputationDesiredMute[] = [];
   for (const [key, userRaw] of Object.entries(users)) {
-    if (!isMap(userRaw)) continue;
+    if (!isMap(userRaw) || isMap(userRaw['unreachable'])) continue;
     const username = text(userRaw['username']) ?? key;
     const record = discipline[key];
     const muteUntil = isMap(record) ? integerOrNull(record['muteUntil']) : null;
