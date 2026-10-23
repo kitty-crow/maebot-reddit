@@ -1,6 +1,6 @@
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
-import type { RedditUserReachability } from '../reddit/userReachability.ts';
+import { RedditOperationDeferred, type RedditUserReachability } from '../reddit/userReachability.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import { isMap, type Json } from '../types/json.ts';
 import {
@@ -146,6 +146,7 @@ export class CommunityProjectionRuntime {
         await this.projection.markMute(this.targetSubreddit, desired.username, action, now);
         applied += 1;
       } catch (error) {
+        if (error instanceof RedditOperationDeferred) continue;
         failed += 1;
         // A failed attempt to establish the one initial permanent mute leaves a
         // newly banned user without the intended communication restriction, so
@@ -181,6 +182,7 @@ export class CommunityProjectionRuntime {
         live.add(key);
         applied += 1;
       } catch (error) {
+        if (error instanceof RedditOperationDeferred) continue;
         failed += 1;
         console.error(
           `[Reddit reputation] r/${this.targetSubreddit} ban projection failed for u/${username}: ${safeError(error)}`,
@@ -215,6 +217,7 @@ export class CommunityProjectionRuntime {
         if (this.reachability !== null && await this.reachability.isUnreachable(restore.username)) continue;
         applied += 1;
       } catch (error) {
+        if (error instanceof RedditOperationDeferred) continue;
         failed += 1;
         console.error(
           `[Reddit reputation] r/${this.targetSubreddit} flair projection failed for u/${restore.username}: ${safeError(error)}`,
