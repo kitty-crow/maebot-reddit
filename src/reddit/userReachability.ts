@@ -75,15 +75,4 @@ export class RedditUserReachability {
     // that Reddit successfully performed a refused operation.
     await this.reputation.markUserUnreachable(username, operation, boundedReason);
   }
-
-  /** For future operator-confirmed recovery; never automatically resurrect actions. */
-  public async clear(username: string): Promise<void> {
-    const key = normalise(username);
-    await this.store.edit(current => {
-      const value = root(current);
-      const users = value['users'];
-      if (isMap(users)) delete users[key];
-      return value;
-    });
-  }
 }
