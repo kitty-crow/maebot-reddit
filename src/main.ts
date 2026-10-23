@@ -43,6 +43,7 @@ import { RedditReadClient } from './reddit/client.ts';
 import { safeError } from './reddit/error.ts';
 import { RedditMediaClient } from './reddit/media.ts';
 import { RedditMutationClient } from './reddit/mutate.ts';
+import { RedditUserReachability } from './reddit/userReachability.ts';
 import { RedditRateBudget } from './reddit/rateBudget.ts';
 import { DailyReviewClient } from './review/client.ts';
 import { RedditStateStore } from './store/state.ts';
@@ -108,6 +109,9 @@ const modmailWriter = moderationWriter ?? new RedditMutationClient(redditCfg.aut
 const questionEvents = new QuestionEventStore();
 const questionState = new QuestionStateStore();
 const reputation = moderationCfg === null ? null : new ReputationStore(moderationCfg.stateFile);
+const unreachableUsers = moderationCfg === null
+  ? null
+  : new RedditUserReachability(undefined, moderationCfg.stateFile);
 const postOrganisationStore = moderationCfg === null
   ? null
   : new PostOrganisationStore(resolve(
@@ -189,6 +193,7 @@ const moderation = moderationCfg === null
       organisingClassifier,
       moderationReviews,
       null,
+      unreachableUsers,
     );
 const communityProjection = moderationCfg === null
   || moderationReader === null
@@ -205,6 +210,7 @@ const communityProjection = moderationCfg === null
       moderationWriter,
       reputation,
       communityProjectionStore,
+      unreachableUsers,
     );
 const modmail = new ModmailRuntime(
   moderationCommunities,
