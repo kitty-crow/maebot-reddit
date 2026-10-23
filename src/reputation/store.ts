@@ -45,6 +45,8 @@ export type ReputationUser = {
   readonly needsReview: boolean;
   readonly source: ReputationSeedSource;
   readonly seededAt: number;
+  /** HTTP 403 reachability is independent from moderation/reputation status. */
+  readonly unreachable?: { readonly at: number; readonly operation: string; readonly reason: string } | null;
 };
 
 export type ReputationFlairReferences = {
@@ -194,6 +196,7 @@ const userJson = (value: ReputationUser): JsonMap => ({
   needsReview: value.needsReview,
   source: value.source,
   seededAt: value.seededAt,
+  unreachable: value.unreachable ?? null,
 });
 
 const referencesJson = (value: ReputationFlairReferences): JsonMap => ({
@@ -286,6 +289,13 @@ const userFrom = (value: Json | undefined): ReputationUser | null => {
     needsReview: bool(value['needsReview']),
     source: source(value['source']),
     seededAt: integer(value['seededAt']),
+    unreachable: isMap(value['unreachable']) && typeof value['unreachable']['at'] === 'number'
+      ? {
+        at: value['unreachable']['at'] as number,
+        operation: textOrNull(value['unreachable']['operation']) ?? 'unknown',
+        reason: textOrNull(value['unreachable']['reason']) ?? 'HTTP 403',
+      }
+      : null,
   };
 };
 
@@ -687,7 +697,7 @@ export class ReputationStore {
         status: transition.status,
         desiredFlairTemplateId: desired.id,
         desiredFlairText: desired.text,
-        needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
+        needsFlair: previous.unreachable == null && desired.id !== null && desired.id !== previous.currentFlairTemplateId,
         needsReview: false,
         source: previous.source === 'unmapped-flair' ? 'live-contribution' : previous.source,
       };
@@ -696,10 +706,28 @@ export class ReputationStore {
         ? Math.max(0, next.points - previous.points)
         : 0;
       users[key] = userJson(next);
-      contributions[input.fullname] = contributionJson(input, transition.remove, transition.ban, basePointsAwarded);
+      const contribution = contributionJson(input, transition.remove, transition.ban, basePointsAwarded);
+      if (previous.unreachable != null) {
+        if (transition.remove) {
+          contribution['removeApplied'] = true;
+          contribution['removeSkippedUnreachable'] = true;
+        }
+        if (transition.ban) {
+          contribution['banApplied'] = true;
+          contribution['banSkippedUnreachable'] = true;
+        }
+      }
+      contributions[input.fullname] = contribution;
       const violation = input.classification.verdict !== 'clean';
       applyDiscipline(value, input.author, previous.status, next.status, violation, input.moderatedAt * 1_000);
       if (violation) maybeNotice(value, `moderation:${input.fullname}`, next, input.kind, input.content, input.classification.reason);
+      if (previous.unreachable != null) {
+        const notice = mapField(value, 'notices')[`moderation:${input.fullname}`];
+        if (isMap(notice)) {
+          notice['sent'] = true;
+          notice['skippedUnreachable'] = true;
+        }
+      }
       journal(value, `moderation:${input.fullname}`, {
         kind: 'moderation',
         fullname: input.fullname,
@@ -813,7 +841,7 @@ export class ReputationStore {
         status: transition.status,
         desiredFlairTemplateId: desired.id,
         desiredFlairText: desired.text,
-        needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
+        needsFlair: previous.unreachable == null && desired.id !== null && desired.id !== previous.currentFlairTemplateId,
       };
       users[userKey] = userJson(next);
       contribution['creditedScore'] = pendingHigh;
@@ -918,7 +946,7 @@ export class ReputationStore {
         status: nextStatus,
         desiredFlairTemplateId: desired.id,
         desiredFlairText: desired.text,
-        needsFlair: desired.id !== null && desired.id !== previous.currentFlairTemplateId,
+        needsFlair: previous.unreachable == null && desired.id !== null && desired.id !== previous.currentFlairTemplateId,
       };
       users[userKey] = userJson(next);
       contribution['voteCreditDisabled'] = true;
@@ -979,6 +1007,55 @@ export class ReputationStore {
     return changed;
   }
 
+  /**
+   * Settle pending external actions as SKIPPED on a rejected user. We retain
+   * canonical moderation and scoring; we do not claim Reddit applied actions.
+   */
+  public async markUserUnreachable(username: string, operation: string, reason: string): Promise<void> {
+    const key = username.trim().toLowerCase();
+    await this.store.edit(current => {
+      const value = root(current);
+      const users = mapField(value, 'users');
+      const user = users[key];
+      if (!isMap(user)) return value;
+      const at = Date.now();
+      const old = isMap(user['unreachable']) ? user['unreachable'] : null;
+      user['unreachable'] = {
+        at: old !== null && typeof old['at'] === 'number' ? old['at'] : at,
+        operation: old !== null && typeof old['operation'] === 'string' ? old['operation'] : operation,
+        reason: old !== null && typeof old['reason'] === 'string' ? old['reason'] : reason.slice(0, 240),
+        status: 403,
+      };
+      if (user['needsFlair'] === true) {
+        user['needsFlair'] = false;
+        user['flairSkippedUnreachable'] = true;
+      }
+      const contributions = mapField(value, 'contributions');
+      for (const effect of Object.values(contributions)) {
+        if (!isMap(effect) || String(effect['author'] ?? '').trim().toLowerCase() !== key) continue;
+        if (effect['removeRequired'] === true && effect['removeApplied'] !== true) {
+          effect['removeApplied'] = true;
+          effect['removeSkippedUnreachable'] = true;
+        }
+        if (effect['banRequired'] === true && effect['banApplied'] !== true) {
+          effect['banApplied'] = true;
+          effect['banSkippedUnreachable'] = true;
+        }
+      }
+      const notices = mapField(value, 'notices');
+      for (const notice of Object.values(notices)) {
+        if (!isMap(notice) || String(notice['username'] ?? '').trim().toLowerCase() !== key) continue;
+        if (notice['sent'] !== true) {
+          notice['sent'] = true;
+          notice['skippedUnreachable'] = true;
+        }
+      }
+      const discipline = mapField(value, 'discipline')[key];
+      if (isMap(discipline)) discipline['externalActionsSkippedUnreachable'] = true;
+      return value;
+    });
+  }
+
   public async pendingEffects(nowMs = Date.now()): Promise<ReputationPendingEffects> {
     const value = root(await this.store.read());
     const users = mapField(value, 'users');
@@ -995,14 +1072,14 @@ export class ReputationStore {
       const user = userFrom(raw);
       if (user === null) continue;
       if (
-        user.needsFlair && user.desiredFlairTemplateId !== null && user.desiredFlairText !== null
+        user.unreachable == null && user.needsFlair && user.desiredFlairTemplateId !== null && user.desiredFlairText !== null
         && user.status !== 'moderator' && !user.immutableModeratorFlair
       ) {
         flairs.push({ username: user.username, templateId: user.desiredFlairTemplateId, text: user.desiredFlairText });
       }
 
       const mute = discipline[user.username.trim().toLowerCase()];
-      if (!isMap(mute)) continue;
+      if (user.unreachable != null || !isMap(mute)) continue;
       const muteUntil = integerOrNull(mute['muteUntil']);
       const permanent = bool(mute['mutePermanent']);
       const redditMuted = bool(mute['redditMuted']);
@@ -1024,6 +1101,8 @@ export class ReputationStore {
       const contributionFullname = textOrNull(raw['fullname']);
       const author = textOrNull(raw['author']);
       if (contributionFullname === null || author === null) continue;
+      const authorUser = userFrom(users[author.trim().toLowerCase()]);
+      if (authorUser?.unreachable != null) continue;
       if (bool(raw['removeRequired']) && !bool(raw['removeApplied'])) removals.push({ fullname: contributionFullname });
       if (bool(raw['banRequired']) && !bool(raw['banApplied'])) bans.push({ fullname: contributionFullname, username: author });
     }
@@ -1035,6 +1114,7 @@ export class ReputationStore {
       const subject = textOrNull(raw['subject']);
       const body = textOrNull(raw['body']);
       if (key === null || username === null || subject === null || body === null) continue;
+      if (userFrom(users[username.trim().toLowerCase()])?.unreachable != null) continue;
       notices.push({ key, username, subject, body });
     }
 
