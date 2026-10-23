@@ -10,7 +10,7 @@ import {
 } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
-import type { RedditUserReachability } from '../reddit/userReachability.ts';
+import { RedditOperationDeferred, type RedditUserReachability } from '../reddit/userReachability.ts';
 import { isMap } from '../types/json.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditComment, RedditPost } from '../reddit/types.ts';
@@ -286,6 +286,7 @@ export class RedditModerationRuntime {
         console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username} in r/${this.flairSubreddit}.`);
       } catch (error) {
         failed += 1;
+        if (error instanceof RedditOperationDeferred) continue;
         console.error(`[Reddit reputation] authoritative flair restore failed for u/${flair.username}: ${safeError(error)}`);
       }
     }
@@ -311,6 +312,7 @@ export class RedditModerationRuntime {
         applied += 1;
       } catch (error) {
         failed += 1;
+        if (error instanceof RedditOperationDeferred) continue;
         console.error(`[Reddit moderation] flair apply failed for u/${flair.username}: ${safeError(error)}`);
       }
     }
@@ -342,6 +344,7 @@ export class RedditModerationRuntime {
         applied += 1;
       } catch (error) {
         failed += 1;
+        if (error instanceof RedditOperationDeferred) continue;
         console.error(`[Reddit moderation] ${mute.action} failed for u/${mute.username}: ${safeError(error)}`);
       }
     }
@@ -360,6 +363,7 @@ export class RedditModerationRuntime {
         applied += 1;
       } catch (error) {
         failed += 1;
+        if (error instanceof RedditOperationDeferred) continue;
         console.error(`[Reddit moderation] ban failed for u/${ban.username}: ${safeError(error)}`);
       }
     }
@@ -373,6 +377,7 @@ export class RedditModerationRuntime {
         applied += 1;
       } catch (error) {
         failed += 1;
+        if (error instanceof RedditOperationDeferred) continue;
         console.error(`[Reddit moderation] notice failed for u/${notice.username}: ${safeError(error)}`);
       }
     }
