@@ -6,6 +6,7 @@ import { redditEmojiUploadLease, type RedditEmoji } from './emoji.ts';
 import { RedditError, statusKind } from './error.ts';
 import { backoffMs, rateFrom, retryAfterMs, type RedditRate } from './rate.ts';
 import { rateLimitedRedditFetch } from './rateBudget.ts';
+import { RedditUserReachability } from './userReachability.ts';
 import type { RedditFlairTemplate } from './types.ts';
 
 export type RedditMutationFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -18,6 +19,8 @@ export type RedditMutationOptions = {
   readonly random?: () => number;
   readonly maxAttempts?: number;
   readonly rateReserve?: number;
+  /** Injection point for isolated tests; production uses the shared user store. */
+  readonly reachability?: RedditUserReachability;
 };
 
 export type RedditCreatedPost = {
@@ -144,6 +147,7 @@ export class RedditMutationClient {
   private readonly sleep: RedditMutationSleep;
   private readonly random: () => number;
   private readonly maxAttempts: number;
+  private readonly reachability: RedditUserReachability | null;
   private tokenCache: Token | null = null;
   private latestRate: RedditRate = { used: null, remaining: null, resetMs: null };
 
@@ -162,10 +166,30 @@ export class RedditMutationClient {
     this.uploadFetcher = options.uploadFetcher ?? fetch;
     this.random = options.random ?? Math.random;
     this.maxAttempts = Math.max(1, Math.min(8, Math.floor(options.maxAttempts ?? 4)));
+    this.reachability = options.reachability ?? (options.fetcher === undefined ? new RedditUserReachability() : null);
   }
 
   public rate(): RedditRate {
     return this.latestRate;
+  }
+
+  /**
+   * Gate every user-targeted mutation on a single persistent reachability
+   * checkpoint. A 403 settles that user's pending work as SKIPPED and prevents
+   * further API calls; it is not evidence of a suspended Reddit account.
+   */
+  private async userMutation(username: string, operation: string, path: string, form: URLSearchParams): Promise<void> {
+    if (this.reachability !== null && await this.reachability.isUnreachable(username)) return;
+    try {
+      await this.form(path, form);
+    } catch (error) {
+      if (error instanceof RedditError && error.status === 403 && this.reachability !== null) {
+        await this.reachability.markUnreachable(username, operation, `${error.kind}: ${error.message}`);
+        console.warn(`[Reddit users] u/${username} unreachable after HTTP 403 during ${operation}; remaining actions settled as skipped`);
+        return;
+      }
+      throw error;
+    }
   }
 
   public async submitSelf(
@@ -283,7 +307,7 @@ export class RedditMutationClient {
     assertRedditStateMutationAllowed(username);
     const form = new URLSearchParams({ api_type: 'json', flair_template_id: templateId, name: username });
     add(form, 'text', customText);
-    await this.form(pathFor(subreddit, '/api/selectflair'), form);
+    await this.userMutation(username, 'set-flair-template', pathFor(subreddit, '/api/selectflair'), form);
   }
 
   public async userFlairSelection(subreddit: string, username: string): Promise<RedditSelectedUserFlair> {
@@ -306,7 +330,7 @@ export class RedditMutationClient {
       text: flairText ?? '',
       css_class: cssClass ?? '',
     });
-    await this.form(pathFor(subreddit, '/api/flair'), form);
+    await this.userMutation(username, 'set-flair-direct', pathFor(subreddit, '/api/flair'), form);
   }
 
   public async setPostFlairTemplate(
@@ -342,12 +366,12 @@ export class RedditMutationClient {
       ban_reason: reason.slice(0, 100),
       note: note.slice(0, 300),
     });
-    await this.form(pathFor(subreddit, '/api/friend'), form);
+    await this.userMutation(username, 'ban', pathFor(subreddit, '/api/friend'), form);
   }
 
   public async unbanUser(subreddit: string, username: string): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
+    await this.userMutation(username, 'unban', pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
       api_type: 'json',
       name: username,
       type: 'banned',
@@ -361,7 +385,7 @@ export class RedditMutationClient {
       subject: subject.slice(0, 100),
       text: body,
     });
-    await this.form('/api/compose', form);
+    await this.userMutation(username, 'private-message', '/api/compose', form);
   }
 
   public async replyToPrivateMessage(fullname: string, body: string): Promise<void> {
@@ -424,12 +448,12 @@ export class RedditMutationClient {
       duration: String(muteDurationDays(note)),
       note: note.slice(0, 300),
     });
-    await this.form(pathFor(subreddit, '/api/friend'), form);
+    await this.userMutation(username, 'mute', pathFor(subreddit, '/api/friend'), form);
   }
 
   public async unmuteUser(subreddit: string, username: string): Promise<void> {
     assertRedditStateMutationAllowed(username);
-    await this.form(pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
+    await this.userMutation(username, 'unmute', pathFor(subreddit, '/api/unfriend'), new URLSearchParams({
       api_type: 'json',
       name: username,
       type: 'muted',
