@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RedditAuthCfg } from '../src/env.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
+import { reputationMuteEffects } from '../src/reputation/muteReconcile.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
 import { RedditUserReachability } from '../src/reddit/userReachability.ts';
 import { Store } from '../src/store/store.ts';
@@ -95,6 +96,7 @@ describe('persistent unreachable users', () => {
     expect(await reputation.pendingEffects()).toMatchObject({
       flairs: [], removals: [], bans: [], notices: [], mutes: [],
     });
+    expect(reputationMuteEffects(await reputation.raw())).toEqual([]);
 
     const before = requests.length;
     await first.banUser('catgirlcoin', 'Alice', 'reason', 'note');
