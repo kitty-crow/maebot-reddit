@@ -1,5 +1,6 @@
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
+import type { RedditUserReachability } from '../reddit/userReachability.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import { isMap, type Json } from '../types/json.ts';
 import {
@@ -69,6 +70,7 @@ export class CommunityProjectionRuntime {
     private readonly writer: CommunityProjectionWriter,
     private readonly reputation: ReputationStore,
     private readonly projection: CommunityProjectionStore,
+    private readonly reachability: RedditUserReachability | null = null,
   ) {
     if (!Number.isSafeInteger(flairIntervalMs) || flairIntervalMs < 1) {
       throw new Error('Community flair projection interval must be a positive integer');
@@ -97,6 +99,7 @@ export class CommunityProjectionRuntime {
     const blockedPermanentUsers = new Set<string>();
 
     for (const desired of reputationDesiredMutes(raw, now)) {
+      if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) continue;
       const key = lower(desired.username);
       const current = await this.projection.muteState(this.targetSubreddit, desired.username);
       const wanted = shouldMute(desired, now);
@@ -133,9 +136,11 @@ export class CommunityProjectionRuntime {
             desired.username,
             desired.permanent ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
           );
+          if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) continue;
           liveMuted.add(key);
         } else {
           await this.writer.unmuteUser(this.targetSubreddit, desired.username);
+          if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) continue;
           liveMuted.delete(key);
         }
         await this.projection.markMute(this.targetSubreddit, desired.username, action, now);
@@ -162,6 +167,7 @@ export class CommunityProjectionRuntime {
     let applied = 0;
     let failed = 0;
     for (const username of canonicalPermanentUsers(raw)) {
+      if (this.reachability !== null && await this.reachability.isUnreachable(username)) continue;
       const key = lower(username);
       if (live.has(key) || blockedPermanentUsers.has(key)) continue;
       try {
@@ -171,6 +177,7 @@ export class CommunityProjectionRuntime {
           'Mae canonical moderation state',
           `Canonical Mae reputation enforcement projected from r/${this.sourceSubreddit}.`,
         );
+        if (this.reachability !== null && await this.reachability.isUnreachable(username)) continue;
         live.add(key);
         applied += 1;
       } catch (error) {
@@ -197,6 +204,7 @@ export class CommunityProjectionRuntime {
     let applied = 0;
     let failed = 0;
     for (const restore of restores) {
+      if (this.reachability !== null && await this.reachability.isUnreachable(restore.username)) continue;
       try {
         await this.writer.setUserFlairTemplate(
           this.targetSubreddit,
@@ -204,6 +212,7 @@ export class CommunityProjectionRuntime {
           restore.templateId,
           restore.customText,
         );
+        if (this.reachability !== null && await this.reachability.isUnreachable(restore.username)) continue;
         applied += 1;
       } catch (error) {
         failed += 1;
