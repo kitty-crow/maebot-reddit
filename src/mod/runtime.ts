@@ -285,8 +285,8 @@ export class RedditModerationRuntime {
         restored += 1;
         console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username} in r/${this.flairSubreddit}.`);
       } catch (error) {
-        failed += 1;
         if (error instanceof RedditOperationDeferred) continue;
+        failed += 1;
         console.error(`[Reddit reputation] authoritative flair restore failed for u/${flair.username}: ${safeError(error)}`);
       }
     }
@@ -311,8 +311,8 @@ export class RedditModerationRuntime {
         await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
         applied += 1;
       } catch (error) {
-        failed += 1;
         if (error instanceof RedditOperationDeferred) continue;
+        failed += 1;
         console.error(`[Reddit moderation] flair apply failed for u/${flair.username}: ${safeError(error)}`);
       }
     }
@@ -343,8 +343,8 @@ export class RedditModerationRuntime {
         await this.reputation.markMuteApplied(mute.username, mute.action, Date.now());
         applied += 1;
       } catch (error) {
-        failed += 1;
         if (error instanceof RedditOperationDeferred) continue;
+        failed += 1;
         console.error(`[Reddit moderation] ${mute.action} failed for u/${mute.username}: ${safeError(error)}`);
       }
     }
@@ -362,8 +362,8 @@ export class RedditModerationRuntime {
         await this.reputation.markBanApplied(ban.fullname);
         applied += 1;
       } catch (error) {
-        failed += 1;
         if (error instanceof RedditOperationDeferred) continue;
+        failed += 1;
         console.error(`[Reddit moderation] ban failed for u/${ban.username}: ${safeError(error)}`);
       }
     }
@@ -376,8 +376,8 @@ export class RedditModerationRuntime {
         await this.reputation.markNoticeApplied(notice.key);
         applied += 1;
       } catch (error) {
-        failed += 1;
         if (error instanceof RedditOperationDeferred) continue;
+        failed += 1;
         console.error(`[Reddit moderation] notice failed for u/${notice.username}: ${safeError(error)}`);
       }
     }
