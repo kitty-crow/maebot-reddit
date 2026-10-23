@@ -1,7 +1,7 @@
 import { redditConfig } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
-import { RedditUserReachability } from '../reddit/userReachability.ts';
+import { RedditOperationDeferred, RedditUserReachability } from '../reddit/userReachability.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
@@ -268,6 +268,7 @@ export class DashboardRedditReconciler {
           const desired = await this.desired(username);
           if (desired !== null) await this.reconcileDesired(desired);
         } catch (error) {
+          if (error instanceof RedditOperationDeferred) continue;
           console.error(`[Dashboard moderation] Reddit reconcile failed for u/${username}: ${safeError(error)}`);
           this.pending.add(username);
           const retry = setTimeout(() => void this.drain(), 5_000);
@@ -305,6 +306,7 @@ export class DashboardRedditReconciler {
             flair: flairMap.get(key(item.username)) ?? null,
           });
         } catch (error) {
+          if (error instanceof RedditOperationDeferred) continue;
           console.error(`[Dashboard moderation] Reddit drift repair failed for u/${item.username}: ${safeError(error)}`);
           this.pending.add(key(item.username));
         }
