@@ -112,11 +112,12 @@ export class RedditRateBudget {
       const now = this.now();
       const hardUntil = integerOrNull(value['hardBlockedUntilMs']);
       const legacyBlockedUntil = integerOrNull(value['blockedUntilMs']);
-      const remaining = finiteOrNull(value['remaining']);
-      if (
-        (hardUntil !== null && hardUntil > now)
-        || (hardUntil === null && remaining === 0 && legacyBlockedUntil !== null && legacyBlockedUntil > now)
-      ) {
+      const legacyResetAt = integerOrNull(value['resetAtMs']);
+      // On old persisted stores, a real 429 wrote resetAtMs exactly equal
+      // to blockedUntilMs; a local reserve pause instead used reset+grace.
+      const legacyProvider429 = hardUntil === null && legacyBlockedUntil !== null
+        && legacyBlockedUntil === legacyResetAt && legacyBlockedUntil > now;
+      if ((hardUntil !== null && hardUntil > now) || legacyProvider429) {
         blocked = true;
         return value;
       }
