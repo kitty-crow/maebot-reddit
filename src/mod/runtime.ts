@@ -10,6 +10,8 @@ import {
 } from '../reputation/store.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
+import type { RedditUserReachability } from '../reddit/userReachability.ts';
+import { isMap } from '../types/json.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditComment, RedditPost } from '../reddit/types.ts';
 import {
@@ -136,6 +138,7 @@ export class RedditModerationRuntime {
     classifier: ModerationClassifier | null = null,
     private readonly reviews: ModerationReviewStore | null = null,
     privileges: ModerationPrivilegeSource | null = null,
+    private readonly reachability: RedditUserReachability | null = null,
   ) {
     this.subreddits = communities(subreddits);
     const first = this.subreddits[0];
@@ -156,6 +159,7 @@ export class RedditModerationRuntime {
   }
 
   private async process(item: RuntimeItem): Promise<'audited' | 'exempt' | 'seen'> {
+    if (item.author !== null && this.reachability !== null && await this.reachability.isUnreachable(item.author)) return 'seen';
     if (await this.reputation.hasContribution(item.fullname)) return 'seen';
     if (item.author === null) return 'seen';
     const exemption = await this.privilegeSource(item.moderation.subreddit).exemption(item.author);
@@ -273,8 +277,10 @@ export class RedditModerationRuntime {
     let restored = 0;
     let failed = 0;
     for (const flair of restores) {
+      if (this.reachability !== null && await this.reachability.isUnreachable(flair.username)) continue;
       try {
         await this.writer.setUserFlairTemplate(this.flairSubreddit, flair.username, flair.templateId, null);
+        if (this.reachability !== null && await this.reachability.isUnreachable(flair.username)) continue;
         await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
         restored += 1;
         console.log(`[Reddit reputation] restored authoritative flair for u/${flair.username} in r/${this.flairSubreddit}.`);
@@ -288,13 +294,19 @@ export class RedditModerationRuntime {
 
   private async applyEffects(): Promise<{ readonly applied: number; readonly failed: number }> {
     const effects = await this.reputation.pendingEffects();
-    const mutes = reputationMuteEffects(await this.reputation.raw());
+    const snapshot = await this.reputation.raw();
+    const mutes = reputationMuteEffects(snapshot);
+    const contributionMap = isMap(snapshot) && isMap(snapshot['contributions']) ? snapshot['contributions'] : null;
+    const skipped = async (username: string): Promise<boolean> =>
+      this.reachability !== null && await this.reachability.isUnreachable(username);
     let applied = 0;
     let failed = 0;
 
     for (const flair of effects.flairs) {
+      if (await skipped(flair.username)) continue;
       try {
         await this.writer.setUserFlairTemplate(this.flairSubreddit, flair.username, flair.templateId, null);
+        if (this.reachability !== null && await this.reachability.isUnreachable(flair.username)) continue;
         await this.reputation.markFlairApplied(flair.username, flair.templateId, flair.text);
         applied += 1;
       } catch (error) {
@@ -304,6 +316,9 @@ export class RedditModerationRuntime {
     }
 
     for (const removal of effects.removals) {
+      const contribution = contributionMap?.[removal.fullname];
+      const author = isMap(contribution) && typeof contribution['author'] === 'string' ? contribution['author'] : null;
+      if (author !== null && await skipped(author)) continue;
       try {
         await this.writer.remove(removal.fullname);
         await this.reputation.markRemovalApplied(removal.fullname);
@@ -318,9 +333,11 @@ export class RedditModerationRuntime {
     // NyaOnEarth bans/mutes are reconciled independently by the community
     // projection so a target failure can never mark the source effect complete.
     for (const mute of mutes) {
+      if (await skipped(mute.username)) continue;
       try {
         if (mute.action === 'mute') await this.writer.muteUser(this.flairSubreddit, mute.username, mute.note);
         else await this.writer.unmuteUser(this.flairSubreddit, mute.username);
+        if (await skipped(mute.username)) continue;
         await this.reputation.markMuteApplied(mute.username, mute.action, Date.now());
         applied += 1;
       } catch (error) {
@@ -330,6 +347,7 @@ export class RedditModerationRuntime {
     }
 
     for (const ban of effects.bans) {
+      if (await skipped(ban.username)) continue;
       try {
         await this.writer.banUser(
           this.flairSubreddit,
@@ -337,6 +355,7 @@ export class RedditModerationRuntime {
           'Mae reputation enforcement',
           `Permanent Mae reputation floor reached from ${ban.fullname}.`,
         );
+        if (await skipped(ban.username)) continue;
         await this.reputation.markBanApplied(ban.fullname);
         applied += 1;
       } catch (error) {
@@ -346,8 +365,10 @@ export class RedditModerationRuntime {
     }
 
     for (const notice of effects.notices) {
+      if (await skipped(notice.username)) continue;
       try {
         await this.writer.sendPrivateMessage(notice.username, notice.subject, notice.body);
+        if (await skipped(notice.username)) continue;
         await this.reputation.markNoticeApplied(notice.key);
         applied += 1;
       } catch (error) {
