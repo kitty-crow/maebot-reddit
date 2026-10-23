@@ -6,7 +6,7 @@ import type { RedditAuthCfg } from '../src/env.ts';
 import { ReputationStore } from '../src/reputation/store.ts';
 import { reputationMuteEffects } from '../src/reputation/muteReconcile.ts';
 import { RedditMutationClient } from '../src/reddit/mutate.ts';
-import { RedditUserReachability } from '../src/reddit/userReachability.ts';
+import { RedditOperationDeferred, RedditUserReachability } from '../src/reddit/userReachability.ts';
 import { Store } from '../src/store/store.ts';
 import { isMap } from '../src/types/json.ts';
 
@@ -21,7 +21,7 @@ const auth: RedditAuthCfg = {
 };
 
 describe('persistent unreachable users', () => {
-  test('a 403 closes all outstanding user effects and no other mutation retries the user', async () => {
+  test('one 403 holds only the denied operation without quarantining or settling the whole user', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mae-unreachable-'));
     roots.push(dir);
     const reputationPath = join(dir, 'reputation.pb');
@@ -65,9 +65,11 @@ describe('persistent unreachable users', () => {
       return Response.json({ json: { errors: [] } });
     };
     const first = new RedditMutationClient(auth, { fetcher, reachability, maxAttempts: 1 });
-    await first.setUserFlairTemplate('catgirlcoin', 'Alice', 'desired', null);
-    expect((await reachability.get('alice'))?.status).toBe(403);
-    expect((await reachability.get('ALICE'))?.operation).toBe('set-flair-template');
+    await expect(first.setUserFlairTemplate('catgirlcoin', 'Alice', 'desired', null))
+      .rejects.toMatchObject({ status: 403 });
+    expect(await reachability.isUnreachable('alice')).toBe(false);
+    expect(await reachability.operationHoldUntil('alice', 'set-flair-template', '/r/catgirlcoin/api/selectflair'))
+      .toBeGreaterThan(Date.now());
 
     const stored = await reputation.raw();
     if (!isMap(stored) || !isMap(stored['users']) || !isMap(stored['contributions'])
@@ -77,38 +79,57 @@ describe('persistent unreachable users', () => {
     const alice = stored['users']['alice'];
     const contribution = stored['contributions']['t1_one'];
     const notice = stored['notices']['n1'];
-    const discipline = stored['discipline']['alice'];
-    if (!isMap(alice) || !isMap(contribution) || !isMap(notice) || !isMap(discipline)) {
-      throw new Error('Missing canonical records');
-    }
-    expect(alice['needsFlair']).toBe(false);
+    if (!isMap(alice) || !isMap(contribution) || !isMap(notice)) throw new Error('Missing records');
+
+    expect(alice['unreachable']).toBeUndefined();
+    expect(alice['needsFlair']).toBe(true);
     expect(alice['status']).toBe('ordinary');
-    expect(isMap(alice['unreachable'])).toBe(true);
-    expect(alice['currentFlairTemplateId']).toBe(null);
-    expect(alice['flairSkippedUnreachable']).toBe(true);
-    expect(contribution['banApplied']).toBe(true);
-    expect(contribution['banSkippedUnreachable']).toBe(true);
-    expect(contribution['removeApplied']).toBe(true);
-    expect(contribution['removeSkippedUnreachable']).toBe(true);
-    expect(notice['sent']).toBe(true);
-    expect(notice['skippedUnreachable']).toBe(true);
-    expect(discipline['externalActionsSkippedUnreachable']).toBe(true);
+    expect(contribution['banApplied']).toBe(false);
+    expect(contribution['removeApplied']).toBe(false);
+    expect(notice['sent']).toBe(false);
+
+    const before = requests.length;
+    const second = new RedditMutationClient(auth, {
+      fetcher,
+      reachability: new RedditUserReachability(unreachablePath, reputationPath),
+      maxAttempts: 1,
+    });
+    await expect(second.setUserFlairTemplate('catgirlcoin', 'Alice', 'desired', null))
+      .rejects.toBeInstanceOf(RedditOperationDeferred);
+    expect(requests).toHaveLength(before);
+
+    // Different moderation actions and other communities remain reachable.
+    await second.banUser('catgirlcoin', 'Alice', 'reason', 'note');
+    await second.muteUser('nyaonearth', 'Alice', 'note');
+    expect(requests.length).toBeGreaterThan(before);
+
+    // Only independent confirmation permits closing all outstanding work.
+    await reachability.markUnreachable('Alice', 'account-verification', 'independent account lookup confirms inaccessible');
+    expect(await reachability.isUnreachable('alice')).toBe(true);
+    const settled = await reputation.raw();
+    if (!isMap(settled) || !isMap(settled['users']) || !isMap(settled['contributions'])
+      || !isMap(settled['notices'])) throw new Error('Missing settled records');
+    const settledUser = settled['users']['alice'];
+    const settledEffect = settled['contributions']['t1_one'];
+    const settledNotice = settled['notices']['n1'];
+    if (!isMap(settledUser) || !isMap(settledEffect) || !isMap(settledNotice)) {
+      throw new Error('Missing settled user/effect records');
+    }
+    expect(settledUser['needsFlair']).toBe(false);
+    expect(settledUser['flairSkippedUnreachable']).toBe(true);
+    expect(settledUser['currentFlairTemplateId']).toBe(null);
+    expect(settledEffect['banSkippedUnreachable']).toBe(true);
+    expect(settledEffect['removeSkippedUnreachable']).toBe(true);
+    expect(settledNotice['skippedUnreachable']).toBe(true);
     expect(await reputation.pendingEffects()).toMatchObject({
       flairs: [], removals: [], bans: [], notices: [], mutes: [],
     });
     expect(reputationMuteEffects(await reputation.raw())).toEqual([]);
 
-    const before = requests.length;
-    await first.banUser('catgirlcoin', 'Alice', 'reason', 'note');
-    await first.muteUser('nyaonearth', 'Alice', 'note');
-    await first.unbanUser('catgirlcoin', 'Alice');
-    await first.sendPrivateMessage('Alice', 'Subject', 'Body');
-    const second = new RedditMutationClient(auth, {
-      fetcher,
-      reachability: new RedditUserReachability(unreachablePath, reputationPath),
-    });
+    const afterConfirmation = requests.length;
     await second.setUserFlairTemplate('nyaonearth', 'Alice', 'desired', null);
-    expect(requests).toHaveLength(before);
+    await second.sendPrivateMessage('Alice', 'Subject', 'Body');
+    expect(requests).toHaveLength(afterConfirmation);
   });
 
   test('unrelated users are still actionable after a different user is unreachable', async () => {
