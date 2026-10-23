@@ -20,6 +20,21 @@ export type UnreachableUser = {
 
 const FIRST_FORBIDDEN_HOLD_MS = 60 * 60 * 1_000;
 const MAX_FORBIDDEN_HOLD_MS = 24 * FIRST_FORBIDDEN_HOLD_MS;
+/**
+ * Non-fatal deferral: 403 rejected this particular action, but the account
+ * may be perfectly healthy. No network call is made while its hold is active.
+ */
+export class RedditOperationDeferred extends Error {
+  public constructor(
+    public readonly username: string,
+    public readonly operation: string,
+    public readonly until: number,
+  ) {
+    super(`Reddit ${operation} for u/${username} deferred until ${new Date(until).toISOString()} after HTTP 403`);
+    this.name = 'RedditOperationDeferred';
+  }
+}
+
 const initial = (): JsonMap => ({ schema: 1, users: {}, operations: {} });
 const root = (value: Json): JsonMap => {
   if (!isMap(value) || value['schema'] !== 1 || !isMap(value['users'])) {
