@@ -1,6 +1,7 @@
 import { redditConfig } from '../env.ts';
 import { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
+import { RedditUserReachability } from '../reddit/userReachability.ts';
 import type { RedditMutationClient } from '../reddit/mutate.ts';
 import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
@@ -113,6 +114,7 @@ export class DashboardRedditReconciler {
   private readonly pending = new Set<string>();
   private draining = false;
   private fullReconciling = false;
+  private readonly reachability: RedditUserReachability | null;
 
   public constructor(
     stateFile: string,
@@ -123,6 +125,7 @@ export class DashboardRedditReconciler {
   ) {
     this.store = new Store(stateFile, initial());
     this.reader = reader ?? new RedditReadClient(redditConfig().auth);
+    this.reachability = reader === null ? new RedditUserReachability() : null;
   }
 
   public start(): void {
@@ -192,6 +195,7 @@ export class DashboardRedditReconciler {
       readonly flair: RedditFlairAssignment | null;
     },
   ): Promise<void> {
+    if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
     if (redditStateAdoptionInProgress(desired.username)) {
       throw new Error(`Live Reddit state adoption is in progress for u/${desired.username}`);
     }
@@ -242,6 +246,7 @@ export class DashboardRedditReconciler {
         desired.desiredFlairId,
         null,
       );
+      if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
       await this.markFlairApplied(desired);
       console.log(`[Dashboard moderation] Reddit flair reconciled for u/${desired.username}.`);
     }
@@ -289,6 +294,7 @@ export class DashboardRedditReconciler {
 
       for (const item of desired) {
         try {
+          if (this.reachability !== null && await this.reachability.isUnreachable(item.username)) continue;
           await this.reconcileDesired(item, {
             banned: bannedSet.has(key(item.username)),
             muted: mutedSet.has(key(item.username)),
