@@ -192,7 +192,10 @@ export class RedditRateBudget {
           value['resetAtMs'] = reset;
           value['blockedUntilMs'] = block;
           value['updatedAtMs'] = now;
-          waitMs = block - now;
+          // Reserve pauses are local policy, not Reddit HTTP 429 blocks.
+          // Recheck the shared persisted state frequently so a Dashboard
+          // force-unblock wakes a waiting request within one second.
+          waitMs = Math.min(SOFT_WAIT_POLL_MS, block - now);
           return value;
         }
 
