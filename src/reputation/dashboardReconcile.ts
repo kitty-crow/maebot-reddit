@@ -214,9 +214,11 @@ export class DashboardRedditReconciler {
           'Mae canonical moderation state',
           'Mae Dashboard/store reconciliation',
         );
+        if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         console.log(`[Dashboard moderation] Reddit banned u/${desired.username}.`);
       } else {
         await this.writer.unbanUser(this.subreddit, desired.username);
+        if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         console.log(`[Dashboard moderation] Reddit unbanned u/${desired.username}.`);
       }
     }
@@ -225,6 +227,7 @@ export class DashboardRedditReconciler {
     if (desired.muted) {
       if (!desired.muteApplied && !state.muted) {
         await this.writer.muteUser(this.subreddit, desired.username, 'Mae canonical moderation state');
+        if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         await this.markMuteApplied(desired.username, true);
         console.log(`[Dashboard moderation] Reddit muted u/${desired.username}.`);
       }
@@ -234,6 +237,7 @@ export class DashboardRedditReconciler {
     } else if (desired.muteApplied) {
       if (state.muted) {
         await this.writer.unmuteUser(this.subreddit, desired.username);
+        if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         console.log(`[Dashboard moderation] Reddit unmuted u/${desired.username}.`);
       }
       await this.markMuteApplied(desired.username, false);
