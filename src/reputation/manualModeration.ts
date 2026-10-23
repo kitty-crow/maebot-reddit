@@ -386,6 +386,19 @@ export class ManualReputationModeration {
     const username = rawUsername.trim().replace(/^u\//u, '');
     if (!/^[A-Za-z0-9_-]{3,32}$/u.test(username)) throw new Error('Invalid Reddit username');
 
+    // A previously rejected account is explicitly out of scope for further
+    // moderation. Preserve its last canonical state and do not create new work.
+    const current = root(await this.store.read());
+    const currentUsers = current['users'];
+    const currentUser = isMap(currentUsers) ? currentUsers[username.toLowerCase()] : null;
+    if (isMap(currentUser) && isMap(currentUser['unreachable'])) {
+      return {
+        username,
+        kind: action.kind,
+        detail: 'skipped: user is unreachable (Reddit HTTP 403); no new moderation work queued',
+      };
+    }
+
     if (
       action.kind === 'adopt-reddit-state'
       || (action.kind === 'set-flair' && action.flair === adoptionWireFlair)
