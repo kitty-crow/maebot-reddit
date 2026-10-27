@@ -82,7 +82,7 @@ const encodeQuestion = (value: QuestionStateRecord): JsonMap => ({
   updatedAt: value.updatedAt,
 });
 
-const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'updatedAt'> => {
+const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'resolvedAt' | 'updatedAt'> => {
   const submissionId = input.submissionId.trim();
   const subreddit = input.subreddit.trim();
   const permalink = input.permalink.trim();
