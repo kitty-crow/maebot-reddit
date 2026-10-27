@@ -1,7 +1,7 @@
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { Store } from '../store/store.ts';
 
-export type QuestionEventKind = 'question_opened' | 'best_answer_selected';
+export type QuestionEventKind = 'question_opened' | 'best_answer_selected' | 'question_resolved';
 
 export type QuestionEvent = {
   readonly sequence: number;
@@ -63,7 +63,7 @@ const decode = (value: Json | undefined): QuestionEvent | null => {
   const submissionId = text(value['submissionId']);
   if (
     sequence < 1
-    || (kind !== 'question_opened' && kind !== 'best_answer_selected')
+    || (kind !== 'question_opened' && kind !== 'best_answer_selected' && kind !== 'question_resolved')
     || key.length === 0
     || submissionId.length === 0
   ) return null;
@@ -134,6 +134,20 @@ export class QuestionEventStore {
     return await this.append({
       key: `question_opened:${input.submissionId}`,
       kind: 'question_opened',
+      ...input,
+      summary: input.summary?.trim() ?? '',
+      selectionCommentId: null,
+      answerCommentId: null,
+      answerAuthor: null,
+      answerPermalink: null,
+    });
+  }
+
+  public async resolved(input: QuestionOpenedInput): Promise<QuestionEvent> {
+    validateBase(input);
+    return await this.append({
+      key: `question_resolved:${input.submissionId}`,
+      kind: 'question_resolved',
       ...input,
       summary: input.summary?.trim() ?? '',
       selectionCommentId: null,
