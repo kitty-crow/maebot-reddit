@@ -15,7 +15,7 @@ export type QuestionStateRecord = Omit<QuestionStateInput, 'summary'> & {
   readonly summary: string;
   readonly openedHandled: boolean;
   readonly bestAnswerCommentId: string | null;
-  /** Null until the question is closed, whether or not a best answer was chosen. */
+  /** Explicit administrative closure time; separate from best-answer selection. */
   readonly resolvedAt: number | null;
   readonly updatedAt: number;
 };
@@ -238,7 +238,6 @@ export class QuestionStateStore {
       : {
           ...current,
           bestAnswerCommentId: id,
-          resolvedAt: at,
           updatedAt: Math.max(current.updatedAt, at),
         });
   }
