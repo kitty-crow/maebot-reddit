@@ -72,6 +72,7 @@ const postItem = (post: RedditPost): RuntimeItem => ({
     title: post.title,
     text: [post.selfText, post.url].filter(value => value.trim().length > 0).join('\n\n'),
     permalink: post.permalink,
+    createdAt: post.createdUtc,
     mediaUrls: post.mediaUrls,
     history: null,
   },

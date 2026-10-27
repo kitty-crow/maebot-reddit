@@ -163,9 +163,18 @@ export class OrganisingModerationClassifier implements ModerationClassifier {
 
   public async classify(item: ModerationItem): Promise<ModerationClassification> {
     if (item.kind !== 'post') return await this.inner.classify(item);
+    const createdAt = item.createdAt;
+    if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new Error('Reddit post original creation timestamp is required for organisation');
+    }
 
     const postFlairs = await this.flairInventory(item.subreddit);
     const classification = await this.inner.classify({ ...item, postFlairs });
+    // Old submissions may reappear in Reddit's /new listing after a restart.
+    // Preserve moderation classification, but never organise or announce them as new.
+    if (createdAt < Math.floor(Date.now() / 1_000) - 24 * 60 * 60) {
+      return { ...classification, postOrganisation: null };
+    }
     const organisation = classification.postOrganisation ?? null;
     if (classification.disposition !== 'allow' || organisation === null) return classification;
 
@@ -188,7 +197,7 @@ export class OrganisingModerationClassifier implements ModerationClassifier {
       isQuestion: organisation.isQuestion,
       questionTitle: organisation.questionTitle,
       questionSummary: organisation.questionSummary,
-      createdAt: Math.floor(Date.now() / 1_000),
+      createdAt,
     });
     return classification;
   }
@@ -278,7 +287,7 @@ export class PostOrganisationRuntime {
               permalink: plan.permalink,
               createdAt: plan.createdAt,
             });
-            if (!stored.openedHandled) {
+            if (!stored.openedHandled && stored.resolvedAt === null && stored.bestAnswerCommentId === null) {
               await this.events.opened({
                 submissionId: stored.submissionId,
                 subreddit: stored.subreddit,

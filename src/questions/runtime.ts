@@ -97,7 +97,7 @@ export class RedditQuestionRuntime {
     // can never manufacture a question that did not pass moderation + semantic
     // organisation first.
     const question = await this.state.question(id);
-    if (question === null) return false;
+    if (question === null || question.resolvedAt !== null) return false;
     if (!await this.canChoose(actor, question)) return false;
 
     await this.events.bestAnswer({
