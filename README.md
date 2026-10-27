@@ -1,137 +1,153 @@
 # Mae Reddit
 
-Mae's Reddit service owns Reddit credentials, Reddit API access, Reddit-specific durable state, moderation actions, subreddit migrations, Modmail transport, direct-message handling, private moderation context, and Twitter-to-Reddit presentation.
+Mae is the Reddit side of the Mae bot suite. She looks after community activity, moderation, member reputation, Modmail, private messages and publishing across **r/catgirlcoin** and **r/nyaonearth**. She's a long-running TypeScript service on Linux, built with [Bun](https://bun.sh/), with persistent state and a local API for the other Mae services.
 
-The active implementation is TypeScript/Bun under `src/`. The retired Python implementation has been moved to `deprecated/legacy-python/` and is preserved only for historical parity checks, migration evidence, and incident archaeology. It must not be launched by production supervisors, shell launchers, cron jobs, or service definitions.
+Mae runs alongside **Mae Discord**, **Mae Telegram**, **Mae Twitter**, **Mae Tickets** and **Mae Dashboard**. A moderator can review a Reddit case in Discord or Telegram, handle a Modmail conversation in Tickets, or issue an action from the Dashboard; Mae Reddit keeps the records and carries out the Reddit-side work.
 
-Mae's canonical member reputation state is the TypeScript reputation store. On the production host the established canonical score database is `data/reputation.pb`. Archived Python databases, karma gates, flair logic, and moderation state are not authoritative.
+## What Mae does
 
-## Current architecture
+- **Moderation:** Checks submissions, comments and private conversations; applies subreddit policies; manages approvals, removals, bans, mutes and moderation notices. Moderator exemptions and community-specific rules are part of the decision flow.
+- **Member reputation:** Maintains a durable reputation and discipline history, tracks contributions and score changes, and reconciles member flairs and moderation outcomes with Reddit.
+- **Human reviews:** Sends significant moderation cases to Discord and Telegram. The first authorised decision is recorded centrally, then Mae applies the action and keeps both platforms in sync.
+- **Modmail:** Tracks conversations and message events, supplies conversation context to Discord, Telegram and Mae Tickets, and delivers moderator-attributed replies and attachments through a durable outbox.
+- **Direct messages:** Can moderate incoming private messages and respond conversationally as Mae. Separate persisted conversation and delivery state helps recover safely after a restart.
+- **Community questions:** Tracks questions and accepted answers, including the events Discord uses to keep its question announcements and resolution status up to date.
+- **Publishing:** Picks up items from Mae Twitter, publishes them to the configured communities, tracks delivery independently, and coordinates approved Daily Task and weekly posts. Sticky-slot checks protect existing pinned posts.
+- **Operations:** Shares health, review and work-queue information with the Dashboard; maintains rate-budget and recovery state for ongoing Reddit activity.
 
-The TypeScript runtime includes:
+## How the services connect
 
-- strict TypeScript/Bun CI and architecture-boundary checks;
-- typed Reddit OAuth/Data API clients and mutation boundaries;
-- persistent protobuf-backed Reddit state through the shared mutex/atomic store;
-- canonical Mae reputation, tier, flair, discipline, score high-water, vote-review and notice state;
-- deterministic moderation consequences driven by structured semantic classification;
-- live moderator exemption before public or private OpenAI moderation calls;
-- private Modmail semantic moderation with persistent OpenAI-schema conversation context;
-- transport-only Reddit Modmail synchronisation and crash-safe attributed moderator reply outbox;
-- Discord and Telegram ordinary Modmail presentation through the authenticated Reddit-owned internal API;
-- a Reddit-specific ticket adapter consumed by the independent Mae Tickets moderator workspace;
-- direct Reddit-message ingestion with a durable first-activation boundary, private semantic moderation, separate persistent Mae conversation context and duplicate-safe delivery recovery;
-- cross-platform moderation-review state with first-authorised-moderator-wins semantics;
-- Twitter fanout and subreddit presentation integration;
-- explicit migration and compatibility tooling for historical state.
-
-These are feature-branch capabilities. They are not considered production-complete until exact-head CI, configuration, deployment and live end-to-end validation have all succeeded.
-
-## Private surfaces
-
-Reddit Modmail and direct messages deliberately have different ownership rules.
-
-### Modmail
-
-- Reddit owns the canonical Modmail conversation and all Reddit mutations.
-- Participant messages are semantically audited with durable private context.
-- Mae does **not** generate ordinary conversational Modmail replies.
-- Human moderators may reply from Reddit, Discord, Telegram or Mae Tickets.
-- Cross-platform replies are attributed to the human moderator and recorded in one durable Reddit outbox. Authenticated Mae Tickets sends synchronously trigger delivery to Reddit, immediately refresh the canonical conversation, and return a true delivery acknowledgement; the periodic worker only provides recovery and retries.
-- Initial adapter activation skips existing relay history instead of flooding moderator channels.
-- Platform-origin metadata suppresses only proven self-echoes.
-- The moderator browser application and ticket/security sessions are owned by the independent `mae-tickets` service, not this process.
-
-The Reddit internal API exposes the authenticated Reddit-specific conversation, normalised ticket presentation, media and reply primitives needed by Mae Tickets. It remains loopback-only and never exposes Reddit credentials to the browser.
-
-Current moderation and canonical reputation span both CatgirlCoin and NyaOnEarth while publishing-primary cutover remains a separate explicit decision. The ticket presentation uses each conversation's actual subreddit and does not hard-code either community.
-
-### Direct messages
-
-- Historic incoming DMs are recorded on first activation and never answered retroactively.
-- New incoming DMs use structured private semantic moderation before reputation mutation.
-- Clean private messages award zero reputation points.
-- Genuine private violations deduct from the same canonical reputation state as public moderation.
-- A genuine constructive apology may clear the current temporary communication mute, but never restores reputation or a permanent restriction.
-- Canonical moderators and Mae herself are exempt from semantic/reputation mutation before the LLM boundary.
-- Moderation and Mae's conversational reply use **separate** managed OpenAI conversation IDs per DM thread.
-- Mae's generated reply is persisted before Reddit delivery is attempted.
-- If the process crashes after a reply attempt, Mae checks Reddit's sent mailbox for the exact parent message and persisted body before treating it as delivered. An uncertain delivery is blocked rather than blindly resent.
-
-## Ownership
-
-- Reddit owns canonical Reddit state and Reddit mutations.
-- Mae Tickets owns the cross-platform moderator web application and browser/security sessions.
-- Mae's reputation store owns ordinary reputation and desired flair state.
-- Twitter ingestion/classification remains owned by `maebot-twitter`.
-- Discord and Telegram are presentation, moderator-control and moderator-authentication adapters, not canonical Reddit stores.
-- Reddit must not open Twitter, Telegram or Mae Tickets state.
-- Human moderators may reply to Reddit Modmail through approved adapters, but Mae does not generate ordinary conversational Modmail replies.
-- Direct Reddit DMs are the private surface where Mae may converse as Mae after the private moderation boundary.
-
-See `docs/architecture.md`, `docs/legacy-parity.md`, `docs/state-migration.md`, `docs/flair-migration.md`, `docs/reputation-bootstrap.md` and `docs/twitter-bridge.md` for engineering contracts and migration history.
-
-## Setup
-
-Initialise pinned dependencies recursively, then install with Bun:
-
-```sh
-git submodule update --init --recursive
-bun install
-```
-
-Copy `.env.example` to a deployment-local `.env` and provide the required Reddit and internal-service credentials. Never commit populated credentials.
-
-## Reddit audit
-
-```sh
-bun run audit:reddit
-```
-
-The default report path is `data/reddit-audit.json`. Pass a path as the first argument to override it.
-
-## Reputation state
-
-The canonical production score store is:
+Mae Reddit owns the Reddit-facing work and provides an authenticated HTTP API on the local machine. Other services use that API to read events, submit moderator decisions, manage Modmail and request administrative actions.
 
 ```text
-data/reputation.pb
+Mae Twitter ────────────────┐
+Discord / Telegram ─────────┤
+Mae Tickets ────────────────┼── Mae Reddit ── Reddit
+Mae Dashboard ──────────────┘       │
+                                    └── Local state and work queues
 ```
 
-The human-readable bootstrap report is kept separately. Bootstrap or migration commands must never overwrite an established canonical store casually. Review state and migration inputs before any forced bootstrap or recovery operation.
+The API binds to **127.0.0.1** by default. The usual deployment port is **8767**. The listening address and bearer token are configurable.
 
-## Legacy Python archive
+## Internal HTTP API
 
-The retired implementation is located at:
+Enable the listener with `REDDIT_INTERNAL_API_PORT` and `REDDIT_INTERNAL_API_TOKEN`. All routes except `GET /health` require:
 
-```text
-deprecated/legacy-python/
+```http
+Authorization: Bearer <REDDIT_INTERNAL_API_TOKEN>
 ```
 
-Read `deprecated/legacy-python/README.md` before inspecting or executing anything there. The archive is not part of the active runtime and must not receive live credentials or canonical production state.
+Responses use JSON unless otherwise noted.
 
-Migration tooling remains active under `src/migration/` and `scripts/`. Those tools may process explicitly supplied historical data without reactivating the Python runtime.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Service health, returning `{"ok":true}` |
+| GET | `/v1/question-events?after=0&limit=100` | Ordered question-opened and best-answer events with a continuation cursor |
+| GET | `/v1/modmail/events?after=0&limit=100` | Ordered Modmail events for Discord and Telegram |
+| GET | `/v1/modmail/conversations/{id}` | Conversation, member reputation summary and ticket-ready presentation |
+| POST | `/v1/modmail/conversations/{id}/archive` | Archive a Modmail conversation |
+| POST | `/v1/modmail/media/{id}` | Upload an attachment for a Modmail conversation |
+| POST | `/v1/modmail/replies` | Queue and attempt delivery of an attributed moderator reply |
+| GET | `/v1/moderation/reviews/pending` | Pending moderation cases |
+| GET | `/v1/moderation/reviews/{key}` | Current case, decision and application status |
+| POST | `/v1/moderation/reviews/decision` | Record an authorised moderator's approve/reject decision |
+| POST | `/v1/moderation/users/action` | Apply a manual member action through Mae's reputation and moderation workflow |
+| POST | `/v1/rate/force-drain` | Request an operator-controlled drain of queued Reddit work |
 
-## Legacy state snapshot copy
+### Request examples
 
-When historical state needs to be captured for migration analysis, copy it into a new isolated destination:
+A moderation decision from Discord or Telegram:
 
-```sh
-bun run scripts/legacySnapshot.ts <legacy-reddit-dir> <new-snapshot-dir> [legacy-common-dir]
+```http
+POST /v1/moderation/reviews/decision
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"key":"review-key","choice":"approve","platform":"discord","userId":"123","userName":"Moderator"}
 ```
 
-The source tree is never modified. The command refuses to place the snapshot inside the source tree or overwrite an existing snapshot directory, and writes SHA-256 metadata to `manifest.json`.
+A Modmail reply from Discord, Telegram or Mae Tickets:
 
-## Checks
+```http
+POST /v1/modmail/replies
+Authorization: Bearer <token>
+Content-Type: application/json
 
-```sh
+{"key":"unique-delivery-key","conversationId":"abc123","platform":"telegram","userId":"123","handle":"Moderator","text":"Thanks for getting in touch.","attachmentIds":[]}
+```
+
+The reply endpoint returns `queued`, `delivered` and the stored reply record. `200` indicates immediate delivery; `202` indicates that the reply is queued for recovery or retry. Attachments are scoped to their conversation. Media uploads send the file body with its MIME type and an `X-Mae-File-Name` header.
+
+Moderation decisions are recorded once: a later response from another review surface receives the existing result. Event consumers retain their own cursors and message pointers, allowing them to resume without replaying old announcements.
+
+## Configuration
+
+Mae reads a local `.env` using `dotenv`. Start with the supplied example:
+
+```bash
+cp .env.example .env
+```
+
+The main settings are:
+
+| Variables | What they configure |
+| --- | --- |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` | Reddit account and API credentials |
+| `REDDIT_USER_AGENT` | Identifiable Reddit API user agent |
+| `REDDIT_ANNOUNCEMENT_USERNAME`, `REDDIT_ANNOUNCEMENT_PASSWORD` | Publishing identity for approved Daily Task announcements |
+| `REDDIT_SOURCE_SUBREDDIT`, `REDDIT_PRIMARY_SUBREDDIT` | Community moderation and publishing configuration |
+| `TWITTER_API_URL`, `TWITTER_API_TOKEN` | Local Mae Twitter service |
+| `DAILY_REVIEW_API_URL`, `DAILY_REVIEW_API_TOKEN` | Shared Daily Task review service |
+| `REDDIT_INTERNAL_API_HOST`, `REDDIT_INTERNAL_API_PORT`, `REDDIT_INTERNAL_API_TOKEN` | Local HTTP listener and bearer authentication |
+| `REDDIT_MODERATION_ENABLED`, `OPENAI_API_KEY`, `REDDIT_MODERATION_MODEL` | Optional semantic moderation and reputation runtime |
+| `REDDIT_DM_ENABLED`, `REDDIT_MAE_PERSONA`, `REDDIT_DM_MODEL` | Optional private-message conversation handling |
+| `REDDIT_RATE_STATE_FILE` | Shared Reddit rate-budget state |
+| `REDDIT_STATE_FILE`, `REDDIT_REPUTATION_STATE_FILE`, `REDDIT_MODMAIL_STATE_FILE` | Persistent stores for service, reputation and Modmail state |
+
+`REDDIT_MODERATION_ENABLED` defaults to `false`. Enabling direct-message handling also requires moderation to be enabled. The `.env.example` covers the additional cadence, review, media, state-file and reputation settings.
+
+Keep `.env` and the `data/` directory private. Each service uses its own API token; the other bots authenticate to Mae Reddit with `REDDIT_INTERNAL_API_TOKEN`.
+
+## Install, run and build
+
+Requires **Bun**, **Git** and a Linux host for the normal deployment.
+
+```bash
+git clone --recurse-submodules https://github.com/kitty-crow/maebot-reddit.git
+cd maebot-reddit
+bun ci
+cp .env.example .env
+# Fill in .env with your service credentials and settings.
+bun run start
+```
+
+The service runs from `src/main.ts`. It starts its workers and, when configured, the loopback HTTP listener. Use your process supervisor to keep it running and to restart it after updates.
+
+To typecheck and run the test suite:
+
+```bash
 bun run ci
 ```
 
-CI runs strict TypeScript checks, loose-type checks, ownership and architecture-boundary checks, then the full Bun test suite.
+To produce a Bun server bundle:
 
-For host validation use `scripts/hostCi.sh`. It creates a disposable clone and does not open or copy the production `data/reputation.pb`.
+```bash
+bun build ./src/main.ts --target=bun --outdir dist
+```
 
-## Production status
+The bundle is written to `dist/main.js`. For a clean host-side check against a specific Git ref, `bash scripts/hostCi.sh main` runs validation and the build in a disposable checkout.
 
-This feature branch is still a release candidate, not an instruction to deploy. Exact-head host CI, controlled live integration checks, final state validation, and explicit approval are required before merge or production promotion.
+## Project layout
+
+| Path | Contents |
+| --- | --- |
+| `src/main.ts` | Service startup, background workers and lifecycle |
+| `src/reddit/` | Reddit reads, writes, media, authentication and rate control |
+| `src/http/` | Mae's internal HTTP API |
+| `src/mod/`, `src/reputation/` | Moderation, member state, discipline and reviews |
+| `src/modmail/`, `src/dm/` | Modmail, attachments, direct messages and delivery state |
+| `src/questions/`, `src/community/` | Question workflows and community features |
+| `src/twitter/`, `src/daily/`, `src/review/` | Publishing and shared Daily Task workflows |
+| `data/` | Local persistent protobuf state (deployment-owned) |
+
+Mae's source is here so the behaviour, interfaces and operating requirements can be inspected and maintained openly.
