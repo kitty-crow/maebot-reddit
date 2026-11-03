@@ -60,6 +60,8 @@ export type ModerationItem = {
   readonly title: string;
   readonly text: string;
   readonly permalink: string;
+  /** Original Reddit created_utc timestamp, in seconds, for submissions. */
+  readonly createdAt?: number;
   readonly mediaUrls: readonly string[];
   readonly history: ModerationHistory | null;
   readonly postFlairs?: readonly ModerationPostFlair[];

@@ -15,6 +15,8 @@ export type QuestionStateRecord = Omit<QuestionStateInput, 'summary'> & {
   readonly summary: string;
   readonly openedHandled: boolean;
   readonly bestAnswerCommentId: string | null;
+  /** Explicit administrative closure time; separate from best-answer selection. */
+  readonly resolvedAt: number | null;
   readonly updatedAt: number;
 };
 
@@ -60,6 +62,8 @@ const decodeQuestion = (value: Json | undefined): QuestionStateRecord | null => 
     createdAt: Math.max(0, integer(value['createdAt'])),
     openedHandled: value['openedHandled'] === true,
     bestAnswerCommentId: bestAnswer.length === 0 ? null : bestAnswer,
+    resolvedAt: value['resolvedAt'] === null || value['resolvedAt'] === undefined
+      ? null : Math.max(0, integer(value['resolvedAt'])),
     updatedAt: Math.max(0, integer(value['updatedAt'])),
   };
 };
@@ -74,10 +78,11 @@ const encodeQuestion = (value: QuestionStateRecord): JsonMap => ({
   createdAt: value.createdAt,
   openedHandled: value.openedHandled,
   bestAnswerCommentId: value.bestAnswerCommentId ?? '',
+  resolvedAt: value.resolvedAt,
   updatedAt: value.updatedAt,
 });
 
-const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'updatedAt'> => {
+const validate = (input: QuestionStateInput): Omit<QuestionStateRecord, 'openedHandled' | 'bestAnswerCommentId' | 'resolvedAt' | 'updatedAt'> => {
   const submissionId = input.submissionId.trim();
   const subreddit = input.subreddit.trim();
   const permalink = input.permalink.trim();
@@ -109,6 +114,7 @@ const mergeQuestion = (
       ...next,
       openedHandled,
       bestAnswerCommentId: null,
+      resolvedAt: null,
       updatedAt: next.createdAt,
     };
   }
@@ -199,6 +205,26 @@ export class QuestionStateStore {
     return await this.editQuestion(submissionId, current => ({ ...current, openedHandled: true }));
   }
 
+  /** Explicitly close an unanswered question without inventing a best answer. */
+  public async markResolved(submissionId: string, at: number): Promise<boolean> {
+    if (!Number.isSafeInteger(at) || at < 0) throw new Error('Question closure timestamp is invalid');
+    let changed = false;
+    await this.store.edit(current => {
+      const value = root(current);
+      const questions = child(value, 'questions');
+      const existing = decodeQuestion(questions[submissionId]);
+      if (existing === null || existing.resolvedAt !== null || existing.bestAnswerCommentId !== null) return value;
+      questions[submissionId] = encodeQuestion({
+        ...existing,
+        resolvedAt: at,
+        updatedAt: Math.max(existing.updatedAt, at),
+      });
+      changed = true;
+      return value;
+    });
+    return changed;
+  }
+
   public async selectBestAnswer(
     submissionId: string,
     answerCommentId: string,
@@ -207,11 +233,13 @@ export class QuestionStateStore {
     if (!Number.isSafeInteger(at) || at < 0) throw new Error('Best-answer timestamp is invalid');
     const id = answerCommentId.trim();
     if (id.length === 0) throw new Error('Best-answer comment ID is required');
-    return await this.editQuestion(submissionId, current => ({
-      ...current,
-      bestAnswerCommentId: id,
-      updatedAt: Math.max(current.updatedAt, at),
-    }));
+    return await this.editQuestion(submissionId, current => current.resolvedAt !== null
+      ? current
+      : {
+          ...current,
+          bestAnswerCommentId: id,
+          updatedAt: Math.max(current.updatedAt, at),
+        });
   }
 
   public async commandHandled(commentId: string): Promise<boolean> {
