@@ -121,6 +121,16 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     await expect(executeAuthoredWrite(request,'catgirlcoin',api,claims)).rejects.toThrow('reconciliation');
     expect(called).toEqual(['ambiguous']);
   });
+  test('rejects a provider post without matching native permalink',async()=>{
+    const api:AuthoredApi={...fakeApi([]),submitSelf:async()=>({
+      id:'t3_abc',subredditName:'catgirlcoin',authorName:'Mae',
+      permalink:'/r/catgirlcoin/comments/other/post/',
+    })};
+    const request=parseAuthoredRequest({...base,action:'self-post',
+      title:'News',body:'Content',flairTemplateId:null});
+    await expect(executeAuthoredWrite(request,'catgirlcoin',api,claimStore()))
+      .rejects.toThrow('invalid native permalink');
+  });
   test('rejects a returned post under the wrong author without claiming success',async()=>{
     const api:AuthoredApi={...fakeApi([]),submitSelf:async()=>({
       id:'t3_abc',subredditName:'catgirlcoin',authorName:'NotMae',permalink:'/r/catgirlcoin/comments/abc/news/',

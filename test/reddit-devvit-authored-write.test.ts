@@ -76,6 +76,13 @@ describe('actor-gated Devvit authored-write transport',()=>{
       protocol:1,operationId:post.operationId,status:'applied',postId:'t1_notpost',
     }),post)).toThrow();
     expect(()=>parseDevvitAuthoredReceipt(JSON.stringify({
+      protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc',
+    }),post)).toThrow();
+    expect(()=>parseDevvitAuthoredReceipt(JSON.stringify({
+      protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc',
+      postPermalink:'/r/catgirlcoin/comments/not-the-same-id/post/',
+    }),post)).toThrow();
+    expect(()=>parseDevvitAuthoredReceipt(JSON.stringify({
       protocol:1,operationId:post.operationId,status:'already-applied',
     }),post)).toThrow('reconciliation');
     expect(()=>parseDevvitAuthoredReceipt(JSON.stringify({

@@ -1,5 +1,5 @@
 // This is an acceptance ledger, not an activation switch.
-// Staged means unit-tested preview only; it does not imply a live install passed.
+// Staged means a preview has been written; it does not imply its CI or live install passed.
 export type ParityState = 'local' | 'staged' | 'partial' | 'blocked' | 'not-started';
 
 export const paritySources = {
@@ -70,7 +70,7 @@ export const devvitParity = {
     "unbanUser": "partial",
     "sendPrivateMessage": "blocked",
     "replyToPrivateMessage": "blocked",
-    "markPrivateMessageRead": "not-started",
+    "markPrivateMessageRead": "partial",
     "replyModmail": "partial",
     "archiveModmail": "partial",
     "muteModmail": "partial",
@@ -96,5 +96,8 @@ export const devvitParity = {
   }
 } as const satisfies Readonly<Record<keyof typeof paritySources, Readonly<Record<string, ParityState>>>>;
 
+// Self-post, crosspost and private-message transport is staged behind author
+// verification, but original user-account authorship is not reproduced by the
+// Devvit app account. They remain blocked for production parity.
 // Nothing in this ledger is verified for production cutover.
 // A migration is complete only after every operation has a production-parity test.
