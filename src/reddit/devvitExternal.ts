@@ -5,6 +5,7 @@ import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships,
 import type { RedditRelationshipUser } from './decode.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
 import { parseDevvitModmailPage, parseDevvitModmailDetail, type DevvitModmailPageRequest } from './devvitModmailRead.ts';
+import { validateModmailMutation, parseModmailMutationReceipt, type DevvitModmailMutation, type DevvitMutationReceipt } from './devvitModmailMutation.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 
 export type DevvitExternalConfig = {
@@ -176,6 +177,30 @@ export class DevvitExternalClient {
   ): Promise<ModmailConversation> {
     const body = await this.readModmail({ subreddit, mode: 'detail', conversationId });
     return parseDevvitModmailDetail(body, subreddit, conversationId);
+  }
+
+  // Staged only. The caller supplies a stable canonical operation ID and must
+  // never automatically reissue an HTTP error (outcome may be ambiguous).
+  public async mutateModmail(request: DevvitModmailMutation): Promise<DevvitMutationReceipt> {
+    validateModmailMutation(request);
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/write/modmail', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit Modmail mutation outcome uncertain; reconcile before retry');
+    }
+    if (!response.ok) {
+      throw new Error('Devvit Modmail mutation HTTP ' + response.status + '; reconcile before retry');
+    }
+    return parseModmailMutationReceipt(await response.text(), request.operationId);
   }
 
 }
