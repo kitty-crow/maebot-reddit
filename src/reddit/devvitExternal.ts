@@ -305,7 +305,7 @@ export class DevvitExternalClient {
     return parseDevvitNoteReceipt(body,request);
   }
   private async requestModNotes(
-    endpoint: string, body: Readonly<Record<string,string|number|null>>,
+    endpoint: string, body: object,
   ): Promise<string> {
     let response:Response;
     try {
