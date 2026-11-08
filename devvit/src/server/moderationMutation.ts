@@ -112,7 +112,7 @@ export const parseModerationMutation = (raw: Json): ModerationMutation => {
   if (subreddit !== 'catgirlcoin' && subreddit !== 'nyaonearth') throw new Error('Unknown community');
   const operationId = required(raw, 'operationId');
   if (!keyPattern.test(operationId)) throw new Error('Invalid operation ID');
-  const base = { subreddit, operationId };
+  const base: Base = { subreddit, operationId };
   const keys = ['subreddit', 'operationId', 'action'];
   const action = raw['action'];
   if (action === 'ban') return parseBan(raw, base, keys);
