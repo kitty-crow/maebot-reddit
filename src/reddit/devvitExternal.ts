@@ -1,4 +1,6 @@
 import { isMap, parseJson } from '../types/json.ts';
+import { parseDevvitPostFeed, type DevvitPostFeedRequest } from './devvitPostFeed.ts';
+import type { RedditPost } from './types.ts';
 
 export type DevvitExternalConfig = {
   readonly baseUrl: string;
@@ -68,4 +70,27 @@ export class DevvitExternalClient {
       redditUser: value['redditUser'],
     };
   }
+  // No production call site until all RedditReadClient operations pass parity tests.
+  public async readPosts(request: DevvitPostFeedRequest): Promise<readonly RedditPost[]> {
+    if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+      throw new Error('Invalid Devvit read limit');
+    }
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/read/posts', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit post feed could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit post feed returned HTTP ' + response.status);
+    return parseDevvitPostFeed(await response.text(), request);
+  }
+
 }
