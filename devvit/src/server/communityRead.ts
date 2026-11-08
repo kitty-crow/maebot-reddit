@@ -2,11 +2,37 @@ import type { Community } from './postFeed.ts';
 
 type Json = null | boolean | number | string | Json[] | { readonly [key: string]: Json };
 
-export type CommunityReadKind = 'moderators' | 'local-rules';
+export type CommunityReadKind = 'moderators' | 'local-rules' | 'banned' | 'muted';
 export type CommunityReadRequest = {
   readonly subreddit: Community;
   readonly kind: CommunityReadKind;
 };
+
+export type RelationshipSource = {
+  readonly username: string;
+  readonly date: Date;
+  readonly note?: string | undefined;
+};
+export type RelationshipWire = {
+  readonly username: string;
+  readonly note: string | null;
+  readonly date: number;
+};
+const relationshipDate = (source: RelationshipSource): number => {
+  const millis = source.date.getTime();
+  if (!Number.isFinite(millis)) throw new Error('Invalid Reddit relationship timestamp');
+  return millis / 1000;
+};
+export const projectBannedUser = (source: RelationshipSource): RelationshipWire => ({
+  username: source.username,
+  note: source.note ?? null,
+  date: relationshipDate(source),
+});
+export const projectMutedUser = (source: RelationshipSource): RelationshipWire => ({
+  username: source.username,
+  note: null,
+  date: relationshipDate(source),
+});
 
 export type ModeratorSource = {
   readonly username: string;
@@ -38,7 +64,9 @@ export const parseCommunityRequest = (raw: Json): CommunityReadRequest => {
   const subreddit = raw['subreddit'];
   const kind = raw['kind'];
   if (subreddit !== 'catgirlcoin' && subreddit !== 'nyaonearth') throw new Error('Unknown community');
-  if (kind !== 'moderators' && kind !== 'local-rules') throw new Error('Unknown community read');
+  if (kind !== 'moderators' && kind !== 'local-rules' && kind !== 'banned' && kind !== 'muted') {
+    throw new Error('Unknown community read');
+  }
   return { subreddit, kind };
 };
 

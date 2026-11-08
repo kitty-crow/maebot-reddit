@@ -1,9 +1,10 @@
 import { parseMap, type Json } from '../types/json.ts';
 import { arrVal, mapVal, numVal, strVal } from '../types/value.ts';
 import type { RedditModerator, RedditRule } from './types.ts';
+import type { RedditRelationshipUser } from './decode.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
 
-export type DevvitCommunityKind = 'moderators' | 'local-rules';
+export type DevvitCommunityKind = 'moderators' | 'local-rules' | 'banned' | 'muted';
 
 const rows = (body: string, subreddit: DevvitCommunity, kind: DevvitCommunityKind): readonly Json[] => {
   if (body.length > 131_072) throw new Error('Devvit community response exceeds safe maximum');
@@ -11,7 +12,8 @@ const rows = (body: string, subreddit: DevvitCommunity, kind: DevvitCommunityKin
   if (root['protocol'] !== 1 || root['subreddit'] !== subreddit || root['kind'] !== kind) {
     throw new Error('Devvit community response mismatched protocol or installation');
   }
-  return arrVal(root[kind === 'moderators' ? 'moderators' : 'rules'], 'Devvit community rows');
+  const field = kind === 'moderators' ? 'moderators' : kind === 'local-rules' ? 'rules' : 'users';
+  return arrVal(root[field], 'Devvit community rows');
 };
 
 export const parseDevvitModerators = (body: string, subreddit: DevvitCommunity): readonly RedditModerator[] => {
@@ -47,3 +49,24 @@ export const parseDevvitLocalRules = (body: string, subreddit: DevvitCommunity):
       priority,
     };
   });
+
+export const parseDevvitRelationships = (
+  body: string,
+  subreddit: DevvitCommunity,
+  kind: 'banned' | 'muted',
+): readonly RedditRelationshipUser[] => {
+  const seen = new Set<string>();
+  return rows(body, subreddit, kind).map((value, index): RedditRelationshipUser => {
+    const row = mapVal(value, 'Devvit relationship ' + index);
+    const username = strVal(row['username'], 'relationship.username');
+    if (!/^[a-z0-9_-]+$/iu.test(username) || seen.has(username.toLowerCase())) {
+      throw new Error('Invalid or duplicate Devvit relationship username');
+    }
+    seen.add(username.toLowerCase());
+    const date = numVal(row['date'], 'relationship.date');
+    if (date < 0) throw new Error('Invalid Devvit relationship timestamp');
+    const note = row['note'];
+    if (note !== null && typeof note !== 'string') throw new Error('Invalid Devvit relationship note');
+    return { username, note, date };
+  });
+};

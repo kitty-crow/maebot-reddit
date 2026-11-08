@@ -1,7 +1,7 @@
 import { reddit } from '@devvit/web/server';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
-import { parseCommunityRequest, projectModerator, projectRule, type CommunityReadRequest } from './communityRead.ts';
+import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, type CommunityReadRequest } from './communityRead.ts';
 import { parseFeedRequest, projectPost, type FeedRequest } from './postFeed.ts';
 
 const app = new Hono();
@@ -71,6 +71,16 @@ app.post('/external/mae/read/community', async c => {
         protocol: 1, subreddit: request.subreddit, kind: request.kind,
         moderators: moderators.map(projectModerator),
       });
+    }
+    if (request.kind === 'banned' || request.kind === 'muted') {
+      // Do not mistake a page-limited listing for a complete moderation inventory.
+      const options = { subredditName: installed.name, limit: 1000, pageSize: 100 };
+      const users = request.kind === 'banned'
+        ? (await reddit.getBannedUsers(options).all()).map(projectBannedUser)
+        : (await reddit.getMutedUsers(options).all()).map(projectMutedUser);
+      return users.length >= 1000
+        ? c.json({ ok: false, error: 'listing_limit_reached' }, 409)
+        : c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind, users });
     }
     const rules = await reddit.getRules(installed.name);
     return c.json({

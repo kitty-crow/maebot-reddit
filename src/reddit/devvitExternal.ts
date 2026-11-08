@@ -1,7 +1,8 @@
 import { isMap, parseJson } from '../types/json.ts';
 import { parseDevvitPostFeed, type DevvitPostFeedRequest } from './devvitPostFeed.ts';
 import type { RedditPost, RedditModerator, RedditRule } from './types.ts';
-import { parseDevvitModerators, parseDevvitLocalRules, type DevvitCommunityKind } from './devvitCommunityRead.ts';
+import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships, type DevvitCommunityKind } from './devvitCommunityRead.ts';
+import type { RedditRelationshipUser } from './decode.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
 
 export type DevvitExternalConfig = {
@@ -122,6 +123,14 @@ export class DevvitExternalClient {
 
   public async readLocalRules(subreddit: DevvitCommunity): Promise<readonly RedditRule[]> {
     return parseDevvitLocalRules(await this.readCommunity(subreddit, 'local-rules'), subreddit);
+  }
+
+  public async readBannedUsers(subreddit: DevvitCommunity): Promise<readonly RedditRelationshipUser[]> {
+    return parseDevvitRelationships(await this.readCommunity(subreddit, 'banned'), subreddit, 'banned');
+  }
+
+  public async readMutedUsers(subreddit: DevvitCommunity): Promise<readonly RedditRelationshipUser[]> {
+    return parseDevvitRelationships(await this.readCommunity(subreddit, 'muted'), subreddit, 'muted');
   }
 
 }
