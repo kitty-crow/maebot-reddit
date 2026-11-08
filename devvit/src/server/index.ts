@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
 import { parseModmailReadRequest, projectModmailConversation, projectModmailPage, type ModmailReadRequest } from './modmailRead.ts';
 import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, type CommunityReadRequest } from './communityRead.ts';
+import { parseFlairRequest, projectFlairTemplate, projectFlairAssignment, readFlairAssignments, type FlairRequest } from './flairRead.ts';
 import { parseFeedRequest, projectPost, type FeedRequest } from './postFeed.ts';
 
 const app = new Hono();
@@ -216,6 +217,45 @@ app.post('/external/mae/write/moderation', async c => {
     return c.json(await executeModerationMutation(request,api,store));
   } catch {
     return c.json({ ok:false, error:'write_not_confirmed_reconcile_before_retry' },409);
+  }
+});
+
+// Read-only flair preview. Template CSS class and assignment UUID can be absent
+// from Devvit's SDK and are deliberately not inferred.
+app.post('/external/mae/read/flair', async c => {
+  let request: FlairRequest;
+  try {
+    const body = await c.req.text();
+    if (body.length > 1024) return c.json({ ok: false, error: 'body_too_large' }, 413);
+    request = parseFlairRequest(JSON.parse(body));
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+  try {
+    const installed = await reddit.getCurrentSubreddit();
+    if (installed.name.toLowerCase() !== request.subreddit) {
+      return c.json({ ok: false, error: 'installation_mismatch' }, 403);
+    }
+    if (request.kind === 'user-templates' || request.kind === 'post-templates') {
+      const templates = request.kind === 'user-templates'
+        ? await reddit.getUserFlairTemplates(installed.name)
+        : await reddit.getPostFlairTemplates(installed.name);
+      return c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind,
+        templates: templates.map(projectFlairTemplate) });
+    }
+    if (request.kind === 'user-assignments') {
+      const assignments = await readFlairAssignments(installed);
+      return c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind, assignments });
+    }
+    const username = request.username;
+    if (username === null) return c.json({ ok: false, error: 'invalid_request' }, 400);
+    const listing = await installed.getUserFlair({ usernames: [username] });
+    const matches = listing.users.filter(row => row.user?.toLowerCase() === username.toLowerCase());
+    if (matches.length > 1) throw new Error('Duplicate user flair responses');
+    return c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind,
+      assignment: matches[0] === undefined ? null : projectFlairAssignment(matches[0]) });
+  } catch {
+    return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
   }
 });
 

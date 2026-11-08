@@ -40,6 +40,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadFlair": {
+        "endpoint": "/external/mae/read/flair",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },
