@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import ts from 'typescript';
 
 export type SourceViolation = {
@@ -28,4 +29,17 @@ export const checkSource = (file: string, content: string): readonly SourceViola
   };
   visit(source, false);
   return violations;
+};
+
+export const gitBlobSha = (content: string): string =>
+  createHash('sha1').update('blob ' + Buffer.byteLength(content, 'utf8') + '\0' + content).digest('hex');
+
+export const checkWithLegacyBaseline = (
+  file: string,
+  content: string,
+  legacyBlobSha?: string,
+): readonly SourceViolation[] => {
+  const issues = checkSource(file, content);
+  if (legacyBlobSha === undefined || gitBlobSha(content) !== legacyBlobSha) return issues;
+  return issues.filter(issue => issue.reason !== 'nested if');
 };

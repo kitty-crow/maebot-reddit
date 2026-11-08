@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { checkSource } from '../scripts/sourceGuard.ts';
+import { checkSource, checkWithLegacyBaseline, gitBlobSha } from '../scripts/sourceGuard.ts';
 
 describe('migration source guard', () => {
   test('accepts sibling guards and typed source', () => {
@@ -24,6 +24,14 @@ describe('migration source guard', () => {
     expect(checkSource('devvit/src/x.js', 'const x = true;')[0]?.reason).toBe('JavaScript source');
     expect(checkSource('devvit/src/x.d.ts', 'type X = any;')).toEqual([]);
     expect(checkSource('devvit/dist/x.cjs.map', '')).toEqual([]);
+  });
+
+  test('allows pre-existing nested if only in an unchanged legacy blob', () => {
+    const old = 'if (a) { if (b) return; }';
+    const signature = gitBlobSha(old);
+    expect(checkWithLegacyBaseline('src/legacy.ts', old, signature)).toEqual([]);
+    expect(checkWithLegacyBaseline('src/legacy.ts', old + '\\n// touched', signature)).toHaveLength(1);
+    expect(checkWithLegacyBaseline('src/new.ts', old)).toHaveLength(1);
   });
 
   test('does not count conditionals inside a separate function as nested', () => {

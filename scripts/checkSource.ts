@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { checkSource, type SourceViolation } from './sourceGuard.ts';
+import { checkWithLegacyBaseline, type SourceViolation } from './sourceGuard.ts';
+import { legacyNestedIfBaseline } from './legacyNestedIfBaseline.ts';
 
 const roots = ['src', 'scripts', 'test', 'devvit/src', 'devvit/test'];
 const violations: SourceViolation[] = [];
@@ -13,7 +14,8 @@ const scan = async (directory: string): Promise<void> => {
       continue;
     }
     const content = await readFile(filename, 'utf8');
-    violations.push(...checkSource(filename, content));
+    const key = filename.replaceAll('\\', '/');
+    violations.push(...checkWithLegacyBaseline(key, content, legacyNestedIfBaseline[key]));
   }
 };
 
