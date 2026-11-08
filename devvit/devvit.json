@@ -22,6 +22,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadModmail": {
+        "endpoint": "/external/mae/read/modmail",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },

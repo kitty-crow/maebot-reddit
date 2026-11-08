@@ -4,6 +4,8 @@ import type { RedditPost, RedditModerator, RedditRule } from './types.ts';
 import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships, type DevvitCommunityKind } from './devvitCommunityRead.ts';
 import type { RedditRelationshipUser } from './decode.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
+import { parseDevvitModmailPage, parseDevvitModmailDetail, type DevvitModmailPageRequest } from './devvitModmailRead.ts';
+import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
 
 export type DevvitExternalConfig = {
   readonly baseUrl: string;
@@ -131,6 +133,49 @@ export class DevvitExternalClient {
 
   public async readMutedUsers(subreddit: DevvitCommunity): Promise<readonly RedditRelationshipUser[]> {
     return parseDevvitRelationships(await this.readCommunity(subreddit, 'muted'), subreddit, 'muted');
+  }
+
+  private async readModmail(
+    request: Readonly<Record<string, string | number | null>>,
+  ): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/read/modmail', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit Modmail endpoint could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit Modmail endpoint returned HTTP ' + response.status);
+    return await response.text();
+  }
+
+  // Staged only. Never marks a conversation read or mutates a canonical store.
+  public async previewModmailConversations(
+    subreddit: DevvitCommunity,
+    limit = 100,
+    after: string | null = null,
+  ): Promise<ModmailConversationPage> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error('Invalid Devvit Modmail page size');
+    }
+    const request: DevvitModmailPageRequest = { subreddit, limit, after };
+    const body = await this.readModmail({ ...request, mode: 'list' });
+    return parseDevvitModmailPage(body, request);
+  }
+
+  public async previewModmailConversation(
+    subreddit: DevvitCommunity,
+    conversationId: string,
+  ): Promise<ModmailConversation> {
+    const body = await this.readModmail({ subreddit, mode: 'detail', conversationId });
+    return parseDevvitModmailDetail(body, subreddit, conversationId);
   }
 
 }

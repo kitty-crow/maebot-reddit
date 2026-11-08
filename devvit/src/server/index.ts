@@ -1,6 +1,7 @@
 import { reddit } from '@devvit/web/server';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
+import { parseModmailReadRequest, projectModmailConversation, projectModmailPage, type ModmailReadRequest } from './modmailRead.ts';
 import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, type CommunityReadRequest } from './communityRead.ts';
 import { parseFeedRequest, projectPost, type FeedRequest } from './postFeed.ts';
 
@@ -87,6 +88,46 @@ app.post('/external/mae/read/community', async c => {
       protocol: 1, subreddit: request.subreddit, kind: request.kind,
       rules: rules.map(projectRule),
     });
+  } catch {
+    return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
+  }
+});
+
+// Modmail previews are read-only: details are always requested with markRead=false.
+// The app installation and each returned conversation must belong to the same subreddit.
+app.post('/external/mae/read/modmail', async c => {
+  let request: ModmailReadRequest;
+  try {
+    const body = await c.req.text();
+    if (body.length > 1024) return c.json({ ok: false, error: 'body_too_large' }, 413);
+    request = parseModmailReadRequest(JSON.parse(body));
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+  try {
+    const installed = (await reddit.getCurrentSubreddit()).name;
+    if (installed.toLowerCase() !== request.subreddit) {
+      return c.json({ ok: false, error: 'installation_mismatch' }, 403);
+    }
+    if (request.mode === 'list') {
+      const result = await reddit.modMail.getConversations({
+        subreddits: [installed],
+        limit: request.limit,
+        sort: 'recent',
+        state: 'all',
+        ...(request.after === null ? {} : { after: request.after }),
+      });
+      return c.json(projectModmailPage(result, request.subreddit, request.limit));
+    }
+    const result = await reddit.modMail.getConversation({
+      conversationId: request.conversationId, markRead: false,
+    });
+    if (result.conversation === undefined) return c.json({ ok: false, error: 'not_found' }, 404);
+    const conversation = projectModmailConversation(result.conversation, request.subreddit);
+    if (conversation.id !== request.conversationId) {
+      return c.json({ ok: false, error: 'conversation_id_mismatch' }, 502);
+    }
+    return c.json({ protocol: 1, mode: 'detail', subreddit: request.subreddit, data: { conversation } });
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
   }
