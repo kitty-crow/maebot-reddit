@@ -25,6 +25,10 @@ const fakeApi=(called:string[]):AuthoredApi=>({
     called.push('post:'+title+':'+runAs);
     return{id:'t3_abc',subredditName,authorName:'Mae'};
   },
+  crosspost:async({subredditName,postId,runAs})=>{
+    called.push('crosspost:'+postId+':'+runAs);
+    return{id:'t3_mirror',subredditName,authorName:'Mae'};
+  },
   sendPrivateMessage:async({to,subject})=>{called.push('message:'+to+':'+subject);},
   markPrivateMessageRead:async fullname=>{called.push('read:'+fullname);},
 });
@@ -34,7 +38,11 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
       .toBe('self-post');
     expect(parseAuthoredRequest({...base,action:'private-message',recipient:'Alice',
       subject:'Hello',body:'Message'}).action).toBe('private-message');
+    expect(parseAuthoredRequest({...base,action:'crosspost',title:'News',
+      sourcePostId:'t3_source',flairTemplateId:null}).action).toBe('crosspost');
     expect(()=>parseAuthoredRequest({...base,action:'crosspost',title:'News'})).toThrow();
+    expect(()=>parseAuthoredRequest({...base,action:'crosspost',title:'News',
+      sourcePostId:'t1_bad',flairTemplateId:null})).toThrow();
     expect(parseAuthoredRequest({...base,action:'mark-private-message-read',fullname:'t4_abc'}).action)
       .toBe('mark-private-message-read');
     expect(()=>parseAuthoredRequest({...base,action:'mark-private-message-read',fullname:'t1_wrong'}))
@@ -69,6 +77,15 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     await expect(executeAuthoredWrite(request,'catgirlcoin',api,claims))
       .rejects.toThrow('reconciliation');
     expect(called).toEqual(['post:News:APP']);
+  });
+  test('uses native app-authored crossposts with source and author verification',async()=>{
+    const called:string[]=[];
+    const api=fakeApi(called),claims=claimStore();
+    const request=parseAuthoredRequest({...base,action:'crosspost',
+      title:'Mirror',sourcePostId:'t3_source',flairTemplateId:null});
+    expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).postId).toBe('t3_mirror');
+    await expect(executeAuthoredWrite(request,'catgirlcoin',api,claims)).rejects.toThrow('reconciliation');
+    expect(called).toEqual(['crosspost:t3_source:APP']);
   });
   test('messages get idempotent acknowledgements with no second send',async()=>{
     const called:string[]=[];

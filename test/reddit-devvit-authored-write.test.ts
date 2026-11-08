@@ -14,6 +14,10 @@ const message:DevvitAuthoredRequest={
   subreddit:'catgirlcoin',operationId:'canonical-234567',expectedAuthor:'Mae',
   action:'private-message',recipient:'Alice',subject:'Hello',body:'Body',
 };
+const crosspost:DevvitAuthoredRequest={
+  subreddit:'catgirlcoin',operationId:'canonical-456789',expectedAuthor:'Mae',
+  action:'crosspost',title:'Mirror',sourcePostId:'t3_source',flairTemplateId:null,
+};
 const markRead:DevvitAuthoredRequest={
   subreddit:'catgirlcoin',operationId:'canonical-345678',expectedAuthor:'Mae',
   action:'mark-private-message-read',fullname:'t4_abc',
@@ -33,6 +37,16 @@ describe('actor-gated Devvit authored-write transport',()=>{
     expect(await client.mutateAuthored(post)).toEqual({
       protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc123',
     });
+  });
+  test('keeps crosspost source identity distinct from the returned native post ID',async()=>{
+    const fetcher:DevvitExternalFetch=async(_url,init)=>{
+      expect(JSON.parse(String(init.body))).toEqual(crosspost);
+      return new Response(JSON.stringify({
+        protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror',
+      }));
+    };
+    expect(await new DevvitExternalClient(config,fetcher).mutateAuthored(crosspost))
+      .toEqual({protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror'});
   });
   test('supports a distinct guarded private-message write',async()=>{
     const fetcher:DevvitExternalFetch=async(_url,init)=>{

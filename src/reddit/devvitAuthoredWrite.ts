@@ -10,6 +10,8 @@ type Base = {
 export type DevvitAuthoredRequest = Base & (
   | { readonly action: 'self-post'; readonly title: string;
       readonly body: string; readonly flairTemplateId: string | null }
+  | { readonly action: 'crosspost'; readonly title: string;
+      readonly sourcePostId: string; readonly flairTemplateId: string | null }
   | { readonly action: 'private-message'; readonly recipient: string;
       readonly subject: string; readonly body: string }
   | { readonly action: 'mark-private-message-read'; readonly fullname: string }
@@ -42,6 +44,10 @@ export const validateDevvitAuthoredRequest = (request:DevvitAuthoredRequest):voi
     validatePostRequest(request);
     return;
   }
+  if (request.action==='crosspost') {
+    validateCrosspostRequest(request);
+    return;
+  }
   if (request.action==='private-message') {
     validateMessageRequest(request);
     return;
@@ -58,6 +64,16 @@ const validatePostRequest = (request:Extract<DevvitAuthoredRequest,{readonly act
   const id=request.flairTemplateId;
   if (id !== null && (typeof id!=='string' || !templatePattern.test(id))) {
     throw new Error('Invalid Devvit post flair');
+  }
+};
+const validateCrosspostRequest = (
+  request:Extract<DevvitAuthoredRequest,{readonly action:'crosspost'}>,
+):void => {
+  nonempty(request.title,'crosspost title',300);
+  if (!postPattern.test(request.sourcePostId)) throw new Error('Invalid crosspost source ID');
+  const id=request.flairTemplateId;
+  if (id!==null && (typeof id!=='string' || !templatePattern.test(id))) {
+    throw new Error('Invalid crosspost flair template ID');
   }
 };
 const validateMessageRequest = (
@@ -89,7 +105,9 @@ export const parseDevvitAuthoredReceipt = (
   if (status!=='applied' && status!=='already-applied') {
     throw new Error('Devvit authored-write operation is not confirmed');
   }
-  if (request.action==='self-post') return verifyPostReceipt(request.operationId,status,root['postId']);
+  if (request.action==='self-post' || request.action==='crosspost') {
+    return verifyPostReceipt(request.operationId,status,root['postId']);
+  }
   if (root['postId']!==undefined) throw new Error('Unexpected post ID in private-message receipt');
   return {protocol:1,operationId:request.operationId,status};
 };

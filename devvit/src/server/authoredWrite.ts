@@ -13,6 +13,8 @@ type WriteBase = {
 export type AuthoredRequest = WriteBase & (
   | { readonly action: 'self-post'; readonly title: string; readonly body: string;
       readonly flairTemplateId: string | null }
+  | { readonly action: 'crosspost'; readonly title: string;
+      readonly sourcePostId: string; readonly flairTemplateId: string | null }
   | { readonly action: 'private-message'; readonly recipient: string; readonly subject: string;
       readonly body: string }
   | { readonly action: 'mark-private-message-read'; readonly fullname: string }
@@ -21,6 +23,10 @@ export type AuthoredApi = {
   getAppUsername(): Promise<string | null>;
   submitSelf(options: {
     readonly subredditName: string; readonly title: string; readonly text: string;
+    readonly sendreplies: true; readonly runAs: 'APP'; readonly flairId?: string;
+  }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string }>;
+  crosspost(options: {
+    readonly subredditName: string; readonly title: string; readonly postId: string;
     readonly sendreplies: true; readonly runAs: 'APP'; readonly flairId?: string;
   }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string }>;
   sendPrivateMessage(options: {
@@ -62,6 +68,18 @@ const parsePost = (raw: Fields, base: WriteBase): AuthoredRequest => {
   }
   return {...base,action:'self-post',title,body,flairTemplateId};
 };
+const parseCrosspost = (raw: Fields, base: WriteBase): AuthoredRequest => {
+  exact(raw,['action','subreddit','operationId','expectedAuthor','title','sourcePostId','flairTemplateId']);
+  const title=field(raw,'title',300);
+  const sourcePostId=field(raw,'sourcePostId',67);
+  if (!postPattern.test(sourcePostId)) throw new Error('Invalid crosspost source ID');
+  const flairTemplateId=raw['flairTemplateId'];
+  if (flairTemplateId!==null && (typeof flairTemplateId!=='string'
+    || !templatePattern.test(flairTemplateId))) {
+    throw new Error('Invalid crosspost flair template ID');
+  }
+  return {...base,action:'crosspost',title,sourcePostId,flairTemplateId};
+};
 const parseMessage = (raw: Fields, base: WriteBase): AuthoredRequest => {
   exact(raw,['action','subreddit','operationId','expectedAuthor','recipient','subject','body']);
   const recipient=field(raw,'recipient',32);
@@ -92,6 +110,7 @@ export const parseAuthoredRequest = (raw: Json): AuthoredRequest => {
   const base: WriteBase={subreddit,operationId,expectedAuthor};
   const action = raw['action'];
   if (action === 'self-post') return parsePost(raw,base);
+  if (action === 'crosspost') return parseCrosspost(raw,base);
   if (action === 'private-message') return parseMessage(raw,base);
   if (action === 'mark-private-message-read') return parseMarkRead(raw,base);
   throw new Error('Unsupported authored-write operation');
@@ -102,7 +121,7 @@ export const verifyAuthoredIdentity = (actual: string | null, expected: string):
   }
 };
 const priorReceipt = (request: AuthoredRequest): AuthoredReceipt => {
-  if (request.action === 'self-post') {
+  if (request.action === 'self-post' || request.action === 'crosspost') {
     throw new Error('Original native post ID requires reconciliation');
   }
   return {protocol:1,operationId:request.operationId,status:'already-applied'};
@@ -118,11 +137,17 @@ const perform = async (
     await api.markPrivateMessageRead(request.fullname);
     return null;
   }
-  const result = await api.submitSelf({
-    subredditName:installed, title:request.title, text:request.body,
-    sendreplies:true, runAs:'APP',
-    ...(request.flairTemplateId===null?{}:{flairId:request.flairTemplateId}),
-  });
+  const result = request.action === 'crosspost'
+    ? await api.crosspost({
+        subredditName:installed,title:request.title,postId:request.sourcePostId,
+        sendreplies:true,runAs:'APP',
+        ...(request.flairTemplateId===null?{}:{flairId:request.flairTemplateId}),
+      })
+    : await api.submitSelf({
+        subredditName:installed,title:request.title,text:request.body,
+        sendreplies:true,runAs:'APP',
+        ...(request.flairTemplateId===null?{}:{flairId:request.flairTemplateId}),
+      });
   if (!postPattern.test(result.id) || result.subredditName.toLowerCase() !== request.subreddit
     || result.authorName.toLowerCase() !== request.expectedAuthor.toLowerCase()) {
     throw new Error('Submitted post identity or author did not match the canonical request');

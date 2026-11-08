@@ -451,6 +451,13 @@ app.post('/external/mae/write/authored', async c => {
         const post = await reddit.submitPost(options);
         return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
       },
+      crosspost: async options => {
+        const post=await reddit.crosspost({
+          ...options,
+          postId:options.postId as Parameters<typeof reddit.crosspost>[0]['postId'],
+        });
+        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
+      },
       sendPrivateMessage: async options => await reddit.sendPrivateMessage(options),
       markPrivateMessageRead: async fullname => {
         const unread = await reddit.getMessages({type:'unread',limit:1000,pageSize:100}).all();
