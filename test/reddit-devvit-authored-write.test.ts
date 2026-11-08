@@ -14,6 +14,10 @@ const message:DevvitAuthoredRequest={
   subreddit:'catgirlcoin',operationId:'canonical-234567',expectedAuthor:'Mae',
   action:'private-message',recipient:'Alice',subject:'Hello',body:'Body',
 };
+const markRead:DevvitAuthoredRequest={
+  subreddit:'catgirlcoin',operationId:'canonical-345678',expectedAuthor:'Mae',
+  action:'mark-private-message-read',fullname:'t4_abc',
+};
 describe('actor-gated Devvit authored-write transport',()=>{
   test('uses managed authentication and preserves the complete self-post payload',async()=>{
     const fetcher:DevvitExternalFetch=async(url,init)=>{
@@ -39,6 +43,16 @@ describe('actor-gated Devvit authored-write transport',()=>{
     };
     expect(await new DevvitExternalClient(config,fetcher).mutateAuthored(message))
       .toEqual({protocol:1,operationId:message.operationId,status:'applied'});
+  });
+  test('supports individually identified native message-read operations',async()=>{
+    const fetcher:DevvitExternalFetch=async(_url,init)=>{
+      expect(JSON.parse(String(init.body))).toEqual(markRead);
+      return new Response(JSON.stringify({
+        protocol:1,operationId:markRead.operationId,status:'applied',
+      }));
+    };
+    expect(await new DevvitExternalClient(config,fetcher).mutateAuthored(markRead))
+      .toEqual({protocol:1,operationId:markRead.operationId,status:'applied'});
   });
   test('rejects mismatched canonical operation IDs and invalid provider responses',()=>{
     expect(()=>parseDevvitAuthoredReceipt(JSON.stringify({

@@ -15,6 +15,7 @@ export type AuthoredRequest = WriteBase & (
       readonly flairTemplateId: string | null }
   | { readonly action: 'private-message'; readonly recipient: string; readonly subject: string;
       readonly body: string }
+  | { readonly action: 'mark-private-message-read'; readonly fullname: string }
 );
 export type AuthoredApi = {
   getAppUsername(): Promise<string | null>;
@@ -25,6 +26,7 @@ export type AuthoredApi = {
   sendPrivateMessage(options: {
     readonly to: string; readonly subject: string; readonly text: string;
   }): Promise<void>;
+  markPrivateMessageRead(fullname: string): Promise<void>;
 };
 export type AuthoredReceipt = {
   readonly protocol: 1;
@@ -36,6 +38,7 @@ const operationPattern = /^[a-z0-9_-]{10,96}$/iu;
 const namePattern = /^[a-z0-9_-]{2,32}$/iu;
 const templatePattern = /^[0-9a-z_-]{8,96}$/iu;
 const postPattern = /^t3_[a-z0-9]+$/iu;
+const messagePattern = /^t4_[a-z0-9]+$/iu;
 const exact = (fields: Fields, keys: readonly string[]): void => {
   if (Object.keys(fields).some(key => !keys.includes(key))) {
     throw new Error('Unexpected authored-write field');
@@ -68,6 +71,12 @@ const parseMessage = (raw: Fields, base: WriteBase): AuthoredRequest => {
     subject:field(raw,'subject',100), body:field(raw,'body',10_000),
   };
 };
+const parseMarkRead = (raw: Fields, base:WriteBase): AuthoredRequest => {
+  exact(raw,['action','subreddit','operationId','expectedAuthor','fullname']);
+  const fullname=field(raw,'fullname',67);
+  if (!messagePattern.test(fullname)) throw new Error('Invalid native private message ID');
+  return {...base,action:'mark-private-message-read',fullname};
+};
 export const parseAuthoredRequest = (raw: Json): AuthoredRequest => {
   if (raw === null || Array.isArray(raw) || typeof raw !== 'object') {
     throw new Error('Invalid authored-write request');
@@ -84,6 +93,7 @@ export const parseAuthoredRequest = (raw: Json): AuthoredRequest => {
   const action = raw['action'];
   if (action === 'self-post') return parsePost(raw,base);
   if (action === 'private-message') return parseMessage(raw,base);
+  if (action === 'mark-private-message-read') return parseMarkRead(raw,base);
   throw new Error('Unsupported authored-write operation');
 };
 export const verifyAuthoredIdentity = (actual: string | null, expected: string): void => {
@@ -102,6 +112,10 @@ const perform = async (
 ): Promise<string | null> => {
   if (request.action === 'private-message') {
     await api.sendPrivateMessage({to:request.recipient,subject:request.subject,text:request.body});
+    return null;
+  }
+  if (request.action === 'mark-private-message-read') {
+    await api.markPrivateMessageRead(request.fullname);
     return null;
   }
   const result = await api.submitSelf({

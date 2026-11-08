@@ -452,6 +452,12 @@ app.post('/external/mae/write/authored', async c => {
         return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
       },
       sendPrivateMessage: async options => await reddit.sendPrivateMessage(options),
+      markPrivateMessageRead: async fullname => {
+        const unread = await reddit.getMessages({type:'unread',limit:1000,pageSize:100}).all();
+        const match = unread.find(message => message.id === fullname);
+        if (match === undefined) throw new Error('Native message not found in unread inbox');
+        await match.markAsRead();
+      },
     };
     const claims=createModmailClaimStore(redis,'mae:authored:write-claims:v1');
     return c.json(await executeAuthoredWrite(request,installed,api,claims));

@@ -26,6 +26,7 @@ const fakeApi=(called:string[]):AuthoredApi=>({
     return{id:'t3_abc',subredditName,authorName:'Mae'};
   },
   sendPrivateMessage:async({to,subject})=>{called.push('message:'+to+':'+subject);},
+  markPrivateMessageRead:async fullname=>{called.push('read:'+fullname);},
 });
 describe('canonical actor-gated Devvit publishing and messaging',()=>{
   test('accepts only exact self-post and private-message request shapes',()=>{
@@ -34,6 +35,10 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     expect(parseAuthoredRequest({...base,action:'private-message',recipient:'Alice',
       subject:'Hello',body:'Message'}).action).toBe('private-message');
     expect(()=>parseAuthoredRequest({...base,action:'crosspost',title:'News'})).toThrow();
+    expect(parseAuthoredRequest({...base,action:'mark-private-message-read',fullname:'t4_abc'}).action)
+      .toBe('mark-private-message-read');
+    expect(()=>parseAuthoredRequest({...base,action:'mark-private-message-read',fullname:'t1_wrong'}))
+      .toThrow();
     expect(()=>parseAuthoredRequest({...base,action:'private-message',recipient:'Alice',
       subject:'Hello',body:'Message',runAs:'USER'})).toThrow();
   });
@@ -73,6 +78,14 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).status).toBe('applied');
     expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).status).toBe('already-applied');
     expect(called).toEqual(['message:Alice:Hello']);
+  });
+  test('marks an identified native message as read once with canonical identity',async()=>{
+    const called:string[]=[];
+    const api=fakeApi(called),claims=claimStore();
+    const request=parseAuthoredRequest({...base,action:'mark-private-message-read',fullname:'t4_abc'});
+    expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).status).toBe('applied');
+    expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).status).toBe('already-applied');
+    expect(called).toEqual(['read:t4_abc']);
   });
   test('rejects second send after an uncertain provider outcome',async()=>{
     const called:string[]=[];

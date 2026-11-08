@@ -12,6 +12,7 @@ export type DevvitAuthoredRequest = Base & (
       readonly body: string; readonly flairTemplateId: string | null }
   | { readonly action: 'private-message'; readonly recipient: string;
       readonly subject: string; readonly body: string }
+  | { readonly action: 'mark-private-message-read'; readonly fullname: string }
 );
 export type DevvitAuthoredReceipt = {
   readonly protocol: 1;
@@ -24,6 +25,7 @@ const operationPattern=/^[a-z0-9_-]{10,96}$/iu;
 const namePattern=/^[a-z0-9_-]{2,32}$/iu;
 const templatePattern=/^[0-9a-z_-]{8,96}$/iu;
 const postPattern=/^t3_[a-z0-9]+$/iu;
+const messagePattern=/^t4_[a-z0-9]+$/iu;
 const nonempty = (value:string, label:string, max:number):void => {
   if (typeof value !== 'string' || value.length===0 || value.length>max) {
     throw new Error('Invalid Devvit authored-write '+label);
@@ -44,6 +46,10 @@ export const validateDevvitAuthoredRequest = (request:DevvitAuthoredRequest):voi
     validateMessageRequest(request);
     return;
   }
+  if (request.action==='mark-private-message-read') {
+    validateMarkRequest(request);
+    return;
+  }
   throw new Error('Unsupported Devvit authored-write operation');
 };
 const validatePostRequest = (request:Extract<DevvitAuthoredRequest,{readonly action:'self-post'}>):void => {
@@ -60,6 +66,11 @@ const validateMessageRequest = (
   if (!namePattern.test(request.recipient)) throw new Error('Invalid Devvit message recipient');
   nonempty(request.subject,'subject',100);
   nonempty(request.body,'message body',10_000);
+};
+const validateMarkRequest = (
+  request:Extract<DevvitAuthoredRequest,{readonly action:'mark-private-message-read'}>,
+):void => {
+  if (!messagePattern.test(request.fullname)) throw new Error('Invalid native private message ID');
 };
 const nativePostId = (raw:Json|undefined):string => {
   const id=strVal(raw,'native Reddit post ID');
