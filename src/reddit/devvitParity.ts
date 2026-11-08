@@ -50,7 +50,7 @@ export const devvitParity = {
     "inboxDirectMessages": "not-started",
     "unreadDirectMessages": "not-started",
     "sentDirectMessages": "not-started",
-    "modmailConversations": "staged",
+    "modmailConversations": "partial",
     "modmailConversation": "partial",
     "scores": "not-started"
   },

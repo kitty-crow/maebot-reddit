@@ -62,7 +62,7 @@ export const normaliseModmailState = (raw: string | undefined): string => {
 export const projectModmailConversation = <T extends ConversationSource>(
   source: T,
   subreddit: Community,
-): T & { readonly id: string; readonly state: string } => {
+): Omit<T, 'id' | 'state'> & { readonly id: string; readonly state: string } => {
   const id = source.id;
   const owner = source.subreddit?.displayName;
   if (typeof id !== 'string' || !isConversationId(id)) throw new Error('Missing Modmail conversation ID');
@@ -81,7 +81,7 @@ export const projectModmailPage = <T extends ConversationSource>(
   readonly mode: 'list';
   readonly subreddit: Community;
   readonly data: {
-    readonly conversations: Readonly<Record<string, T & { readonly id: string; readonly state: string }>>;
+    readonly conversations: Readonly<Record<string, Omit<T, 'id' | 'state'> & { readonly id: string; readonly state: string }>>;
     readonly after: string | null;
   };
 } => {
@@ -90,7 +90,7 @@ export const projectModmailPage = <T extends ConversationSource>(
     throw new Error('Modmail page contains unexpected or missing conversations');
   }
   const seen = new Set<string>();
-  const conversations: Record<string, T & { readonly id: string; readonly state: string }> = {};
+  const conversations: Record<string, Omit<T, 'id' | 'state'> & { readonly id: string; readonly state: string }> = {};
   for (const id of source.conversationIds) {
     if (!isConversationId(id) || seen.has(id)) throw new Error('Invalid or duplicate Modmail cursor');
     seen.add(id);
