@@ -187,18 +187,19 @@ app.post('/external/mae/write/moderation', async c => {
           : await reddit.getPostById(fullname as Parameters<typeof reddit.getPostById>[0]);
         return source.subredditName;
       },
-      banUser: async options => await reddit.banUser(options),
-      unbanUser: async (username, subreddit) => await reddit.unbanUser(username, subreddit),
-      unmuteUser: async (username, subreddit) => await reddit.unmuteUser(username, subreddit),
+      banUser: async options => await reddit.banUser({ ...options, subredditName: installed.name }),
+      unbanUser: async (username, _subreddit) => await reddit.unbanUser(username, installed.name),
+      unmuteUser: async (username, _subreddit) => await reddit.unmuteUser(username, installed.name),
       remove: async fullname => await reddit.remove(fullname as Parameters<typeof reddit.remove>[0], false),
-      setUserFlair: async options => await reddit.setUserFlair(options),
-      setUserFlairDirect: async options => await reddit.setUserFlair(options),
+      setUserFlair: async options => await reddit.setUserFlair({ ...options, subredditName: installed.name }),
+      setUserFlairDirect: async options => await reddit.setUserFlair({ ...options, subredditName: installed.name }),
       setPostFlair: async options => await reddit.setPostFlair({
-        ...options, postId: options.postId as Parameters<typeof reddit.setPostFlair>[0]['postId'],
+        ...options, subredditName: installed.name,
+        postId: options.postId as Parameters<typeof reddit.setPostFlair>[0]['postId'],
       }),
       createFlairTemplate: async ({ subredditName, kind, template }) => {
         const options = {
-          subredditName, text: template.text, modOnly: template.modOnly,
+          subredditName: installed.name, text: template.text, modOnly: template.modOnly,
           allowUserEdits: template.textEditable,
           ...(template.backgroundColour === null ? {} : { backgroundColor:template.backgroundColour }),
           ...(template.textColour === null ? {} : { textColor:template.textColour }),
