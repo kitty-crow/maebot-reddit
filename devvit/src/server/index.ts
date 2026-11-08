@@ -316,7 +316,7 @@ app.post('/external/mae/write/modnotes', async c => {
     const api:ModNoteApi={
       addModNote:async ({redditId,...options})=>await reddit.addModNote({
         ...options,
-        ...(redditId===undefined?{}:{redditId:redditId as Parameters<typeof reddit.addModNote>[0]['redditId']}),
+        ...(redditId===undefined?{}:{redditId:redditId as `t1_${string}` | `t3_${string}`}),
       }),
       deleteModNote:async options=>await reddit.deleteModNote(options),
     };
@@ -460,7 +460,8 @@ app.post('/external/mae/write/authored', async c => {
       },
       sendPrivateMessage: async options => await reddit.sendPrivateMessage(options),
       markPrivateMessageRead: async fullname => {
-        const unread = await reddit.getMessages({type:'unread',limit:1000,pageSize:100}).all();
+        const listing = await reddit.getMessages({type:'unread',limit:1000,pageSize:100});
+        const unread = await listing.all();
         const match = unread.find(message => message.id === fullname);
         if (match === undefined) throw new Error('Native message not found in unread inbox');
         await match.markAsRead();

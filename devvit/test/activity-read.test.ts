@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { parseActivityRequest, projectRecentComments, type ActivityCommentSource } from '../src/server/activityRead.ts';
+import { parseActivityRequest, projectRecentComments, type ActivityRequest, type ActivityCommentSource } from '../src/server/activityRead.ts';
 
 const request = {
   installation:'catgirlcoin',username:'Alice',communities:['catgirlcoin','nyaonearth'],limit:2,maxScanned:10,
-} as const;
+} satisfies ActivityRequest;
 const comment: ActivityCommentSource = {
   id:'t1_abc',postId:'t3_post',parentId:'t3_post',subredditName:'catgirlcoin',
   authorName:'Alice',body:'Useful observation',permalink:'/r/catgirlcoin/comments/post/example/abc/',

@@ -44,8 +44,8 @@ describe('read-only flair inventory parity', () => {
     expect(requests).toEqual(['first', 't2_abc']);
   });
   test('rejects repeated cursors, duplicate users and missing username', async () => {
-    await expect(readFlairAssignments({ getUserFlair: async () => ({
-      users: [{ user: 'Alice' }], next: 't2_abc',
+    await expect(readFlairAssignments({ getUserFlair: async options => ({
+      users: [{ user: options.after === undefined ? 'Alice' : 'Bob' }], next: 't2_abc',
     }) })).rejects.toThrow('cursor stalled');
     await expect(readFlairAssignments({ getUserFlair: async options => ({
       users: [{ user: 'Alice' }], ...(options.after === undefined ? { next: 't2_abc' } : {}),
