@@ -51,6 +51,14 @@ describe('Devvit post-feed projection', () => {
     expect(result.flairTemplateId).toBeNull();
     expect(result.crosspostParent).toBe('t3_parent');
   });
+  test('maps SDK flair properties explicitly set to undefined to null', () => {
+    const result = projectPost({
+      ...post,
+      flair: { templateId: undefined, text: undefined },
+    });
+    expect(result.flairTemplateId).toBeNull();
+    expect(result.flairText).toBeNull();
+  });
   test('allows only recognised community feeds with bounded integer limits', () => {
     expect(parseFeedRequest({ subreddit: 'nyaonearth', feed: 'hot', limit: 25 }))
       .toEqual({ subreddit: 'nyaonearth', feed: 'hot', limit: 25 });

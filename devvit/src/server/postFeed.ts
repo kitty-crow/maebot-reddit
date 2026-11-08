@@ -15,7 +15,7 @@ export type PostSource = {
   readonly createdAt: Date;
   readonly body: string | undefined;
   readonly url: string;
-  readonly flair: { readonly templateId?: string; readonly text?: string } | undefined;
+  readonly flair: { readonly templateId?: string | undefined; readonly text?: string | undefined } | undefined;
   readonly stickied: boolean;
   readonly locked: boolean;
   readonly nsfw: boolean;
