@@ -51,10 +51,13 @@ const mediaUrl = (value: string): string | null => {
   const clean = value.replaceAll('&amp;', '&').trim();
   return /^https?:\/\//iu.test(clean) ? clean : null;
 };
+const addMedia = (value: string, output: Set<string>): void => {
+  const url = mediaUrl(value);
+  if (url !== null) output.add(url);
+};
 const collectMedia = (value: Json, output: Set<string>): void => {
   if (typeof value === 'string') {
-    const url = mediaUrl(value);
-    if (url !== null) output.add(url);
+    addMedia(value, output);
     return;
   }
   if (Array.isArray(value)) {
@@ -73,10 +76,7 @@ const postMedia = (post: PostSource): readonly string[] => {
     if (url !== null) urls.add(url);
   }
   const thumbnail = post.thumbnail?.url;
-  if (thumbnail !== undefined) {
-    const url = mediaUrl(thumbnail);
-    if (url !== null) urls.add(url);
-  }
+  if (thumbnail !== undefined) addMedia(thumbnail, urls);
   if (post.secureMedia !== undefined) {
     collectMedia(JSON.parse(JSON.stringify(post.secureMedia)) as Json, urls);
   }
