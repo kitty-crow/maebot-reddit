@@ -64,6 +64,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadActivity": {
+        "endpoint": "/external/mae/read/activity",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },

@@ -85,7 +85,7 @@ export const devvitParity = {
     "submitGallery": "blocked"
   },
   "modNotes": {
-    "recentCommentsInCommunities": "blocked",
+    "recentCommentsInCommunities": "partial",
     "addModNote": "partial",
     "deleteModNote": "partial"
   },

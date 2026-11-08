@@ -1,5 +1,6 @@
 import { reddit, redis } from '@devvit/web/server';
 import { parseInspectionRequest, projectSubreddit, projectPostScore, type InspectionRequest } from './inspectionRead.ts';
+import { parseActivityRequest, projectRecentComments, type ActivityRequest } from './activityRead.ts';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
 import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
 import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi, type NoteRequest } from './modNotes.ts';
@@ -363,6 +364,33 @@ app.post('/external/mae/read/inspection', async c => {
       scores.push(projectPostScore(post,request.subreddit,fullname));
     }
     return c.json({protocol:1,subreddit:request.subreddit,kind:request.kind,scores});
+  } catch {
+    return c.json({ok:false,error:'reddit_unavailable'},503);
+  }
+});
+
+// This is a preview for the legacy member Mod Notes comment assessor. The SDK
+// does not expose all original comment link-context fields, so no live routing.
+app.post('/external/mae/read/activity', async c => {
+  let request: ActivityRequest;
+  try {
+    const body=await c.req.text();
+    if (body.length > 1024) return c.json({ok:false,error:'body_too_large'},413);
+    request=parseActivityRequest(JSON.parse(body));
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed=await reddit.getCurrentSubreddit();
+    if (installed.name.toLowerCase() !== request.installation) {
+      return c.json({ok:false,error:'installation_mismatch'},403);
+    }
+    const comments=await reddit.getCommentsByUser({
+      username:request.username,sort:'new',timeframe:'all',
+      limit:request.maxScanned,pageSize:100,
+    }).all();
+    return c.json({protocol:1,installation:request.installation,username:request.username,
+      comments:projectRecentComments(comments,request)});
   } catch {
     return c.json({ok:false,error:'reddit_unavailable'},503);
   }
