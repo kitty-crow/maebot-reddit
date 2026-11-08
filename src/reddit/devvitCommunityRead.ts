@@ -4,7 +4,7 @@ import type { RedditModerator, RedditRule } from './types.ts';
 import type { RedditRelationshipUser } from './decode.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
 
-export type DevvitCommunityKind = 'moderators' | 'local-rules' | 'banned' | 'muted';
+export type DevvitCommunityKind = 'moderators' | 'local-rules' | 'banned' | 'muted' | 'banned-user' | 'muted-user';
 
 const rows = (body: string, subreddit: DevvitCommunity, kind: DevvitCommunityKind): readonly Json[] => {
   if (body.length > 131_072) throw new Error('Devvit community response exceeds safe maximum');
