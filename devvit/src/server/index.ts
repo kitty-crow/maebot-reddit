@@ -9,6 +9,7 @@ const app = new Hono();
 app.post('/external/mae/health', async c => {
   try {
     const account = await reddit.getAppUser();
+    if (account === undefined) return c.json({ ok: false, error: 'app_account_unavailable' }, 503);
     return c.json(healthResponse(account.username));
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
