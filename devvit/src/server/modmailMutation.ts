@@ -42,6 +42,19 @@ const assertKeys = (raw: Readonly<Record<string, Json>>, allowed: readonly strin
   if (Object.keys(raw).some(key => !allowed.includes(key))) throw new Error('Unsupported Modmail mutation field');
 };
 
+const parseMuteMutation = (
+  raw: Readonly<Record<string, Json>>,
+  subreddit: Community,
+  conversationId: string,
+  operationId: string,
+  base: readonly string[],
+): ModmailMutation => {
+  assertKeys(raw, [...base, 'numHours']);
+  const numHours = raw['numHours'];
+  if (numHours !== 72 && numHours !== 168 && numHours !== 672) throw new Error('Invalid Modmail mute duration');
+  return { action: 'mute', subreddit, conversationId, operationId, numHours };
+};
+
 export const parseModmailMutation = (raw: Json): ModmailMutation => {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Expected a Modmail mutation object');
   const subreddit = raw['subreddit'];
@@ -56,12 +69,7 @@ export const parseModmailMutation = (raw: Json): ModmailMutation => {
     assertKeys(raw, base);
     return { action, subreddit, conversationId, operationId };
   }
-  if (action === 'mute') {
-    assertKeys(raw, [...base, 'numHours']);
-    const numHours = raw['numHours'];
-    if (numHours !== 72 && numHours !== 168 && numHours !== 672) throw new Error('Invalid Modmail mute duration');
-    return { action, subreddit, conversationId, operationId, numHours };
-  }
+  if (action === 'mute') return parseMuteMutation(raw, subreddit, conversationId, operationId, base);
   if (action !== 'reply') throw new Error('Unsupported Modmail mutation action');
   assertKeys(raw, [...base, 'body', 'isAuthorHidden', 'isInternal']);
   const body = requiredText(raw['body'], 'body').trim();
