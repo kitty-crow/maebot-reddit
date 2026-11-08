@@ -431,7 +431,7 @@ app.post('/external/mae/write/authored', async c => {
   let request: AuthoredRequest;
   try {
     const body = await c.req.text();
-    if (body.length > 48_000) return c.json({ok:false,error:'body_too_large'},413);
+    if (body.length > 300_000) return c.json({ok:false,error:'body_too_large'},413);
     request = parseAuthoredRequest(JSON.parse(body));
   } catch {
     return c.json({ok:false,error:'invalid_request'},400);
@@ -449,14 +449,14 @@ app.post('/external/mae/write/authored', async c => {
       getAppUsername: async () => (await reddit.getAppUser())?.username ?? null,
       submitSelf: async options => {
         const post = await reddit.submitPost(options);
-        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
+        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName,permalink:post.permalink};
       },
       crosspost: async options => {
         const post=await reddit.crosspost({
           ...options,
           postId:options.postId as Parameters<typeof reddit.crosspost>[0]['postId'],
         });
-        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
+        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName,permalink:post.permalink};
       },
       sendPrivateMessage: async options => await reddit.sendPrivateMessage(options),
       markPrivateMessageRead: async fullname => {

@@ -21,6 +21,7 @@ export type DevvitAuthoredReceipt = {
   readonly operationId: string;
   readonly status: 'applied' | 'already-applied';
   readonly postId?: string;
+  readonly postPermalink?: string;
 };
 
 const operationPattern=/^[a-z0-9_-]{10,96}$/iu;
@@ -93,6 +94,14 @@ const nativePostId = (raw:Json|undefined):string => {
   if (!postPattern.test(id)) throw new Error('Invalid native Reddit post identity');
   return id;
 };
+const nativePostPermalink = (raw:Json|undefined, postId:string):string => {
+  const link=strVal(raw,'native Reddit post permalink');
+  if (link.length===0 || link.length>2048
+    || !link.includes('/comments/'+postId.slice(3)+'/')) {
+    throw new Error('Invalid native Reddit post permalink');
+  }
+  return link;
+};
 export const parseDevvitAuthoredReceipt = (
   body:string, request:DevvitAuthoredRequest,
 ):DevvitAuthoredReceipt => {
@@ -106,14 +115,19 @@ export const parseDevvitAuthoredReceipt = (
     throw new Error('Devvit authored-write operation is not confirmed');
   }
   if (request.action==='self-post' || request.action==='crosspost') {
-    return verifyPostReceipt(request.operationId,status,root['postId']);
+    return verifyPostReceipt(request.operationId,status,root['postId'],root['postPermalink']);
   }
-  if (root['postId']!==undefined) throw new Error('Unexpected post ID in private-message receipt');
+  if (root['postId']!==undefined || root['postPermalink']!==undefined) {
+    throw new Error('Unexpected post metadata in private-message receipt');
+  }
   return {protocol:1,operationId:request.operationId,status};
 };
 const verifyPostReceipt = (
   operationId:string, status:'applied'|'already-applied', raw:Json|undefined,
+  rawPermalink:Json|undefined,
 ):DevvitAuthoredReceipt => {
   if (status!=='applied') throw new Error('Original post identity requires reconciliation');
-  return {protocol:1,operationId,status,postId:nativePostId(raw)};
+  const postId=nativePostId(raw);
+  const postPermalink=nativePostPermalink(rawPermalink,postId);
+  return {protocol:1,operationId,status,postId,postPermalink};
 };

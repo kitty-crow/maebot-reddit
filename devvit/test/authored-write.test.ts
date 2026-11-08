@@ -23,11 +23,11 @@ const fakeApi=(called:string[]):AuthoredApi=>({
   getAppUsername:async()=>'Mae',
   submitSelf:async({subredditName,title,runAs})=>{
     called.push('post:'+title+':'+runAs);
-    return{id:'t3_abc',subredditName,authorName:'Mae'};
+    return{id:'t3_abc',subredditName,authorName:'Mae',permalink:'/r/catgirlcoin/comments/abc/news/'};
   },
   crosspost:async({subredditName,postId,runAs})=>{
     called.push('crosspost:'+postId+':'+runAs);
-    return{id:'t3_mirror',subredditName,authorName:'Mae'};
+    return{id:'t3_mirror',subredditName,authorName:'Mae',permalink:'/r/catgirlcoin/comments/mirror/news/'};
   },
   sendPrivateMessage:async({to,subject})=>{called.push('message:'+to+':'+subject);},
   markPrivateMessageRead:async fullname=>{called.push('read:'+fullname);},
@@ -73,7 +73,9 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     const api=fakeApi(called), claims=claimStore();
     const request=parseAuthoredRequest({...base,action:'self-post',title:'News',
       body:'Content',flairTemplateId:null});
-    expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).postId).toBe('t3_abc');
+    expect(await executeAuthoredWrite(request,'catgirlcoin',api,claims)).toMatchObject({
+      postId:'t3_abc',postPermalink:'/r/catgirlcoin/comments/abc/news/',
+    });
     await expect(executeAuthoredWrite(request,'catgirlcoin',api,claims))
       .rejects.toThrow('reconciliation');
     expect(called).toEqual(['post:News:APP']);
@@ -83,7 +85,9 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
     const api=fakeApi(called),claims=claimStore();
     const request=parseAuthoredRequest({...base,action:'crosspost',
       title:'Mirror',sourcePostId:'t3_source',flairTemplateId:null});
-    expect((await executeAuthoredWrite(request,'catgirlcoin',api,claims)).postId).toBe('t3_mirror');
+    expect(await executeAuthoredWrite(request,'catgirlcoin',api,claims)).toMatchObject({
+      postId:'t3_mirror',postPermalink:'/r/catgirlcoin/comments/mirror/news/',
+    });
     await expect(executeAuthoredWrite(request,'catgirlcoin',api,claims)).rejects.toThrow('reconciliation');
     expect(called).toEqual(['crosspost:t3_source:APP']);
   });
@@ -119,7 +123,7 @@ describe('canonical actor-gated Devvit publishing and messaging',()=>{
   });
   test('rejects a returned post under the wrong author without claiming success',async()=>{
     const api:AuthoredApi={...fakeApi([]),submitSelf:async()=>({
-      id:'t3_abc',subredditName:'catgirlcoin',authorName:'NotMae',
+      id:'t3_abc',subredditName:'catgirlcoin',authorName:'NotMae',permalink:'/r/catgirlcoin/comments/abc/news/',
     })};
     const request=parseAuthoredRequest({...base,action:'self-post',
       title:'News',body:'Content',flairTemplateId:null});

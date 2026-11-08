@@ -30,23 +30,23 @@ describe('actor-gated Devvit authored-write transport',()=>{
       expect(new Headers(init.headers).get('authorization')).toBe('bearer '+config.managedToken);
       expect(JSON.parse(String(init.body))).toEqual(post);
       return new Response(JSON.stringify({
-        protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc123',
+        protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc123',postPermalink:'/r/catgirlcoin/comments/abc123/news/',
       }));
     };
     const client=new DevvitExternalClient(config,fetcher);
     expect(await client.mutateAuthored(post)).toEqual({
-      protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc123',
+      protocol:1,operationId:post.operationId,status:'applied',postId:'t3_abc123',postPermalink:'/r/catgirlcoin/comments/abc123/news/',
     });
   });
   test('keeps crosspost source identity distinct from the returned native post ID',async()=>{
     const fetcher:DevvitExternalFetch=async(_url,init)=>{
       expect(JSON.parse(String(init.body))).toEqual(crosspost);
       return new Response(JSON.stringify({
-        protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror',
+        protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror',postPermalink:'/r/catgirlcoin/comments/mirror/news/',
       }));
     };
     expect(await new DevvitExternalClient(config,fetcher).mutateAuthored(crosspost))
-      .toEqual({protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror'});
+      .toEqual({protocol:1,operationId:crosspost.operationId,status:'applied',postId:'t3_mirror',postPermalink:'/r/catgirlcoin/comments/mirror/news/'});
   });
   test('supports a distinct guarded private-message write',async()=>{
     const fetcher:DevvitExternalFetch=async(_url,init)=>{

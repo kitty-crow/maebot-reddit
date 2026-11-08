@@ -24,11 +24,11 @@ export type AuthoredApi = {
   submitSelf(options: {
     readonly subredditName: string; readonly title: string; readonly text: string;
     readonly sendreplies: true; readonly runAs: 'APP'; readonly flairId?: string;
-  }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string }>;
+  }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string; readonly permalink: string }>;
   crosspost(options: {
     readonly subredditName: string; readonly title: string; readonly postId: string;
     readonly sendreplies: true; readonly runAs: 'APP'; readonly flairId?: string;
-  }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string }>;
+  }): Promise<{ readonly id: string; readonly subredditName: string; readonly authorName: string; readonly permalink: string }>;
   sendPrivateMessage(options: {
     readonly to: string; readonly subject: string; readonly text: string;
   }): Promise<void>;
@@ -39,6 +39,7 @@ export type AuthoredReceipt = {
   readonly operationId: string;
   readonly status: 'applied' | 'already-applied';
   readonly postId?: string;
+  readonly postPermalink?: string;
 };
 const operationPattern = /^[a-z0-9_-]{10,96}$/iu;
 const namePattern = /^[a-z0-9_-]{2,32}$/iu;
@@ -128,7 +129,7 @@ const priorReceipt = (request: AuthoredRequest): AuthoredReceipt => {
 };
 const perform = async (
   request: AuthoredRequest, api: AuthoredApi, installed: string,
-): Promise<string | null> => {
+): Promise<{readonly id:string;readonly permalink:string} | null> => {
   if (request.action === 'private-message') {
     await api.sendPrivateMessage({to:request.recipient,subject:request.subject,text:request.body});
     return null;
@@ -152,7 +153,11 @@ const perform = async (
     || result.authorName.toLowerCase() !== request.expectedAuthor.toLowerCase()) {
     throw new Error('Submitted post identity or author did not match the canonical request');
   }
-  return result.id;
+  if (result.permalink.length===0 || result.permalink.length>2048
+    || !result.permalink.includes('/comments/'+result.id.slice(3)+'/')) {
+    throw new Error('Submitted post returned invalid native permalink');
+  }
+  return {id:result.id,permalink:result.permalink};
 };
 export const executeAuthoredWrite = async (
   request: AuthoredRequest, installed: string, api: AuthoredApi,
@@ -167,9 +172,10 @@ export const executeAuthoredWrite = async (
   if (claim === 'conflict') throw new Error('Canonical authored operation ID reused');
   if (claim === 'pending') throw new Error('Authored operation outcome requires reconciliation');
   if (claim === 'applied') return priorReceipt(request);
-  const postId=await perform(request,api,installed);
+  const result=await perform(request,api,installed);
   await claims.complete(request.operationId,fingerprint);
-  return postId===null
+  return result===null
     ? {protocol:1,operationId:request.operationId,status:'applied'}
-    : {protocol:1,operationId:request.operationId,status:'applied',postId};
+    : {protocol:1,operationId:request.operationId,status:'applied',
+        postId:result.id,postPermalink:result.permalink};
 };
