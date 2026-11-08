@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { DevvitExternalClient, type DevvitExternalFetch } from '../src/reddit/devvitExternal.ts';
-import { parseDevvitNoteListing, parseDevvitNoteReceipt } from '../src/reddit/devvitModNotes.ts';
+import { parseDevvitNoteListing, parseDevvitNoteReceipt, type DevvitModNoteRequest } from '../src/reddit/devvitModNotes.ts';
 
 const subreddit='catgirlcoin';
 const username='Alice';
@@ -17,9 +17,9 @@ describe('Devvit native Mod Notes transport',()=>{
     expect(()=>parseDevvitNoteListing(body,subreddit,'Bob',100)).toThrow();
   });
   test('requires the exact created Mod Note ID in successful write receipts',()=>{
-    const request={
-      subreddit,username,operationId,kind:'add' as const,
-      note:'Helpful',label:'HELPFUL_USER' as const,redditId:null,
+    const request: DevvitModNoteRequest = {
+      subreddit,username,operationId,kind:'add',
+      note:'Helpful',label:'HELPFUL_USER',redditId:null,
     };
     expect(parseDevvitNoteReceipt(JSON.stringify({
       protocol:1,operationId,status:'applied',noteId:'ModNote_abcd',
