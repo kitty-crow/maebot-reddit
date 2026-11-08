@@ -3,6 +3,7 @@ import { parseDevvitPostFeed, type DevvitPostFeedRequest } from './devvitPostFee
 import type { RedditPost, RedditModerator, RedditRule } from './types.ts';
 import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships, type DevvitCommunityKind } from './devvitCommunityRead.ts';
 import type { RedditRelationshipUser } from './decode.ts';
+import { validateDevvitModerationRequest, parseDevvitModerationReceipt, type DevvitModerationRequest, type DevvitModerationReceipt } from './devvitModerationMutation.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
 import { parseDevvitModmailPage, parseDevvitModmailDetail, type DevvitModmailPageRequest } from './devvitModmailRead.ts';
 import { validateModmailMutation, parseModmailMutationReceipt, type DevvitModmailMutation, type DevvitMutationReceipt } from './devvitModmailMutation.ts';
@@ -201,6 +202,28 @@ export class DevvitExternalClient {
       throw new Error('Devvit Modmail mutation HTTP ' + response.status + '; reconcile before retry');
     }
     return parseModmailMutationReceipt(await response.text(), request.operationId);
+  }
+
+  // Still preview-only. Mae's canonical state and mutation gate are not rewired.
+  // Network and HTTP errors must never trigger an automatic retry of a write.
+  public async mutateModeration(request: DevvitModerationRequest): Promise<DevvitModerationReceipt> {
+    validateDevvitModerationRequest(request);
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/write/moderation', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit moderation outcome uncertain; reconcile before retry');
+    }
+    if (!response.ok) throw new Error('Devvit moderation HTTP ' + response.status + '; reconcile before retry');
+    return parseDevvitModerationReceipt(await response.text(), request.operationId);
   }
 
 }
