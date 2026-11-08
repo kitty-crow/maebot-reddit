@@ -1,6 +1,7 @@
 import { reddit, redis } from '@devvit/web/server';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
 import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
+import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi } from './modNotes.ts';
 import { createModmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
@@ -264,6 +265,58 @@ app.post('/external/mae/read/flair', async c => {
       assignment: matches[0] === undefined ? null : projectFlairAssignment(matches[0]) });
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
+  }
+});
+
+// Native Mod Notes read/write previews. The canonical Bun store still decides
+// what to publish; no production code invokes these operations.
+app.post('/external/mae/read/modnotes', async c => {
+  let request;
+  try {
+    const body=await c.req.text();
+    if(body.length>1024)return c.json({ok:false,error:'body_too_large'},413);
+    request=parseModNoteRequest(JSON.parse(body));
+    if(request.kind!=='list')return c.json({ok:false,error:'invalid_request'},400);
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed=(await reddit.getCurrentSubreddit()).name;
+    if(installed.toLowerCase()!==request.subreddit)return c.json({ok:false,error:'installation_mismatch'},403);
+    const notes=await reddit.getModNotes({
+      subreddit:installed,user:request.username,filter:'NOTE',limit:request.limit,
+    }).get(request.limit);
+    return c.json({protocol:1,subreddit:request.subreddit,kind:'list',username:request.username,
+      notes:notes.map(note=>projectModNote(note,request.subreddit,request.username))});
+  } catch {
+    return c.json({ok:false,error:'reddit_unavailable'},503);
+  }
+});
+app.post('/external/mae/write/modnotes', async c => {
+  let request;
+  try {
+    const body=await c.req.text();
+    if(body.length>12_288)return c.json({ok:false,error:'body_too_large'},413);
+    request=parseModNoteRequest(JSON.parse(body));
+    if(request.kind==='list')return c.json({ok:false,error:'invalid_request'},400);
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed=(await reddit.getCurrentSubreddit()).name;
+    if(installed.toLowerCase()!==request.subreddit)return c.json({ok:false,error:'installation_mismatch'},403);
+    const api:ModNoteApi={
+      addModNote:async options=>await reddit.addModNote({
+        ...options,
+        ...(options.redditId===undefined?{}:{redditId:options.redditId as Parameters<typeof reddit.addModNote>[0]['redditId']}),
+      }),
+      deleteModNote:async options=>await reddit.deleteModNote(options),
+    };
+    const receipt=await executeModNoteWrite(request,api,
+      createModmailClaimStore(redis,'mae:modnotes:write-claims:v1'),installed);
+    return c.json(receipt);
+  } catch {
+    return c.json({ok:false,error:'write_not_confirmed_reconcile_before_retry'},409);
   }
 });
 

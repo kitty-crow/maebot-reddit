@@ -46,6 +46,18 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadModNotes": {
+        "endpoint": "/external/mae/read/modnotes",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeWriteModNotes": {
+        "endpoint": "/external/mae/write/modnotes",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },
