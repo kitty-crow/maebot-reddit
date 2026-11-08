@@ -11,6 +11,8 @@ import type { ModmailConversation, ModmailConversationPage } from '../modmail/ty
 import { parseDevvitNoteListing, parseDevvitNoteReceipt, validateDevvitNoteWrite, type DevvitModNoteRequest, type DevvitNativeNote, type DevvitNoteReceipt } from './devvitModNotes.ts';
 import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlairAssignment, type DevvitFlairKind } from './devvitFlairRead.ts';
 import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
+import { parseDevvitRecentComments, type DevvitActivityRequest } from './devvitActivityRead.ts';
+import type { RedditComment } from './types.ts';
 import { parseDevvitSubreddit, parseDevvitPostScores } from './devvitInspectionRead.ts';
 import type { RedditSubreddit, RedditThingScore } from './types.ts';
 
@@ -360,6 +362,41 @@ export class DevvitExternalClient {
     if (new Set(fullnames).size!==fullnames.length) throw new Error('Duplicate post score ID');
     const request={subreddit,kind:'post-scores' as const,fullnames};
     return parseDevvitPostScores(await this.inspect(request),request);
+  }
+
+  // Read-only member Mod Notes assessment preview. The native SDK does not
+  // expose all fields from the old Reddit comment response, so not a cutover.
+  public async readRecentUserComments(request: DevvitActivityRequest): Promise<readonly RedditComment[]> {
+    const communities=request.communities;
+    if (request.installation !== 'catgirlcoin' && request.installation !== 'nyaonearth') {
+      throw new Error('Invalid Devvit activity installation');
+    }
+    if (!/^[a-z0-9_-]{1,32}$/iu.test(request.username)
+      || communities.length<1 || communities.length>2
+      || communities.some(value=>value!=='catgirlcoin'&&value!=='nyaonearth')) {
+      throw new Error('Invalid Devvit activity communities or username');
+    }
+    if (!Number.isInteger(request.limit) || request.limit<1 || request.limit>100
+      || !Number.isInteger(request.maxScanned) || request.maxScanned<request.limit
+      || request.maxScanned>1000) {
+      throw new Error('Invalid Devvit activity scan limits');
+    }
+    let response:Response;
+    try {
+      response=await this.fetcher(this.baseUrl+'/external/mae/read/activity',{
+        method:'POST',
+        headers:{
+          authorization:'bearer '+this.token,
+          'content-type':'application/json',
+          accept:'application/json',
+        },
+        body:JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit activity endpoint could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit activity endpoint returned HTTP '+response.status);
+    return parseDevvitRecentComments(await response.text(),request);
   }
 
 }
