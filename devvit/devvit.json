@@ -58,6 +58,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeInspection": {
+        "endpoint": "/external/mae/read/inspection",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },

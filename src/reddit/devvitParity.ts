@@ -29,7 +29,7 @@ export const devvitParity = {
   "read": {
     "rate": "local",
     "me": "blocked",
-    "subreddit": "not-started",
+    "subreddit": "staged",
     "moderators": "staged",
     "bannedUsers": "staged",
     "bannedUser": "staged",
@@ -52,7 +52,7 @@ export const devvitParity = {
     "sentDirectMessages": "not-started",
     "modmailConversations": "partial",
     "modmailConversation": "partial",
-    "scores": "not-started"
+    "scores": "partial"
   },
   "mutation": {
     "rate": "local",

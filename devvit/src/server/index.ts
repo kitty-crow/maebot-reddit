@@ -1,4 +1,5 @@
 import { reddit, redis } from '@devvit/web/server';
+import { parseInspectionRequest, projectSubreddit, projectPostScore, type InspectionRequest } from './inspectionRead.ts';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
 import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
 import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi, type NoteRequest } from './modNotes.ts';
@@ -321,6 +322,43 @@ app.post('/external/mae/write/modnotes', async c => {
     return c.json(receipt);
   } catch {
     return c.json({ok:false,error:'write_not_confirmed_reconcile_before_retry'},409);
+  }
+});
+
+// Non-mutating inspection of the installed subreddit and requested posts.
+// Comment score parity is intentionally not claimed because Devvit's Comment
+// model omits the archived flag from Mae's original /api/info response.
+app.post('/external/mae/read/inspection', async c => {
+  let request: InspectionRequest;
+  try {
+    const body = await c.req.text();
+    if (body.length > 2048) return c.json({ok:false,error:'body_too_large'},413);
+    request = parseInspectionRequest(JSON.parse(body));
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed = await reddit.getCurrentSubreddit();
+    if (installed.name.toLowerCase() !== request.subreddit) {
+      return c.json({ok:false,error:'installation_mismatch'},403);
+    }
+    if (request.kind === 'subreddit') {
+      const appUser = await reddit.getAppUser();
+      if (appUser === undefined) throw new Error('Reddit app identity missing');
+      const mods = await installed.getModerators().all();
+      if (mods.length >= 1000) throw new Error('Moderator listing may be incomplete');
+      const isMod = mods.some(mod => mod.username.toLowerCase() === appUser.username.toLowerCase());
+      return c.json({protocol:1,subreddit:request.subreddit,kind:request.kind,
+        data:projectSubreddit(installed,request.subreddit,isMod)});
+    }
+    const scores = [];
+    for (const fullname of request.fullnames) {
+      const post = await reddit.getPostById(fullname as Parameters<typeof reddit.getPostById>[0]);
+      scores.push(projectPostScore(post,request.subreddit,fullname));
+    }
+    return c.json({protocol:1,subreddit:request.subreddit,kind:request.kind,scores});
+  } catch {
+    return c.json({ok:false,error:'reddit_unavailable'},503);
   }
 });
 
