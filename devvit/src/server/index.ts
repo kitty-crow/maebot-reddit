@@ -1,7 +1,7 @@
 import { reddit, redis } from '@devvit/web/server';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
 import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
-import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi } from './modNotes.ts';
+import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi, type NoteRequest } from './modNotes.ts';
 import { createModmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
@@ -271,12 +271,13 @@ app.post('/external/mae/read/flair', async c => {
 // Native Mod Notes read/write previews. The canonical Bun store still decides
 // what to publish; no production code invokes these operations.
 app.post('/external/mae/read/modnotes', async c => {
-  let request;
+  let request: Extract<NoteRequest, { readonly kind: 'list' }>;
   try {
     const body=await c.req.text();
     if(body.length>1024)return c.json({ok:false,error:'body_too_large'},413);
-    request=parseModNoteRequest(JSON.parse(body));
-    if(request.kind!=='list')return c.json({ok:false,error:'invalid_request'},400);
+    const parsed=parseModNoteRequest(JSON.parse(body));
+    if(parsed.kind!=='list')return c.json({ok:false,error:'invalid_request'},400);
+    request=parsed;
   } catch {
     return c.json({ok:false,error:'invalid_request'},400);
   }
@@ -293,12 +294,13 @@ app.post('/external/mae/read/modnotes', async c => {
   }
 });
 app.post('/external/mae/write/modnotes', async c => {
-  let request;
+  let request: Extract<NoteRequest, { readonly kind: 'add' | 'delete' }>;
   try {
     const body=await c.req.text();
     if(body.length>12_288)return c.json({ok:false,error:'body_too_large'},413);
-    request=parseModNoteRequest(JSON.parse(body));
-    if(request.kind==='list')return c.json({ok:false,error:'invalid_request'},400);
+    const parsed=parseModNoteRequest(JSON.parse(body));
+    if(parsed.kind==='list')return c.json({ok:false,error:'invalid_request'},400);
+    request=parsed;
   } catch {
     return c.json({ok:false,error:'invalid_request'},400);
   }
