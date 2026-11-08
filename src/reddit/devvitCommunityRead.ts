@@ -50,6 +50,16 @@ export const parseDevvitLocalRules = (body: string, subreddit: DevvitCommunity):
     };
   });
 
+const relationship = (value: Json, index: number): RedditRelationshipUser => {
+  const row = mapVal(value, 'Devvit relationship ' + index);
+  const username = strVal(row['username'], 'relationship.username');
+  if (!/^[a-z0-9_-]+$/iu.test(username)) throw new Error('Invalid Devvit relationship username');
+  const date = numVal(row['date'], 'relationship.date');
+  if (date < 0) throw new Error('Invalid Devvit relationship timestamp');
+  const note = row['note'];
+  if (note !== null && typeof note !== 'string') throw new Error('Invalid Devvit relationship note');
+  return { username, note, date };
+};
 export const parseDevvitRelationships = (
   body: string,
   subreddit: DevvitCommunity,
@@ -57,16 +67,27 @@ export const parseDevvitRelationships = (
 ): readonly RedditRelationshipUser[] => {
   const seen = new Set<string>();
   return rows(body, subreddit, kind).map((value, index): RedditRelationshipUser => {
-    const row = mapVal(value, 'Devvit relationship ' + index);
-    const username = strVal(row['username'], 'relationship.username');
-    if (!/^[a-z0-9_-]+$/iu.test(username) || seen.has(username.toLowerCase())) {
-      throw new Error('Invalid or duplicate Devvit relationship username');
-    }
-    seen.add(username.toLowerCase());
-    const date = numVal(row['date'], 'relationship.date');
-    if (date < 0) throw new Error('Invalid Devvit relationship timestamp');
-    const note = row['note'];
-    if (note !== null && typeof note !== 'string') throw new Error('Invalid Devvit relationship note');
-    return { username, note, date };
+    const item = relationship(value, index);
+    if (seen.has(item.username.toLowerCase())) throw new Error('Duplicate Devvit relationship user');
+    seen.add(item.username.toLowerCase());
+    return item;
   });
+};
+export const parseDevvitSingleRelationship = (
+  body: string,
+  subreddit: DevvitCommunity,
+  kind: 'banned-user' | 'muted-user',
+  username: string,
+): RedditRelationshipUser | null => {
+  if (body.length > 16_384) throw new Error('Devvit relationship lookup response is too large');
+  const data = parseMap(body);
+  if (data['protocol'] !== 1 || data['subreddit'] !== subreddit || data['kind'] !== kind) {
+    throw new Error('Devvit relationship lookup mismatched installation');
+  }
+  if (data['user'] === null) return null;
+  const item = relationship(data['user'] ?? null, 0);
+  if (item.username.toLowerCase() !== username.toLowerCase()) {
+    throw new Error('Devvit relationship lookup returned the wrong user');
+  }
+  return item;
 };

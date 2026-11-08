@@ -5,7 +5,7 @@ import { createModmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
 import { parseModmailReadRequest, projectModmailConversation, projectModmailPage, type ModmailReadRequest } from './modmailRead.ts';
-import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, type CommunityReadRequest } from './communityRead.ts';
+import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, selectRelationship, type CommunityReadRequest } from './communityRead.ts';
 import { parseFlairRequest, projectFlairTemplate, projectFlairAssignment, readFlairAssignments, type FlairRequest } from './flairRead.ts';
 import { parseFeedRequest, projectPost, type FeedRequest } from './postFeed.ts';
 
@@ -86,6 +86,14 @@ app.post('/external/mae/read/community', async c => {
       return users.length >= 1000
         ? c.json({ ok: false, error: 'listing_limit_reached' }, 409)
         : c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind, users });
+    }
+    if (request.kind === 'banned-user' || request.kind === 'muted-user') {
+      const options = { subredditName: installed.name, username: request.username, limit: 2, pageSize: 2 };
+      const users = request.kind === 'banned-user'
+        ? (await reddit.getBannedUsers(options).all()).map(projectBannedUser)
+        : (await reddit.getMutedUsers(options).all()).map(projectMutedUser);
+      return c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind,
+        user: selectRelationship(users, request.username) });
     }
     const rules = await reddit.getRules(installed.name);
     return c.json({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser } from '../src/server/communityRead.ts';
+import { parseCommunityRequest, projectModerator, projectRule, projectBannedUser, projectMutedUser, selectRelationship } from '../src/server/communityRead.ts';
 
 describe('read-only community metadata', () => {
   test('keeps the original moderator permissions without inferring authority', () => {
@@ -30,6 +30,24 @@ describe('read-only community metadata', () => {
       username: 'Alice', note: null, date: 0,
     });
     expect(() => projectMutedUser({ username: 'Alice', date: new Date('invalid') })).toThrow();
+  });
+  test('targeted relationship reads identify the correct person without scanning the whole inventory', () => {
+    expect(parseCommunityRequest({
+      subreddit: 'catgirlcoin', kind: 'banned-user', username: 'Alice',
+    })).toEqual({ subreddit: 'catgirlcoin', kind: 'banned-user', username: 'Alice' });
+    expect(parseCommunityRequest({
+      subreddit: 'nyaonearth', kind: 'muted-user', username: 'Bob',
+    })).toEqual({ subreddit: 'nyaonearth', kind: 'muted-user', username: 'Bob' });
+    expect(() => parseCommunityRequest({
+      subreddit: 'catgirlcoin', kind: 'banned-user',
+    })).toThrow();
+    expect(() => parseCommunityRequest({
+      subreddit: 'catgirlcoin', kind: 'muted', username: 'Bob',
+    })).toThrow();
+    const alice = { username: 'Alice', date: 123 };
+    expect(selectRelationship([alice], 'alice')).toEqual(alice);
+    expect(selectRelationship([alice], 'bob')).toBeNull();
+    expect(() => selectRelationship([alice, alice], 'Alice')).toThrow();
   });
   test('limits metadata requests to Mae communities and explicit operations', () => {
     expect(parseCommunityRequest({ subreddit: 'catgirlcoin', kind: 'moderators' }))

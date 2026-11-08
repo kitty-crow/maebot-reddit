@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { DevvitExternalClient, type DevvitExternalFetch } from '../src/reddit/devvitExternal.ts';
-import { parseDevvitLocalRules, parseDevvitModerators, parseDevvitRelationships } from '../src/reddit/devvitCommunityRead.ts';
+import { parseDevvitLocalRules, parseDevvitModerators, parseDevvitRelationships, parseDevvitSingleRelationship } from '../src/reddit/devvitCommunityRead.ts';
 import { relationshipUsers } from '../src/reddit/decode.ts';
 
 const community = 'catgirlcoin';
@@ -78,6 +78,33 @@ describe('Devvit community-read parity boundary', () => {
     expect(await client.readBannedUsers(community)).toEqual([]);
     expect(await client.readMutedUsers(community)).toEqual([]);
     expect(calls).toEqual(['banned', 'muted']);
+  });
+  test('checks scoped single-user response identities without enumerating inventories', async () => {
+    const raw = envelope('banned-user', {
+      user: { username: 'Alice', note: 'Repeated spam', date: 1794121200 },
+    });
+    expect(parseDevvitSingleRelationship(raw, community, 'banned-user', 'alice')).toEqual({
+      username: 'Alice', note: 'Repeated spam', date: 1794121200,
+    });
+    expect(() => parseDevvitSingleRelationship(raw, community, 'banned-user', 'bob')).toThrow();
+    expect(parseDevvitSingleRelationship(envelope('muted-user', { user: null }),
+      community, 'muted-user', 'Alice')).toBeNull();
+  });
+  test('sends one targeted relationship request with managed auth', async () => {
+    const fetcher: DevvitExternalFetch = async (_url, init) => {
+      expect(new Headers(init.headers).get('authorization')).toBe('bearer devvit_at_test_secret_key');
+      expect(JSON.parse(String(init.body))).toEqual({
+        subreddit: 'catgirlcoin', kind: 'banned-user', username: 'Alice',
+      });
+      return new Response(envelope('banned-user', {
+        user: { username: 'Alice', note: null, date: 0 },
+      }));
+    };
+    const client = new DevvitExternalClient({
+      baseUrl: 'https://this-is-the-mae-abc123-external.devvit.net',
+      managedToken: 'devvit_at_test_secret_key',
+    }, fetcher);
+    expect((await client.readBannedUser(community, 'Alice'))?.username).toBe('Alice');
   });
   test('sends a scoped read request, authenticates and validates its response', async () => {
     const fetcher: DevvitExternalFetch = async (url, init) => {

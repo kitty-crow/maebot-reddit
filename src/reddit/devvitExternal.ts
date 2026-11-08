@@ -1,7 +1,7 @@
 import { isMap, parseJson } from '../types/json.ts';
 import { parseDevvitPostFeed, type DevvitPostFeedRequest } from './devvitPostFeed.ts';
 import type { RedditPost, RedditModerator, RedditRule } from './types.ts';
-import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships, type DevvitCommunityKind } from './devvitCommunityRead.ts';
+import { parseDevvitModerators, parseDevvitLocalRules, parseDevvitRelationships, parseDevvitSingleRelationship, type DevvitCommunityKind } from './devvitCommunityRead.ts';
 import type { RedditRelationshipUser } from './decode.ts';
 import { validateDevvitModerationRequest, parseDevvitModerationReceipt, type DevvitModerationRequest, type DevvitModerationReceipt } from './devvitModerationMutation.ts';
 import type { DevvitCommunity } from './devvitPostFeed.ts';
@@ -104,7 +104,7 @@ export class DevvitExternalClient {
 
   // Local rules are deliberately NOT a substitute for the old rules()
   // response, which also includes Reddit site-wide rules.
-  private async readCommunity(subreddit: DevvitCommunity, kind: DevvitCommunityKind): Promise<string> {
+  private async readCommunity(subreddit: DevvitCommunity, kind: DevvitCommunityKind, username: string | null = null): Promise<string> {
     let response: Response;
     try {
       response = await this.fetcher(this.baseUrl + '/external/mae/read/community', {
@@ -114,7 +114,7 @@ export class DevvitExternalClient {
           'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify({ subreddit, kind }),
+        body: JSON.stringify(username === null ? { subreddit, kind } : { subreddit, kind, username }),
       });
     } catch {
       throw new Error('Devvit community read could not be reached');
@@ -137,6 +137,23 @@ export class DevvitExternalClient {
 
   public async readMutedUsers(subreddit: DevvitCommunity): Promise<readonly RedditRelationshipUser[]> {
     return parseDevvitRelationships(await this.readCommunity(subreddit, 'muted'), subreddit, 'muted');
+  }
+
+  public async readBannedUser(
+    subreddit: DevvitCommunity, username: string,
+  ): Promise<RedditRelationshipUser | null> {
+    if (!/^[a-z0-9_-]{2,32}$/iu.test(username)) throw new Error('Invalid banned user lookup name');
+    return parseDevvitSingleRelationship(
+      await this.readCommunity(subreddit, 'banned-user', username), subreddit, 'banned-user', username,
+    );
+  }
+  public async readMutedUser(
+    subreddit: DevvitCommunity, username: string,
+  ): Promise<RedditRelationshipUser | null> {
+    if (!/^[a-z0-9_-]{2,32}$/iu.test(username)) throw new Error('Invalid muted user lookup name');
+    return parseDevvitSingleRelationship(
+      await this.readCommunity(subreddit, 'muted-user', username), subreddit, 'muted-user', username,
+    );
   }
 
   private async readModmail(
