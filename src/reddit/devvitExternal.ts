@@ -8,6 +8,8 @@ import type { DevvitCommunity } from './devvitPostFeed.ts';
 import { parseDevvitModmailPage, parseDevvitModmailDetail, type DevvitModmailPageRequest } from './devvitModmailRead.ts';
 import { validateModmailMutation, parseModmailMutationReceipt, type DevvitModmailMutation, type DevvitMutationReceipt } from './devvitModmailMutation.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
+import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlairAssignment, type DevvitFlairKind } from './devvitFlairRead.ts';
+import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
 
 export type DevvitExternalConfig = {
   readonly baseUrl: string;
@@ -224,6 +226,47 @@ export class DevvitExternalClient {
     }
     if (!response.ok) throw new Error('Devvit moderation HTTP ' + response.status + '; reconcile before retry');
     return parseDevvitModerationReceipt(await response.text(), request.operationId);
+  }
+
+  private async flairRead(
+    subreddit: DevvitCommunity, kind: DevvitFlairKind, username: string | null = null,
+  ): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/read/flair', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(username === null ? { subreddit, kind } : { subreddit, kind, username }),
+      });
+    } catch {
+      throw new Error('Devvit flair endpoint could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit flair read returned HTTP ' + response.status);
+    return await response.text();
+  }
+
+  // Partial parity: Devvit omits the legacy CSS class on templates, and
+  // omits template UUID on user flair assignments.
+  public async readFlairTemplates(
+    subreddit: DevvitCommunity, type: 'user' | 'post',
+  ): Promise<readonly RedditFlairTemplate[]> {
+    const kind = type === 'user' ? 'user-templates' : 'post-templates';
+    return parseDevvitFlairTemplates(await this.flairRead(subreddit, kind), subreddit, kind);
+  }
+  public async readFlairAssignments(subreddit: DevvitCommunity): Promise<readonly RedditFlairAssignment[]> {
+    return parseDevvitFlairAssignments(await this.flairRead(subreddit, 'user-assignments'), subreddit);
+  }
+  public async readFlairAssignment(
+    subreddit: DevvitCommunity, username: string,
+  ): Promise<RedditFlairAssignment | null> {
+    if (!/^[a-z0-9_-]{2,32}$/iu.test(username)) throw new Error('Invalid user flair lookup name');
+    return parseDevvitFlairAssignment(
+      await this.flairRead(subreddit, 'user-assignment', username), subreddit, username,
+    );
   }
 
 }
