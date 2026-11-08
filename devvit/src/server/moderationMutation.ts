@@ -120,17 +120,18 @@ export const parseModerationMutation = (raw: Json): ModerationMutation => {
     exact(raw, [...keys, 'username']);
     return { ...base, action, username: user(raw) };
   }
-  if (action === 'remove') {
-    exact(raw, [...keys, 'fullname']);
-    const fullname = required(raw, 'fullname');
-    if (!thingPattern.test(fullname)) throw new Error('Invalid Reddit fullname');
-    return { ...base, action, fullname };
-  }
+  if (action === 'remove') return parseRemove(raw, base, keys);
   if (action === 'set-user-flair') return parseUserTemplate(raw, base, keys);
   if (action === 'set-user-flair-direct') return parseUserDirect(raw, base, keys);
   if (action === 'set-post-flair') return parsePostTemplate(raw, base, keys);
   if (action === 'create-flair-template') return parseTemplate(raw, base, keys);
   throw new Error('Unsupported moderation action');
+};
+const parseRemove = (raw: JsonObject, base: Base, keys: readonly string[]): ModerationMutation => {
+  exact(raw, [...keys, 'fullname']);
+  const fullname = required(raw, 'fullname');
+  if (!thingPattern.test(fullname)) throw new Error('Invalid Reddit fullname');
+  return { ...base, action: 'remove', fullname };
 };
 const parseBan = (raw: JsonObject, base: Base, keys: readonly string[]): ModerationMutation => {
   exact(raw, [...keys, 'username', 'reason', 'note']);

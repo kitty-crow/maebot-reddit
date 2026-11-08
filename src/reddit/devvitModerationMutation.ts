@@ -26,6 +26,12 @@ export const validateDevvitModerationRequest = (request: DevvitModerationRequest
   if (request.subreddit !== 'catgirlcoin' && request.subreddit !== 'nyaonearth') throw new Error('Invalid community');
   if (!operationPattern.test(request.operationId)) throw new Error('Invalid canonical operation ID');
 };
+const validCreatedTemplateId = (value: import('../types/json.ts').Json | undefined): string | null => {
+  if (value === undefined) return null;
+  const id = strVal(value, 'created flair template ID');
+  if (id.length < 8 || id.length > 64) throw new Error('Invalid created flair template ID');
+  return id;
+};
 export const parseDevvitModerationReceipt = (body: string, operationId: string): DevvitModerationReceipt => {
   if (body.length > 4096) throw new Error('Oversized Devvit moderation receipt');
   const root = parseMap(body);
@@ -36,11 +42,8 @@ export const parseDevvitModerationReceipt = (body: string, operationId: string):
   if (status !== 'applied' && status !== 'already-applied') {
     throw new Error('Unrecognised moderation operation status');
   }
-  const createdTemplateId = root['createdTemplateId'];
-  if (createdTemplateId !== undefined) {
-    const id = strVal(createdTemplateId, 'created flair template ID');
-    if (id.length < 8 || id.length > 64) throw new Error('Invalid created flair template ID');
-    return { protocol: 1, operationId, status, createdTemplateId: id };
-  }
-  return { protocol: 1, operationId, status };
+  const createdTemplateId = validCreatedTemplateId(root['createdTemplateId']);
+  return createdTemplateId === null
+    ? { protocol: 1, operationId, status }
+    : { protocol: 1, operationId, status, createdTemplateId };
 };
