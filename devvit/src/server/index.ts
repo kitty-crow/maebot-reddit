@@ -258,11 +258,13 @@ app.post('/external/mae/read/flair', async c => {
     }
     const username = request.username;
     if (username === null) return c.json({ ok: false, error: 'invalid_request' }, 400);
-    const listing = await installed.getUserFlair({ usernames: [username] });
-    const matches = listing.users.filter(row => row.user?.toLowerCase() === username.toLowerCase());
-    if (matches.length > 1) throw new Error('Duplicate user flair responses');
+    const user = await reddit.getUserByUsername(username);
+    const flair = user === undefined ? undefined : await user.getUserFlairBySubreddit(installed.name);
+    if (flair?.user !== undefined && flair.user.toLowerCase() !== username.toLowerCase()) {
+      throw new Error('User flair lookup returned the wrong username');
+    }
     return c.json({ protocol: 1, subreddit: request.subreddit, kind: request.kind,
-      assignment: matches[0] === undefined ? null : projectFlairAssignment(matches[0]) });
+      assignment: flair === undefined ? null : projectFlairAssignment(flair) });
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
   }
