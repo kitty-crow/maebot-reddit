@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { DevvitExternalClient, type DevvitExternalFetch } from '../src/reddit/devvitExternal.ts';
-import { parseDevvitMessages, type DevvitMessageRequest } from '../src/reddit/devvitMessageRead.ts';
+import { parseDevvitMessages, type DevvitMessageRequest, type DevvitMessagePreview } from '../src/reddit/devvitMessageRead.ts';
 
 const request:DevvitMessageRequest={installation:'catgirlcoin',folder:'unread',limit:25};
-const message={
+const message: DevvitMessagePreview = {
   fullname:'t4_abc123',fromType:'user',fromName:'Alice',
   body:'Hello Mae',createdUtc:1794124800,
 };
