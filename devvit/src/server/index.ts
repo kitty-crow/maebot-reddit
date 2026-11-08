@@ -1,6 +1,7 @@
 import { reddit, redis } from '@devvit/web/server';
 import { parseInspectionRequest, projectSubreddit, projectPostScore, type InspectionRequest } from './inspectionRead.ts';
 import { parseActivityRequest, projectRecentComments, type ActivityRequest } from './activityRead.ts';
+import { parseMessageReadRequest, projectMessageFolder, type MessageReadRequest } from './directMessageRead.ts';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
 import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
 import { parseModNoteRequest, projectModNote, executeModNoteWrite, type ModNoteApi, type NoteRequest } from './modNotes.ts';
@@ -391,6 +392,33 @@ app.post('/external/mae/read/activity', async c => {
     }).all();
     return c.json({protocol:1,installation:request.installation,username:request.username,
       comments:projectRecentComments(comments,request)});
+  } catch {
+    return c.json({ok:false,error:'reddit_unavailable'},503);
+  }
+});
+
+// Deliberately not a canonical RedditDirectMessage decoder: Devvit omits
+// subject, recipient, parent and unread flags required by Mae's DM state.
+app.post('/external/mae/read/messages', async c => {
+  let request: MessageReadRequest;
+  try {
+    const body=await c.req.text();
+    if (body.length>1024) return c.json({ok:false,error:'body_too_large'},413);
+    request=parseMessageReadRequest(JSON.parse(body));
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed=(await reddit.getCurrentSubreddit()).name;
+    if (installed.toLowerCase()!==request.installation) {
+      return c.json({ok:false,error:'installation_mismatch'},403);
+    }
+    const listing=await reddit.getMessages({
+      type:request.folder,limit:request.limit,pageSize:100,
+    });
+    const messages=projectMessageFolder(await listing.all(),request.limit);
+    return c.json({protocol:1,installation:request.installation,folder:request.folder,
+      accountScope:'app',messages});
   } catch {
     return c.json({ok:false,error:'reddit_unavailable'},503);
   }

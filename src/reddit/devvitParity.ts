@@ -47,9 +47,9 @@ export const devvitParity = {
     "newComments": "blocked",
     "newPostsHistory": "partial",
     "newCommentsHistory": "blocked",
-    "inboxDirectMessages": "not-started",
-    "unreadDirectMessages": "not-started",
-    "sentDirectMessages": "not-started",
+    "inboxDirectMessages": "partial",
+    "unreadDirectMessages": "partial",
+    "sentDirectMessages": "partial",
     "modmailConversations": "partial",
     "modmailConversation": "partial",
     "scores": "partial"

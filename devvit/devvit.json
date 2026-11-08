@@ -70,6 +70,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadMessages": {
+        "endpoint": "/external/mae/read/messages",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },
