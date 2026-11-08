@@ -1,21 +1,31 @@
-import { redis } from '@devvit/web/server';
 import type { MutationDeduplication, ClaimResult } from './modmailMutation.ts';
 
 const records = 'mae:modmail:write-claims:v1';
 type RecordValue = { readonly fingerprint: string; readonly status: 'pending' | 'applied' };
+export type ModmailClaimRedis = {
+  hSetNX(key: string, field: string, value: string): Promise<boolean | number>;
+  hGet(key: string, field: string): Promise<string | null | undefined>;
+  hSet(key: string, fields: Record<string, string>): Promise<number>;
+};
+type Json = null | boolean | number | string | Json[] | { readonly [key: string]: Json };
 const encode = (value: RecordValue): string => JSON.stringify(value);
 const decode = (value: string): RecordValue => {
-  const parsed: RecordValue = JSON.parse(value);
-  if (!/^[a-f0-9]{64}$/u.test(parsed.fingerprint)
-    || (parsed.status !== 'pending' && parsed.status !== 'applied')) {
+  const raw: Json = JSON.parse(value);
+  if (raw === null || Array.isArray(raw) || typeof raw !== 'object') {
+    throw new Error('Corrupt Modmail operation record');
+  }
+  const fingerprint = raw['fingerprint'];
+  const status = raw['status'];
+  if (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/u.test(fingerprint)
+    || (status !== 'pending' && status !== 'applied')) {
     throw new Error('Corrupt Modmail operation claim');
   }
-  return parsed;
+  return { fingerprint, status };
 };
 
-// Never delete a pending claim automatically. An uncertain write needs a human
-// or explicit read-back reconciliation; retrying could duplicate a reply.
-export const modmailClaimStore: MutationDeduplication = {
+// This record is deliberately not deleted after uncertain failures. The
+// canonical Bun outbox must reconcile it explicitly before attempting a retry.
+export const createModmailClaimStore = (redis: ModmailClaimRedis): MutationDeduplication => ({
   async claim(operationId, fingerprint): Promise<ClaimResult> {
     const acquired = await redis.hSetNX(records, operationId, encode({ fingerprint, status: 'pending' }));
     if (acquired) return 'acquired';
@@ -34,4 +44,4 @@ export const modmailClaimStore: MutationDeduplication = {
     }
     await redis.hSet(records, { [operationId]: encode({ fingerprint, status: 'applied' }) });
   },
-};
+});

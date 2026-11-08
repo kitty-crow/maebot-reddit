@@ -1,6 +1,6 @@
-import { reddit } from '@devvit/web/server';
+import { reddit, redis } from '@devvit/web/server';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
-import { modmailClaimStore } from './modmailMutationStore.ts';
+import { createModmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
 import { parseModmailReadRequest, projectModmailConversation, projectModmailPage, type ModmailReadRequest } from './modmailRead.ts';
@@ -151,7 +151,7 @@ app.post('/external/mae/write/modmail', async c => {
     if (installed.toLowerCase() !== request.subreddit) {
       return c.json({ ok: false, error: 'installation_mismatch' }, 403);
     }
-    const receipt = await executeModmailMutation(request, reddit.modMail, modmailClaimStore);
+    const receipt = await executeModmailMutation(request, reddit.modMail, createModmailClaimStore(redis));
     return c.json(receipt);
   } catch {
     // Never retry an ambiguous write automatically, and never leak Reddit or Redis errors.
