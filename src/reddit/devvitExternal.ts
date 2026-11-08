@@ -8,6 +8,7 @@ import type { DevvitCommunity } from './devvitPostFeed.ts';
 import { parseDevvitModmailPage, parseDevvitModmailDetail, type DevvitModmailPageRequest } from './devvitModmailRead.ts';
 import { validateModmailMutation, parseModmailMutationReceipt, type DevvitModmailMutation, type DevvitMutationReceipt } from './devvitModmailMutation.ts';
 import type { ModmailConversation, ModmailConversationPage } from '../modmail/types.ts';
+import { parseDevvitNoteListing, parseDevvitNoteReceipt, validateDevvitNoteWrite, type DevvitModNoteRequest, type DevvitNativeNote, type DevvitNoteReceipt } from './devvitModNotes.ts';
 import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlairAssignment, type DevvitFlairKind } from './devvitFlairRead.ts';
 import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
 
@@ -284,6 +285,44 @@ export class DevvitExternalClient {
     return parseDevvitFlairAssignment(
       await this.flairRead(subreddit, 'user-assignment', username), subreddit, username,
     );
+  }
+
+  public async readModNotes(
+    subreddit: DevvitCommunity, username: string, limit = 100,
+  ): Promise<readonly DevvitNativeNote[]> {
+    if (!/^[a-z0-9_-]{1,32}$/iu.test(username) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error('Invalid Devvit Mod Note listing request');
+    }
+    const body=await this.requestModNotes('/external/mae/read/modnotes',{
+      subreddit,username,kind:'list',limit,
+    });
+    return parseDevvitNoteListing(body,subreddit,username,limit);
+  }
+  // Writes must never be retried on an uncertain network outcome.
+  public async mutateModNote(request: DevvitModNoteRequest): Promise<DevvitNoteReceipt> {
+    validateDevvitNoteWrite(request);
+    const body=await this.requestModNotes('/external/mae/write/modnotes',request);
+    return parseDevvitNoteReceipt(body,request);
+  }
+  private async requestModNotes(
+    endpoint: string, body: Readonly<Record<string,string|number|null>>,
+  ): Promise<string> {
+    let response:Response;
+    try {
+      response=await this.fetcher(this.baseUrl+endpoint,{
+        method:'POST',
+        headers:{
+          authorization:'bearer '+this.token,
+          'content-type':'application/json',
+          accept:'application/json',
+        },
+        body:JSON.stringify(body),
+      });
+    } catch {
+      throw new Error('Devvit native Mod Notes outcome uncertain; do not retry writes');
+    }
+    if (!response.ok) throw new Error('Devvit native Mod Notes returned HTTP '+response.status+'; reconcile before retry');
+    return await response.text();
   }
 
 }

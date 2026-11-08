@@ -105,7 +105,7 @@ export const projectModNote = (source: NoteSource, subreddit: Community, usernam
   const date = source.createdAt.getTime();
   if (!Number.isFinite(date)) throw new Error('Invalid Mod Note timestamp');
   return {
-    id: source.id, username: source.user.name, note: source.userNote?.note ?? null,
+    id: source.id, username, note: source.userNote?.note ?? null,
     label: source.userNote?.label ?? null, createdUtc: date / 1000,
   };
 };

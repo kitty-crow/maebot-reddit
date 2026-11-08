@@ -306,9 +306,9 @@ app.post('/external/mae/write/modnotes', async c => {
     const installed=(await reddit.getCurrentSubreddit()).name;
     if(installed.toLowerCase()!==request.subreddit)return c.json({ok:false,error:'installation_mismatch'},403);
     const api:ModNoteApi={
-      addModNote:async options=>await reddit.addModNote({
+      addModNote:async ({redditId,...options})=>await reddit.addModNote({
         ...options,
-        ...(options.redditId===undefined?{}:{redditId:options.redditId as Parameters<typeof reddit.addModNote>[0]['redditId']}),
+        ...(redditId===undefined?{}:{redditId:redditId as Parameters<typeof reddit.addModNote>[0]['redditId']}),
       }),
       deleteModNote:async options=>await reddit.deleteModNote(options),
     };

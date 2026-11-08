@@ -86,8 +86,8 @@ export const devvitParity = {
   },
   "modNotes": {
     "recentCommentsInCommunities": "blocked",
-    "addModNote": "not-started",
-    "deleteModNote": "not-started"
+    "addModNote": "partial",
+    "deleteModNote": "partial"
   },
   "publisher": {
     "publishPrimary": "blocked",
