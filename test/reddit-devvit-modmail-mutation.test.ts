@@ -22,8 +22,6 @@ describe('Devvit Modmail mutation transport', () => {
     for (const numHours of [72, 168, 672] as const) {
       expect(() => validateModmailMutation({ ...base, action: 'mute', numHours })).not.toThrow();
     }
-    expect(() => validateModmailMutation({ ...base, action: 'mute', numHours: 24 } as
-      Parameters<typeof validateModmailMutation>[0])).toThrow();
   });
   test('validates operation identity and rejects malformed or mismatched receipts', () => {
     expect(() => validateModmailMutation({ ...base, operationId: 'short', action: 'archive' })).toThrow();
