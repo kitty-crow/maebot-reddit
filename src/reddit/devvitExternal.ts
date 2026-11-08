@@ -13,6 +13,7 @@ import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlai
 import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
 import { parseDevvitRecentComments, type DevvitActivityRequest } from './devvitActivityRead.ts';
 import type { RedditComment } from './types.ts';
+import {validateDevvitAuthoredRequest,parseDevvitAuthoredReceipt,type DevvitAuthoredRequest,type DevvitAuthoredReceipt} from './devvitAuthoredWrite.ts';
 import { parseDevvitMessages, type DevvitMessageRequest, type DevvitMessagePreview } from './devvitMessageRead.ts';
 import { parseDevvitSubreddit, parseDevvitPostScores } from './devvitInspectionRead.ts';
 import type { RedditSubreddit, RedditThingScore } from './types.ts';
@@ -429,6 +430,30 @@ export class DevvitExternalClient {
     }
     if (!response.ok) throw new Error('Devvit message preview returned HTTP '+response.status);
     return parseDevvitMessages(await response.text(),request);
+  }
+
+  // Staged only. A caller must explicitly supply the canonical Reddit author.
+  // No automatic retry after a network failure, including lost acknowledgements.
+  public async mutateAuthored(request:DevvitAuthoredRequest):Promise<DevvitAuthoredReceipt> {
+    validateDevvitAuthoredRequest(request);
+    let response:Response;
+    try {
+      response=await this.fetcher(this.baseUrl+'/external/mae/write/authored',{
+        method:'POST',
+        headers:{
+          authorization:'bearer '+this.token,
+          'content-type':'application/json',
+          accept:'application/json',
+        },
+        body:JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit authored-write outcome uncertain; reconcile before retry');
+    }
+    if (!response.ok) {
+      throw new Error('Devvit authored-write HTTP '+response.status+'; reconcile before retry');
+    }
+    return parseDevvitAuthoredReceipt(await response.text(),request);
   }
 
 }

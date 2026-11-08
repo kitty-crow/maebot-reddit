@@ -1,0 +1,90 @@
+import { parseMap, type Json } from '../types/json.ts';
+import { strVal } from '../types/value.ts';
+import type { DevvitCommunity } from './devvitPostFeed.ts';
+
+type Base = {
+  readonly subreddit: DevvitCommunity;
+  readonly operationId: string;
+  readonly expectedAuthor: string;
+};
+export type DevvitAuthoredRequest = Base & (
+  | { readonly action: 'self-post'; readonly title: string;
+      readonly body: string; readonly flairTemplateId: string | null }
+  | { readonly action: 'private-message'; readonly recipient: string;
+      readonly subject: string; readonly body: string }
+);
+export type DevvitAuthoredReceipt = {
+  readonly protocol: 1;
+  readonly operationId: string;
+  readonly status: 'applied' | 'already-applied';
+  readonly postId?: string;
+};
+
+const operationPattern=/^[a-z0-9_-]{10,96}$/iu;
+const namePattern=/^[a-z0-9_-]{2,32}$/iu;
+const templatePattern=/^[0-9a-z_-]{8,96}$/iu;
+const postPattern=/^t3_[a-z0-9]+$/iu;
+const nonempty = (value:string, label:string, max:number):void => {
+  if (typeof value !== 'string' || value.length===0 || value.length>max) {
+    throw new Error('Invalid Devvit authored-write '+label);
+  }
+};
+export const validateDevvitAuthoredRequest = (request:DevvitAuthoredRequest):void => {
+  if (request.subreddit!=='catgirlcoin' && request.subreddit!=='nyaonearth') {
+    throw new Error('Invalid Devvit authored-write community');
+  }
+  if (!operationPattern.test(request.operationId) || !namePattern.test(request.expectedAuthor)) {
+    throw new Error('Invalid canonical author or operation ID');
+  }
+  if (request.action==='self-post') {
+    validatePostRequest(request);
+    return;
+  }
+  if (request.action==='private-message') {
+    validateMessageRequest(request);
+    return;
+  }
+  throw new Error('Unsupported Devvit authored-write operation');
+};
+const validatePostRequest = (request:Extract<DevvitAuthoredRequest,{readonly action:'self-post'}>):void => {
+  nonempty(request.title,'title',300);
+  nonempty(request.body,'post body',40_000);
+  const id=request.flairTemplateId;
+  if (id !== null && (typeof id!=='string' || !templatePattern.test(id))) {
+    throw new Error('Invalid Devvit post flair');
+  }
+};
+const validateMessageRequest = (
+  request:Extract<DevvitAuthoredRequest,{readonly action:'private-message'}>,
+):void => {
+  if (!namePattern.test(request.recipient)) throw new Error('Invalid Devvit message recipient');
+  nonempty(request.subject,'subject',100);
+  nonempty(request.body,'message body',10_000);
+};
+const nativePostId = (raw:Json|undefined):string => {
+  const id=strVal(raw,'native Reddit post ID');
+  if (!postPattern.test(id)) throw new Error('Invalid native Reddit post identity');
+  return id;
+};
+export const parseDevvitAuthoredReceipt = (
+  body:string, request:DevvitAuthoredRequest,
+):DevvitAuthoredReceipt => {
+  if (body.length>4096) throw new Error('Oversized Devvit authored-write receipt');
+  const root=parseMap(body);
+  if (root['protocol']!==1 || root['operationId']!==request.operationId) {
+    throw new Error('Devvit authored-write receipt does not match canonical operation');
+  }
+  const status=root['status'];
+  if (status!=='applied' && status!=='already-applied') {
+    throw new Error('Devvit authored-write operation is not confirmed');
+  }
+  if (request.action==='self-post') return verifyPostReceipt(request.operationId,status,root['postId']);
+  if (root['postId']!==undefined) throw new Error('Unexpected post ID in private-message receipt');
+  return {protocol:1,operationId:request.operationId,status};
+};
+const verifyPostReceipt = (
+  operationId:string, status:'applied'|'already-applied', raw:Json|undefined,
+):DevvitAuthoredReceipt => {
+  if (status!=='applied') throw new Error('Original post identity requires reconciliation');
+  return {protocol:1,operationId,status,postId:nativePostId(raw)};
+};
