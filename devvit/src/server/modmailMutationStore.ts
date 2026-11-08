@@ -1,6 +1,5 @@
 import type { MutationDeduplication, ClaimResult } from './modmailMutation.ts';
 
-const records = 'mae:modmail:write-claims:v1';
 type RecordValue = { readonly fingerprint: string; readonly status: 'pending' | 'applied' };
 export type ModmailClaimRedis = {
   hSetNX(key: string, field: string, value: string): Promise<boolean | number>;
@@ -25,7 +24,7 @@ const decode = (value: string): RecordValue => {
 
 // This record is deliberately not deleted after uncertain failures. The
 // canonical Bun outbox must reconcile it explicitly before attempting a retry.
-export const createModmailClaimStore = (redis: ModmailClaimRedis): MutationDeduplication => ({
+export const createModmailClaimStore = (redis: ModmailClaimRedis, records = 'mae:modmail:write-claims:v1'): MutationDeduplication => ({
   async claim(operationId, fingerprint): Promise<ClaimResult> {
     const acquired = await redis.hSetNX(records, operationId, encode({ fingerprint, status: 'pending' }));
     if (acquired) return 'acquired';
