@@ -1,4 +1,6 @@
 import { reddit } from '@devvit/web/server';
+import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
+import { modmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
 import { parseModmailReadRequest, projectModmailConversation, projectModmailPage, type ModmailReadRequest } from './modmailRead.ts';
@@ -130,6 +132,30 @@ app.post('/external/mae/read/modmail', async c => {
     return c.json({ protocol: 1, mode: 'detail', subreddit: request.subreddit, data: { conversation } });
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
+  }
+});
+
+// Write transport is staged only, with no caller in Mae's live state machine.
+// A persistent operation claim prevents ambiguous writes from being replayed.
+app.post('/external/mae/write/modmail', async c => {
+  let request;
+  try {
+    const body = await c.req.text();
+    if (body.length > 12_288) return c.json({ ok: false, error: 'body_too_large' }, 413);
+    request = parseModmailMutation(JSON.parse(body));
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+  try {
+    const installed = (await reddit.getCurrentSubreddit()).name;
+    if (installed.toLowerCase() !== request.subreddit) {
+      return c.json({ ok: false, error: 'installation_mismatch' }, 403);
+    }
+    const receipt = await executeModmailMutation(request, reddit.modMail, modmailClaimStore);
+    return c.json(receipt);
+  } catch {
+    // Never retry an ambiguous write automatically, and never leak Reddit or Redis errors.
+    return c.json({ ok: false, error: 'write_not_confirmed_reconcile_before_retry' }, 409);
   }
 });
 

@@ -28,6 +28,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeWriteModmail": {
+        "endpoint": "/external/mae/write/modmail",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },
@@ -35,6 +41,7 @@
     "reddit": {
       "enable": true,
       "scope": "moderator"
-    }
+    },
+    "redis": true
   }
 }
