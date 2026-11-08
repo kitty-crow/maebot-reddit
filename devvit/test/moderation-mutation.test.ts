@@ -108,6 +108,17 @@ describe('Devvit moderation and flair batch', () => {
     await expect(executeModerationMutation(changed,api,claims)).rejects.toThrow('reused');
     expect(calls).toEqual(['ban:Alice:spam:moderator evidence']);
   });
+  test('never acknowledges a duplicate flair-template creation without the original ID', async () => {
+    const calls:string[] = [];
+    const api=fakeApi(calls), claims=makeStore();
+    const request=parseModerationMutation({...base,action:'create-flair-template',kind:'user',template:{
+      text:'Trusted',modOnly:true,textEditable:false,backgroundColour:null,
+      textColour:'dark',allowableContent:'text',maxEmojis:1,
+    }});
+    expect((await executeModerationMutation(request,api,claims)).createdTemplateId).toBe('created-uuid');
+    await expect(executeModerationMutation(request,api,claims)).rejects.toThrow('reconciliation');
+    expect(calls).toEqual(['create:user:Trusted']);
+  });
   test('uncertain writes stay pending and cannot be blindly replayed', async () => {
     const calls: string[] = [];
     const normal=fakeApi(calls), claims=makeStore();

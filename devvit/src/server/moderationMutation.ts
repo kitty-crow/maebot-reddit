@@ -216,6 +216,12 @@ const perform = async (request: ModerationMutation, api: ModerationApi): Promise
       return await api.createFlairTemplate({ subredditName:request.subreddit, kind:request.kind, template:request.template });
   }
 };
+const previousModerationReceipt = (request: ModerationMutation): MutationReceipt => {
+  if (request.action === 'create-flair-template') {
+    throw new Error('Created flair template ID requires reconciliation before acknowledgement');
+  }
+  return { protocol:1, operationId:request.operationId, status:'already-applied' };
+};
 export const executeModerationMutation = async (
   request: ModerationMutation, api: ModerationApi, claims: MutationDeduplication,
 ): Promise<MutationReceipt> => {
@@ -224,7 +230,7 @@ export const executeModerationMutation = async (
   const claim: ClaimResult = await claims.claim(request.operationId, fingerprint);
   if (claim === 'conflict') throw new Error('Moderation operation ID reused with different content');
   if (claim === 'pending') throw new Error('Moderation outcome uncertain; reconcile before retry');
-  if (claim === 'applied') return { protocol:1, operationId:request.operationId, status:'already-applied' };
+  if (claim === 'applied') return previousModerationReceipt(request);
   const createdTemplateId = await perform(request, api);
   await claims.complete(request.operationId, fingerprint);
   return createdTemplateId === null
