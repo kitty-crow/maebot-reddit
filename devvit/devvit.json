@@ -16,6 +16,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeReadCommunity": {
+        "endpoint": "/external/mae/read/community",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },

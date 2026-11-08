@@ -1,6 +1,7 @@
 import { reddit } from '@devvit/web/server';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
+import { parseCommunityRequest, projectModerator, projectRule, type CommunityReadRequest } from './communityRead.ts';
 import { parseFeedRequest, projectPost, type FeedRequest } from './postFeed.ts';
 
 const app = new Hono();
@@ -42,6 +43,39 @@ app.post('/external/mae/read/posts', async c => {
       subreddit: request.subreddit,
       feed: request.feed,
       posts: posts.map(projectPost),
+    });
+  } catch {
+    return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
+  }
+});
+
+// These reads never change Mae's canonical stores or subreddit state.
+// Local rule metadata is not the entire legacy rules response (site_rules).
+app.post('/external/mae/read/community', async c => {
+  let request: CommunityReadRequest;
+  try {
+    const body = await c.req.text();
+    if (body.length > 1024) return c.json({ ok: false, error: 'body_too_large' }, 413);
+    request = parseCommunityRequest(JSON.parse(body));
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+  try {
+    const installed = await reddit.getCurrentSubreddit();
+    if (installed.name.toLowerCase() !== request.subreddit) {
+      return c.json({ ok: false, error: 'installation_mismatch' }, 403);
+    }
+    if (request.kind === 'moderators') {
+      const moderators = await installed.getModerators().all();
+      return c.json({
+        protocol: 1, subreddit: request.subreddit, kind: request.kind,
+        moderators: moderators.map(projectModerator),
+      });
+    }
+    const rules = await reddit.getRules(installed.name);
+    return c.json({
+      protocol: 1, subreddit: request.subreddit, kind: request.kind,
+      rules: rules.map(projectRule),
     });
   } catch {
     return c.json({ ok: false, error: 'reddit_unavailable' }, 503);
