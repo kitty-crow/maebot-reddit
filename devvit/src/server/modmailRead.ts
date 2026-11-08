@@ -1,6 +1,7 @@
 import type { Community } from './postFeed.ts';
 
 type Json = null | boolean | number | string | Json[] | { readonly [key: string]: Json };
+type JsonObject = { readonly [key: string]: Json };
 
 export type ModmailReadRequest =
   | { readonly subreddit: Community; readonly mode: 'list'; readonly limit: number; readonly after: string | null }
@@ -20,6 +21,17 @@ const conversationIdPattern = /^[a-z0-9]+$/iu;
 const isConversationId = (value: string): boolean =>
   conversationIdPattern.test(value) && value.length <= 64;
 
+const parseDetailRequest = (raw: JsonObject, subreddit: Community): ModmailReadRequest => {
+  const conversationId = raw['conversationId'];
+  if (typeof conversationId !== 'string' || !isConversationId(conversationId)) {
+    throw new Error('Invalid Modmail conversation ID');
+  }
+  if (raw['markRead'] !== undefined && raw['markRead'] !== false) {
+    throw new Error('Read-only Modmail preview cannot mark messages read');
+  }
+  return { subreddit, mode: 'detail', conversationId };
+};
+
 export const parseModmailReadRequest = (raw: Json): ModmailReadRequest => {
   if (raw === null || Array.isArray(raw) || typeof raw !== 'object') {
     throw new Error('Invalid Modmail request object');
@@ -27,16 +39,7 @@ export const parseModmailReadRequest = (raw: Json): ModmailReadRequest => {
   const subreddit = raw['subreddit'];
   if (subreddit !== 'catgirlcoin' && subreddit !== 'nyaonearth') throw new Error('Unknown Modmail community');
   const mode = raw['mode'];
-  if (mode === 'detail') {
-    const conversationId = raw['conversationId'];
-    if (typeof conversationId !== 'string' || !isConversationId(conversationId)) {
-      throw new Error('Invalid Modmail conversation ID');
-    }
-    if (raw['markRead'] !== undefined && raw['markRead'] !== false) {
-      throw new Error('Read-only Modmail preview cannot mark messages read');
-    }
-    return { subreddit, mode, conversationId };
-  }
+  if (mode === 'detail') return parseDetailRequest(raw, subreddit);
   if (mode !== 'list') throw new Error('Unknown Modmail read mode');
   const limit = raw['limit'];
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
