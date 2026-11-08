@@ -197,7 +197,7 @@ app.post('/external/mae/write/moderation', async c => {
         ...options, subredditName: installed.name,
         postId: options.postId as Parameters<typeof reddit.setPostFlair>[0]['postId'],
       }),
-      createFlairTemplate: async ({ subredditName, kind, template }) => {
+      createFlairTemplate: async ({ kind, template }) => {
         const options = {
           subredditName: installed.name, text: template.text, modOnly: template.modOnly,
           allowUserEdits: template.textEditable,
