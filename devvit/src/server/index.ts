@@ -1,4 +1,5 @@
 import { reddit, redis } from '@devvit/web/server';
+import { executeAuthoredWrite, parseAuthoredRequest, type AuthoredRequest, type AuthoredApi } from './authoredWrite.ts';
 import { parseInspectionRequest, projectSubreddit, projectPostScore, type InspectionRequest } from './inspectionRead.ts';
 import { parseActivityRequest, projectRecentComments, type ActivityRequest } from './activityRead.ts';
 import { parseMessageReadRequest, projectMessageFolder, type MessageReadRequest } from './directMessageRead.ts';
@@ -421,6 +422,41 @@ app.post('/external/mae/read/messages', async c => {
       accountScope:'app',messages});
   } catch {
     return c.json({ok:false,error:'reddit_unavailable'},503);
+  }
+});
+
+// Staged only: the canonical Bun publishing and DM code does not call this.
+// Never submit as the Devvit app when Mae expects a different Reddit author.
+app.post('/external/mae/write/authored', async c => {
+  let request: AuthoredRequest;
+  try {
+    const body = await c.req.text();
+    if (body.length > 48_000) return c.json({ok:false,error:'body_too_large'},413);
+    request = parseAuthoredRequest(JSON.parse(body));
+  } catch {
+    return c.json({ok:false,error:'invalid_request'},400);
+  }
+  try {
+    const installed = (await reddit.getCurrentSubreddit()).name;
+    if (installed.toLowerCase() !== request.subreddit) {
+      return c.json({ok:false,error:'installation_mismatch'},403);
+    }
+    const appUser = await reddit.getAppUser();
+    if (appUser === undefined || appUser.username.toLowerCase() !== request.expectedAuthor.toLowerCase()) {
+      return c.json({ok:false,error:'author_identity_mismatch'},403);
+    }
+    const api: AuthoredApi = {
+      getAppUsername: async () => (await reddit.getAppUser())?.username ?? null,
+      submitSelf: async options => {
+        const post = await reddit.submitPost(options);
+        return {id:post.id,subredditName:post.subredditName,authorName:post.authorName};
+      },
+      sendPrivateMessage: async options => await reddit.sendPrivateMessage(options),
+    };
+    const claims=createModmailClaimStore(redis,'mae:authored:write-claims:v1');
+    return c.json(await executeAuthoredWrite(request,installed,api,claims));
+  } catch {
+    return c.json({ok:false,error:'write_not_confirmed_reconcile_before_retry'},409);
   }
 });
 

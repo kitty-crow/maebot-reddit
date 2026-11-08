@@ -76,6 +76,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeWriteAuthored": {
+        "endpoint": "/external/mae/write/authored",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },
