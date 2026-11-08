@@ -13,6 +13,7 @@ import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlai
 import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
 import { parseDevvitRecentComments, type DevvitActivityRequest } from './devvitActivityRead.ts';
 import type { RedditComment } from './types.ts';
+import { parseDevvitMessages, type DevvitMessageRequest, type DevvitMessagePreview } from './devvitMessageRead.ts';
 import { parseDevvitSubreddit, parseDevvitPostScores } from './devvitInspectionRead.ts';
 import type { RedditSubreddit, RedditThingScore } from './types.ts';
 
@@ -397,6 +398,36 @@ export class DevvitExternalClient {
     }
     if (!response.ok) throw new Error('Devvit activity endpoint returned HTTP '+response.status);
     return parseDevvitRecentComments(await response.text(),request);
+  }
+
+  // Diagnostic preview only. Missing subject, recipient, parent and unread
+  // metadata means this cannot replace Mae's canonical direct-message model.
+  public async readMessagePreviews(request: DevvitMessageRequest): Promise<readonly DevvitMessagePreview[]> {
+    if (request.installation !== 'catgirlcoin' && request.installation !== 'nyaonearth') {
+      throw new Error('Invalid Devvit direct message installation');
+    }
+    if (request.folder !== 'inbox' && request.folder !== 'unread' && request.folder !== 'sent') {
+      throw new Error('Invalid Devvit direct message folder');
+    }
+    if (!Number.isInteger(request.limit) || request.limit<1 || request.limit>100) {
+      throw new Error('Invalid Devvit direct message preview limit');
+    }
+    let response:Response;
+    try {
+      response=await this.fetcher(this.baseUrl+'/external/mae/read/messages',{
+        method:'POST',
+        headers:{
+          authorization:'bearer '+this.token,
+          'content-type':'application/json',
+          accept:'application/json',
+        },
+        body:JSON.stringify(request),
+      });
+    } catch {
+      throw new Error('Devvit message preview endpoint could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit message preview returned HTTP '+response.status);
+    return parseDevvitMessages(await response.text(),request);
   }
 
 }
