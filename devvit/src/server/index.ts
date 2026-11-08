@@ -30,7 +30,7 @@ app.post('/external/mae/read/posts', async c => {
     return c.json({ ok: false, error: 'invalid_request' }, 400);
   }
   try {
-    const installed = await reddit.getCurrentSubredditName();
+    const installed = (await reddit.getCurrentSubreddit()).name;
     if (installed.toLowerCase() !== request.subreddit) {
       return c.json({ ok: false, error: 'installation_mismatch' }, 403);
     }
