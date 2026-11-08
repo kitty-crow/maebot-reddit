@@ -1,6 +1,8 @@
 import { isMap, parseJson } from '../types/json.ts';
 import { parseDevvitPostFeed, type DevvitPostFeedRequest } from './devvitPostFeed.ts';
-import type { RedditPost } from './types.ts';
+import type { RedditPost, RedditModerator, RedditRule } from './types.ts';
+import { parseDevvitModerators, parseDevvitLocalRules, type DevvitCommunityKind } from './devvitCommunityRead.ts';
+import type { DevvitCommunity } from './devvitPostFeed.ts';
 
 export type DevvitExternalConfig = {
   readonly baseUrl: string;
@@ -91,6 +93,35 @@ export class DevvitExternalClient {
     }
     if (!response.ok) throw new Error('Devvit post feed returned HTTP ' + response.status);
     return parseDevvitPostFeed(await response.text(), request);
+  }
+
+  // Local rules are deliberately NOT a substitute for the old rules()
+  // response, which also includes Reddit site-wide rules.
+  private async readCommunity(subreddit: DevvitCommunity, kind: DevvitCommunityKind): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.fetcher(this.baseUrl + '/external/mae/read/community', {
+        method: 'POST',
+        headers: {
+          authorization: 'bearer ' + this.token,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({ subreddit, kind }),
+      });
+    } catch {
+      throw new Error('Devvit community read could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit community read returned HTTP ' + response.status);
+    return await response.text();
+  }
+
+  public async readModerators(subreddit: DevvitCommunity): Promise<readonly RedditModerator[]> {
+    return parseDevvitModerators(await this.readCommunity(subreddit, 'moderators'), subreddit);
+  }
+
+  public async readLocalRules(subreddit: DevvitCommunity): Promise<readonly RedditRule[]> {
+    return parseDevvitLocalRules(await this.readCommunity(subreddit, 'local-rules'), subreddit);
   }
 
 }
