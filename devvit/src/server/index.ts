@@ -328,6 +328,17 @@ app.post('/external/mae/write/modnotes', async c => {
 // Non-mutating inspection of the installed subreddit and requested posts.
 // Comment score parity is intentionally not claimed because Devvit's Comment
 // model omits the archived flag from Mae's original /api/info response.
+const inspectInstalledSubreddit = async (
+  installed: Awaited<ReturnType<typeof reddit.getCurrentSubreddit>>,
+  community: Extract<InspectionRequest,{readonly kind:'subreddit'}>['subreddit'],
+) => {
+  const appUser = await reddit.getAppUser();
+  if (appUser === undefined) throw new Error('Reddit app identity missing');
+  const mods = await installed.getModerators().all();
+  if (mods.length >= 1000) throw new Error('Moderator listing may be incomplete');
+  const isMod = mods.some(mod => mod.username.toLowerCase() === appUser.username.toLowerCase());
+  return projectSubreddit(installed,community,isMod);
+};
 app.post('/external/mae/read/inspection', async c => {
   let request: InspectionRequest;
   try {
@@ -343,13 +354,8 @@ app.post('/external/mae/read/inspection', async c => {
       return c.json({ok:false,error:'installation_mismatch'},403);
     }
     if (request.kind === 'subreddit') {
-      const appUser = await reddit.getAppUser();
-      if (appUser === undefined) throw new Error('Reddit app identity missing');
-      const mods = await installed.getModerators().all();
-      if (mods.length >= 1000) throw new Error('Moderator listing may be incomplete');
-      const isMod = mods.some(mod => mod.username.toLowerCase() === appUser.username.toLowerCase());
-      return c.json({protocol:1,subreddit:request.subreddit,kind:request.kind,
-        data:projectSubreddit(installed,request.subreddit,isMod)});
+      const data = await inspectInstalledSubreddit(installed,request.subreddit);
+      return c.json({protocol:1,subreddit:request.subreddit,kind:request.kind,data});
     }
     const scores = [];
     for (const fullname of request.fullnames) {

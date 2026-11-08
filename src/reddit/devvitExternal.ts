@@ -11,6 +11,8 @@ import type { ModmailConversation, ModmailConversationPage } from '../modmail/ty
 import { parseDevvitNoteListing, parseDevvitNoteReceipt, validateDevvitNoteWrite, type DevvitModNoteRequest, type DevvitNativeNote, type DevvitNoteReceipt } from './devvitModNotes.ts';
 import { parseDevvitFlairTemplates, parseDevvitFlairAssignments, parseDevvitFlairAssignment, type DevvitFlairKind } from './devvitFlairRead.ts';
 import type { RedditFlairTemplate, RedditFlairAssignment } from './types.ts';
+import { parseDevvitSubreddit, parseDevvitPostScores } from './devvitInspectionRead.ts';
+import type { RedditSubreddit, RedditThingScore } from './types.ts';
 
 export type DevvitExternalConfig = {
   readonly baseUrl: string;
@@ -323,6 +325,41 @@ export class DevvitExternalClient {
     }
     if (!response.ok) throw new Error('Devvit native Mod Notes returned HTTP '+response.status+'; reconcile before retry');
     return await response.text();
+  }
+
+  private async inspect(body: object): Promise<string> {
+    let response: Response;
+    try {
+      response=await this.fetcher(this.baseUrl+'/external/mae/read/inspection',{
+        method:'POST',
+        headers:{
+          authorization:'bearer '+this.token,
+          'content-type':'application/json',
+          accept:'application/json',
+        },
+        body:JSON.stringify(body),
+      });
+    } catch {
+      throw new Error('Devvit inspection endpoint could not be reached');
+    }
+    if (!response.ok) throw new Error('Devvit inspection endpoint returned HTTP '+response.status);
+    return await response.text();
+  }
+  public async readSubreddit(subreddit: DevvitCommunity): Promise<RedditSubreddit> {
+    return parseDevvitSubreddit(await this.inspect({subreddit,kind:'subreddit'}),subreddit);
+  }
+  // Partial parity. Native comment archive state is unavailable, so t1 IDs
+  // are deliberately not accepted by this transport.
+  public async readPostScores(
+    subreddit: DevvitCommunity, fullnames: readonly string[],
+  ): Promise<readonly RedditThingScore[]> {
+    if (fullnames.length < 1 || fullnames.length > 25) throw new Error('Invalid Devvit post score batch size');
+    if (fullnames.some(id=>!/^t3_[a-z0-9]+$/iu.test(id))) {
+      throw new Error('Devvit post-score preview does not support comment IDs');
+    }
+    if (new Set(fullnames).size!==fullnames.length) throw new Error('Duplicate post score ID');
+    const request={subreddit,kind:'post-scores' as const,fullnames};
+    return parseDevvitPostScores(await this.inspect(request),request);
   }
 
 }
