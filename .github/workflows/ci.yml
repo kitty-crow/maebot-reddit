@@ -28,3 +28,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/reddit-build"
           bun build ./src/main.ts --target=bun --outdir "$RUNNER_TEMP/reddit-build"
           test -s "$RUNNER_TEMP/reddit-build/main.js"
+  devvit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --prefix devvit --no-audit --no-fund
+      - run: npm run ci --prefix devvit
