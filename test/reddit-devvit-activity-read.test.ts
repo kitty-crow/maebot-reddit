@@ -50,7 +50,7 @@ describe('Devvit member history preview transport',()=>{
       managedToken:'devvit_at_test_secret_key',
     },async()=>{throw new Error('Should not perform fetch');});
     await expect(client.readRecentUserComments({
-      ...request,communities:['catgirlcoin','other' as 'nyaonearth'],
+      ...request,communities:['catgirlcoin','catgirlcoin'],
     })).rejects.toThrow('Invalid Devvit activity communities');
   });
 });

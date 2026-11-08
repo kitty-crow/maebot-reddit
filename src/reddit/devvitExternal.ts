@@ -374,7 +374,8 @@ export class DevvitExternalClient {
     }
     if (!/^[a-z0-9_-]{1,32}$/iu.test(request.username)
       || communities.length<1 || communities.length>2
-      || communities.some(value=>value!=='catgirlcoin'&&value!=='nyaonearth')) {
+      || communities.some(value=>value!=='catgirlcoin'&&value!=='nyaonearth')
+      || new Set(communities).size!==communities.length) {
       throw new Error('Invalid Devvit activity communities or username');
     }
     if (!Number.isInteger(request.limit) || request.limit<1 || request.limit>100

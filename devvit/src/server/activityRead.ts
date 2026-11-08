@@ -84,11 +84,11 @@ export const projectRecentComments = (
   source:readonly ActivityCommentSource[], request:ActivityRequest,
 ): readonly ActivityCommentWire[] => {
   if (source.length > request.maxScanned) throw new Error('Devvit comment scan exceeded maximum');
-  const wanted = new Set(request.communities);
+  const wanted = new Set<string>(request.communities);
   const out: ActivityCommentWire[] = [];
   const seen = new Set<string>();
   for (const comment of source) {
-    if (!wanted.has(comment.subredditName.toLowerCase() as Community)) continue;
+    if (!wanted.has(comment.subredditName.toLowerCase())) continue;
     const row = projectActivityComment(comment);
     if (seen.has(row.fullname)) throw new Error('Duplicate Reddit comment in activity listing');
     seen.add(row.fullname);
