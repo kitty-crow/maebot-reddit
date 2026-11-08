@@ -1,5 +1,6 @@
 import { reddit, redis } from '@devvit/web/server';
 import { executeModmailMutation, parseModmailMutation } from './modmailMutation.ts';
+import { executeModerationMutation, parseModerationMutation, type ModerationApi } from './moderationMutation.ts';
 import { createModmailClaimStore } from './modmailMutationStore.ts';
 import { Hono } from 'hono';
 import { healthResponse } from './protocol.ts';
@@ -156,6 +157,64 @@ app.post('/external/mae/write/modmail', async c => {
   } catch {
     // Never retry an ambiguous write automatically, and never leak Reddit or Redis errors.
     return c.json({ ok: false, error: 'write_not_confirmed_reconcile_before_retry' }, 409);
+  }
+});
+
+// Preview-only. Canonical Bun moderation and reputation remain authoritative.
+app.post('/external/mae/write/moderation', async c => {
+  let request;
+  try {
+    const body = await c.req.text();
+    if (body.length > 12_288) return c.json({ ok:false, error:'body_too_large' },413);
+    request = parseModerationMutation(JSON.parse(body));
+  } catch {
+    return c.json({ ok:false, error:'invalid_request' },400);
+  }
+  try {
+    const installed = await reddit.getCurrentSubreddit();
+    if (installed.name.toLowerCase() !== request.subreddit) {
+      return c.json({ ok:false, error:'installation_mismatch' },403);
+    }
+    const api: ModerationApi = {
+      isModerator: async username => {
+        const moderators = await installed.getModerators().all();
+        if (moderators.length >= 1000) throw new Error('Moderator listing may be truncated');
+        return moderators.some(mod => mod.username.toLowerCase() === username.toLowerCase());
+      },
+      getThingCommunity: async fullname => {
+        const source = fullname.startsWith('t1_')
+          ? await reddit.getCommentById(fullname as Parameters<typeof reddit.getCommentById>[0])
+          : await reddit.getPostById(fullname as Parameters<typeof reddit.getPostById>[0]);
+        return source.subredditName;
+      },
+      banUser: async options => await reddit.banUser(options),
+      unbanUser: async (username, subreddit) => await reddit.unbanUser(username, subreddit),
+      unmuteUser: async (username, subreddit) => await reddit.unmuteUser(username, subreddit),
+      remove: async fullname => await reddit.remove(fullname as Parameters<typeof reddit.remove>[0], false),
+      setUserFlair: async options => await reddit.setUserFlair(options),
+      setUserFlairDirect: async options => await reddit.setUserFlair(options),
+      setPostFlair: async options => await reddit.setPostFlair({
+        ...options, postId: options.postId as Parameters<typeof reddit.setPostFlair>[0]['postId'],
+      }),
+      createFlairTemplate: async ({ subredditName, kind, template }) => {
+        const options = {
+          subredditName, text: template.text, modOnly: template.modOnly,
+          allowUserEdits: template.textEditable,
+          ...(template.backgroundColour === null ? {} : { backgroundColor:template.backgroundColour }),
+          ...(template.textColour === null ? {} : { textColor:template.textColour }),
+          ...(template.allowableContent === null ? {} : { allowableContent:template.allowableContent }),
+          ...(template.maxEmojis === null ? {} : { maxEmojis:template.maxEmojis }),
+        };
+        const value = kind === 'user'
+          ? await reddit.createUserFlairTemplate(options)
+          : await reddit.createPostFlairTemplate(options);
+        return value.id;
+      },
+    };
+    const store = createModmailClaimStore(redis,'mae:moderation:write-claims:v1');
+    return c.json(await executeModerationMutation(request,api,store));
+  } catch {
+    return c.json({ ok:false, error:'write_not_confirmed_reconcile_before_retry' },409);
   }
 });
 

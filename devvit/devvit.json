@@ -34,6 +34,12 @@
         "scopes": [
           "global"
         ]
+      },
+      "maeWriteModeration": {
+        "endpoint": "/external/mae/write/moderation",
+        "scopes": [
+          "global"
+        ]
       }
     }
   },

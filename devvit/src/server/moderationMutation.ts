@@ -5,14 +5,14 @@ import type { MutationDeduplication, ClaimResult } from './modmailMutation.ts';
 type Json = null | boolean | number | string | Json[] | { readonly [key: string]: Json };
 type JsonObject = { readonly [key: string]: Json };
 export type ModerationAction =
-  | 'ban' | 'unban' | 'remove'
+  | 'ban' | 'unban' | 'unmute' | 'remove'
   | 'set-user-flair' | 'set-user-flair-direct' | 'set-post-flair'
   | 'create-flair-template';
 
 type Base = { readonly subreddit: Community; readonly operationId: string };
 export type ModerationMutation = Base & (
   | { readonly action: 'ban'; readonly username: string; readonly reason: string; readonly note: string }
-  | { readonly action: 'unban'; readonly username: string }
+  | { readonly action: 'unban' | 'unmute'; readonly username: string }
   | { readonly action: 'remove'; readonly fullname: string }
   | { readonly action: 'set-user-flair'; readonly username: string; readonly templateId: string; readonly customText: string | null }
   | { readonly action: 'set-user-flair-direct'; readonly username: string; readonly flairText: string | null; readonly cssClass: string | null }
@@ -34,6 +34,7 @@ export type ModerationApi = {
   readonly banUser: (input: { readonly username: string; readonly subredditName: string;
     readonly reason: string; readonly note: string }) => Promise<void>;
   readonly unbanUser: (username: string, subreddit: string) => Promise<void>;
+  readonly unmuteUser: (username: string, subreddit: string) => Promise<void>;
   readonly remove: (fullname: string) => Promise<void>;
   readonly setUserFlair: (input: { readonly username: string; readonly subredditName: string;
     readonly flairTemplateId: string; readonly text?: string }) => Promise<void>;
@@ -115,7 +116,7 @@ export const parseModerationMutation = (raw: Json): ModerationMutation => {
   const keys = ['subreddit', 'operationId', 'action'];
   const action = raw['action'];
   if (action === 'ban') return parseBan(raw, base, keys);
-  if (action === 'unban') {
+  if (action === 'unban' || action === 'unmute') {
     exact(raw, [...keys, 'username']);
     return { ...base, action, username: user(raw) };
   }
@@ -169,6 +170,7 @@ const targetName = (request: ModerationMutation): string | null => {
   switch(request.action) {
     case 'ban':
     case 'unban':
+    case 'unmute':
     case 'set-user-flair':
     case 'set-user-flair-direct': return request.username;
     default: return null;
@@ -195,6 +197,7 @@ const perform = async (request: ModerationMutation, api: ModerationApi): Promise
       await api.banUser({ subredditName:request.subreddit, username:request.username, reason:request.reason, note:request.note });
       return null;
     case 'unban': await api.unbanUser(request.username, request.subreddit); return null;
+    case 'unmute': await api.unmuteUser(request.username, request.subreddit); return null;
     case 'remove': await api.remove(request.fullname); return null;
     case 'set-user-flair':
       await api.setUserFlair({ username:request.username, subredditName:request.subreddit,
