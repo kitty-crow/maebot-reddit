@@ -14,7 +14,7 @@ import type { RedditCreatedPost } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate, RedditPost } from '../src/reddit/types.ts';
 
 const roots: string[] = [];
-const cutoffUtc = Date.parse('2026-05-01T00:00:00+01:00') / 1_000;
+const cutoffUtc = Date.parse('2026-05-01T00:00:00Z') / 1_000;
 afterEach(async () => {
   while (roots.length > 0) {
     const root = roots.pop();
