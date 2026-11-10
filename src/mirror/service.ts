@@ -32,6 +32,11 @@ type FallbackOrigin = {
   readonly fullname: string;
 };
 
+// 1 May 2026 at 00:00 BST, expressed in Reddit's UTC seconds.
+const crossShareCutoffUtc = Date.parse('2026-05-01T00:00:00+01:00') / 1_000;
+const eligibleForCrossShare = (createdUtc: number): boolean =>
+  Number.isFinite(createdUtc) && createdUtc >= crossShareCutoffUtc;
+
 const lower = (value: string): string => value.toLowerCase();
 const sameSubreddit = (left: string, right: string): boolean => lower(left) === lower(right);
 const sourceUrl = (permalink: string): string => permalink.startsWith('http')
@@ -181,7 +186,9 @@ export class BidirectionalPostMirror {
       ...observed.map(item => item.post.fullname),
       ...pendingForGate.map(item => item.sourceFullname),
     ]);
-    const discoverable = observed.filter(item => decisions.get(item.post.fullname) === 'allow');
+    const discoverable = observed.filter(item =>
+      eligibleForCrossShare(item.post.createdUtc) && decisions.get(item.post.fullname) === 'allow'
+    );
     const discovered = await this.store.discover(discoverable.map(item => ({
       sourceSubreddit: item.subreddit,
       targetSubreddit: item.targetSubreddit,
@@ -201,6 +208,11 @@ export class BidirectionalPostMirror {
     let failed = 0;
 
     for (const item of pending) {
+      if (!eligibleForCrossShare(item.createdUtc)) {
+        await this.store.cancel(item.key);
+        continue;
+      }
+
       const decision = decisions.get(item.sourceFullname) ?? 'pending';
       if (decision === 'pending') continue;
       if (decision === 'deny') {
