@@ -14,6 +14,7 @@ import type { RedditCreatedPost } from '../src/reddit/mutate.ts';
 import type { RedditFlairTemplate, RedditPost } from '../src/reddit/types.ts';
 
 const roots: string[] = [];
+const cutoffUtc = Date.parse('2026-05-01T00:00:00+01:00') / 1_000;
 afterEach(async () => {
   while (roots.length > 0) {
     const root = roots.pop();
@@ -36,7 +37,7 @@ const post = (
   title: `Post ${id}`,
   author: 'member',
   permalink: `/r/${subreddit}/comments/${id}/post_${id}/`,
-  createdUtc,
+  createdUtc: cutoffUtc + createdUtc,
   selfText,
   url: `https://www.reddit.com/r/${subreddit}/comments/${id}/post_${id}/`,
   flairTemplateId,
@@ -130,7 +131,7 @@ class Gate implements PostMirrorSourceGate {
 
 const mirror = async (
   gate: PostMirrorSourceGate | null = null,
-): Promise<{ reader: Reader; writer: Writer; service: BidirectionalPostMirror; catalogueFile: string }> => {
+): Promise<{ reader: Reader; writer: Writer; store: PostMirrorStore; service: BidirectionalPostMirror; catalogueFile: string }> => {
   const root = await mkdtemp(join(tmpdir(), 'mae-reddit-mirror-'));
   roots.push(root);
   const reader = new Reader();
@@ -140,6 +141,7 @@ const mirror = async (
   return {
     reader,
     writer,
+    store,
     catalogueFile,
     service: new BidirectionalPostMirror(
       reader,
@@ -154,6 +156,59 @@ const mirror = async (
 };
 
 describe('bidirectional subreddit post mirror', () => {
+  test('only mirrors posts created on or after 1 May 2026 in either direction', async () => {
+    const fixture = await mirror();
+    fixture.reader.nya = [post('nyaonearth', 'seed-nya', -100)];
+    fixture.reader.catgirl = [post('catgirlcoin', 'seed-cat', -100)];
+    await fixture.service.tick(1_000);
+
+    fixture.reader.nya = [
+      post('nyaonearth', 'old-nya', -1),
+      post('nyaonearth', 'cutoff-nya', 0),
+      ...fixture.reader.nya,
+    ];
+    fixture.reader.catgirl = [
+      post('catgirlcoin', 'old-cat', -1),
+      post('catgirlcoin', 'new-cat', 1),
+      ...fixture.reader.catgirl,
+    ];
+
+    const result = await fixture.service.tick(2_000);
+    expect(result.discovered).toBe(2);
+    expect(result.completed).toBe(2);
+    expect(fixture.writer.crossposts.map(call => [call.target, call.source])).toEqual([
+      ['catgirlcoin', 't3_cutoff-nya'],
+      ['nyaonearth', 't3_new-cat'],
+    ]);
+    expect(fixture.writer.fallbacks).toEqual([]);
+    expect(await fixture.store.pending()).toEqual([]);
+  });
+
+  test('removes old pending work without publishing it after the cut-off is introduced', async () => {
+    const fixture = await mirror();
+    fixture.reader.nya = [post('nyaonearth', 'seed-nya', -100)];
+    fixture.reader.catgirl = [post('catgirlcoin', 'seed-cat', -100)];
+    await fixture.service.tick(1_000);
+
+    await fixture.store.discover([{
+      sourceSubreddit: 'catgirlcoin',
+      targetSubreddit: 'nyaonearth',
+      sourcePostId: 'queued-old',
+      sourceFullname: 't3_queued-old',
+      title: 'Previously queued post',
+      permalink: '/r/catgirlcoin/comments/queued-old/',
+      createdUtc: cutoffUtc - 1,
+      discoveredAt: 500,
+    }]);
+    fixture.reader.catgirl = [post('catgirlcoin', 'queued-old', -1), ...fixture.reader.catgirl];
+
+    const result = await fixture.service.tick(2_000);
+    expect(result).toEqual({ seeded: false, discovered: 0, completed: 0, failed: 0 });
+    expect(fixture.writer.crossposts).toEqual([]);
+    expect(fixture.writer.fallbacks).toEqual([]);
+    expect(await fixture.store.pending()).toEqual([]);
+  });
+
   test('first boot seeds both histories, then mirrors new posts once in each direction', async () => {
     const fixture = await mirror();
     fixture.reader.nya = [post('nyaonearth', 'nya-old', 100)];
