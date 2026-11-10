@@ -32,8 +32,8 @@ type FallbackOrigin = {
   readonly fullname: string;
 };
 
-// 1 May 2026 at 00:00 BST, expressed in Reddit's UTC seconds.
-const crossShareCutoffUtc = Date.parse('2026-05-01T00:00:00+01:00') / 1_000;
+// 1 May 2026 at 00:00 UTC, expressed in Reddit's UTC seconds.
+const crossShareCutoffUtc = Date.parse('2026-05-01T00:00:00Z') / 1_000;
 const eligibleForCrossShare = (createdUtc: number): boolean =>
   Number.isFinite(createdUtc) && createdUtc >= crossShareCutoffUtc;
 
