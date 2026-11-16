@@ -351,6 +351,13 @@ export class RedditMutationClient {
     await this.form(pathFor(subreddit, '/api/selectflair'), form);
   }
 
+  public async deleteOwnPost(fullname: string): Promise<void> {
+    if (!/^t3_[A-Za-z0-9]+$/u.test(fullname)) {
+      throw new Error('Deleting a post requires a valid t3_ fullname');
+    }
+    await this.form('/api/del', new URLSearchParams({ id: fullname }));
+  }
+
   public async remove(fullname: string): Promise<void> {
     await this.form('/api/remove', new URLSearchParams({ api_type: 'json', id: fullname, spam: 'false' }));
   }
