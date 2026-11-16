@@ -188,6 +188,32 @@ export class RedditReadClient {
     return await this.pages(pathFor(name, '/new'), 100, value => decode.posts(value, 'new posts'), max);
   }
 
+  public async submittedPosts(username: string, maxItems = 1000): Promise<readonly RedditPost[]> {
+    if (!/^[A-Za-z0-9_-]{3,20}$/u.test(username)) throw new Error('Invalid Reddit username');
+    const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
+    return await this.pages(
+      `/user/${encodeURIComponent(username)}/submitted`,
+      100,
+      value => decode.posts(value, 'user submissions'),
+      max,
+    );
+  }
+
+  public async postsByFullnames(fullnames: readonly string[]): Promise<readonly RedditPost[]> {
+    const ids = [...new Set(fullnames)];
+    for (const id of ids) {
+      if (!/^t3_[A-Za-z0-9]+$/u.test(id)) throw new Error('Invalid Reddit post fullname');
+    }
+    const posts: RedditPost[] = [];
+    for (let start = 0; start < ids.length; start += 100) {
+      const batch = ids.slice(start, start + 100);
+      const query = new URLSearchParams({ id: batch.join(',') });
+      const result = decode.posts(await this.get(`/api/info?${query}`), 'post info');
+      posts.push(...result.items);
+    }
+    return posts;
+  }
+
   public async newCommentsHistory(name: string, maxItems = 1000): Promise<readonly RedditComment[]> {
     const max = Math.max(1, Math.min(1000, Math.floor(maxItems)));
     return await this.pages(pathFor(name, '/comments'), 100, decode.comments, max);
