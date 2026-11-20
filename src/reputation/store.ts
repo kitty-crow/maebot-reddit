@@ -465,7 +465,9 @@ const applyDiscipline = (
     },
     atMs,
   });
-  if (!transition.muteChanged) return;
+  // A new negative interaction can warrant a new sanction even when a
+  // banned user's canonical status remains permanently banned.
+  if (!transition.muteChanged && !violation) return;
   record['muteUntil'] = transition.mute.muteUntil;
   record['mutePermanent'] = transition.mute.permanent;
   if (!violation && !transition.mute.permanent && transition.mute.muteUntil === null) {
