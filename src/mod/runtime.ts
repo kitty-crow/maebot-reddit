@@ -1,4 +1,5 @@
 import type { RedditModerationCfg } from '../env.ts';
+import { eligibleForContributionModeration } from './contributionAge.ts';
 import { authoritativeFlairRestores } from '../reputation/flairReconcile.ts';
 import { scoreInventoryFullnames } from '../reputation/inventory.ts';
 import { moderationHistoryFor } from '../reputation/moderationHistory.ts';
@@ -159,6 +160,7 @@ export class RedditModerationRuntime {
   }
 
   private async process(item: RuntimeItem): Promise<'audited' | 'exempt' | 'seen'> {
+    if (!eligibleForContributionModeration(item.createdAt)) return 'seen';
     if (item.author !== null && this.reachability !== null && await this.reachability.isUnreachable(item.author)) return 'seen';
     if (await this.reputation.hasContribution(item.fullname)) return 'seen';
     if (item.author === null) return 'seen';
@@ -413,6 +415,7 @@ export class RedditModerationRuntime {
     let exempt = 0;
     let failed = 0;
     for (const item of items) {
+      if (!eligibleForContributionModeration(item.createdAt)) continue;
       if (item.kind === 'post' && item.createdAt < (latestRecordedPost.get(item.moderation.subreddit.toLowerCase()) ?? 0)) continue;
       try {
         const result = await this.process(item);
