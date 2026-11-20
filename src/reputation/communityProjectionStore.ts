@@ -54,7 +54,7 @@ export class CommunityProjectionStore {
   public async markMute(
     subreddit: string,
     username: string,
-    action: 'mute' | 'unmute',
+    action: 'mute' | 'unmute' | 'skip',
     atMs: number,
   ): Promise<void> {
     await this.store.edit(current => {
@@ -64,7 +64,7 @@ export class CommunityProjectionStore {
       if (!isMap(mutes)) throw new Error('Community projection mute map is missing');
       mutes[username.trim().toLowerCase()] = {
         redditMuted: action === 'mute',
-        appliedAt: action === 'mute' ? atMs : null,
+        appliedAt: action === 'unmute' ? null : atMs,
       };
       return value;
     });
