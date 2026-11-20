@@ -15,6 +15,7 @@ import {
   type DmWriter,
 } from '../src/dm/runtime.ts';
 import type { ConversationDmResponder, DmReplyContext, DmReplyDecision } from '../src/dm/reply.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 import { DmStore } from '../src/dm/store.ts';
 import type { RedditDirectMessage } from '../src/dm/types.ts';
 import type { ReputationUser } from '../src/reputation/store.ts';
@@ -64,7 +65,7 @@ const incoming = (
   destination: 'this_is_the_mae',
   subject: 'Hello',
   body,
-  createdUtc: Number(id.replace(/\D/gu, '')) || 100,
+  createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC + (Number(id.replace(/\D/gu, '')) || 100),
   parentFullname: null,
   firstMessageFullname,
   isNew,
@@ -78,7 +79,7 @@ const sentReply = (id: string, parent: string, body: string): RedditDirectMessag
   destination: 'SomeUser',
   subject: 're: Hello',
   body,
-  createdUtc: 500,
+  createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC + 500,
   parentFullname: parent,
   firstMessageFullname: parent,
   isNew: false,
