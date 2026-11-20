@@ -9,7 +9,7 @@ import {
 } from './communityProjection.ts';
 import type { CommunityProjectionStore } from './communityProjectionStore.ts';
 import { redditMuteAction } from './mutePolicy.ts';
-import { reputationDesiredMutes } from './muteReconcile.ts';
+import { reputationDesiredMutes, reputationMuteIssuanceAllowed } from './muteReconcile.ts';
 import type { ReputationStore } from './store.ts';
 
 export type CommunityProjectionReader = Pick<
@@ -114,11 +114,13 @@ export class CommunityProjectionRuntime {
         current,
         now,
       );
-      if (action === null) continue;
+      if (action === null || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))) continue;
 
       if (action === 'mute' && live && !current.redditMuted) {
         // A human-owned live mute already provides the immediate restriction.
         // Do not re-mute, notify the user again, or claim ownership of it.
+        // Consume this sanction so it cannot be issued when the live mute expires.
+        await this.projection.markMute(this.targetSubreddit, desired.username, 'skip', now);
         continue;
       }
 
