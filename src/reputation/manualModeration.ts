@@ -478,6 +478,7 @@ export class ManualReputationModeration {
         record['muteUntil'] = null;
         record['mutePermanent'] = false;
         record['muteTriggeredAt'] = null;
+        record['unmuteRequestedAt'] = Date.now();
         cleared = clearHistoricalBanEffects(value, username);
         journal(value, username, actor, 'unban', {
           beforeStatus: before,
@@ -516,6 +517,8 @@ export class ManualReputationModeration {
       const record = discipline(value, username);
       record['muteUntil'] = null;
       record['mutePermanent'] = false;
+      record['muteTriggeredAt'] = null;
+      record['unmuteRequestedAt'] = Date.now();
       journal(value, username, actor, 'unmute');
       return value;
     });
