@@ -4,7 +4,7 @@ import { reputationDesiredMutes, reputationMuteEffects } from '../src/reputation
 const now = 1_000_000;
 const seededAtSeconds = 900;
 const seededAtMs = seededAtSeconds * 1_000;
-const sevenDaysMs = 7 * 24 * 60 * 60 * 1_000;
+const nativeMuteMs = 28 * 24 * 60 * 60 * 1_000;
 
 describe('legacy reputation mute reconciliation', () => {
   test('a pre-discipline snapshot derives communication restrictions from canonical statuses', () => {
@@ -24,14 +24,11 @@ describe('legacy reputation mute reconciliation', () => {
       { username: 'BannedUser', muteUntil: null, permanent: true },
       { username: 'OrdinaryUser', muteUntil: null, permanent: false },
       { username: 'ScamUser', muteUntil: null, permanent: true },
-      { username: 'UncivilUser', muteUntil: seededAtMs + sevenDaysMs, permanent: false },
+      { username: 'UncivilUser', muteUntil: seededAtMs + nativeMuteMs, permanent: false },
     ]);
 
-    expect(reputationMuteEffects(raw, now)).toEqual([
-      { username: 'BannedUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
-      { username: 'ScamUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
-      { username: 'UncivilUser', action: 'mute', note: 'Mae uncivil reputation state' },
-    ]);
+    // Importing historical reputation is never permission to issue a mute.
+    expect(reputationMuteEffects(raw, now)).toEqual([]);
 
     expect(reputationDesiredMutes(raw, now + 10_000)[3]).toEqual({
       username: 'UncivilUser',
