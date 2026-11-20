@@ -11,7 +11,7 @@ const auth: RedditAuthCfg = {
 };
 
 describe('Reddit reputation mute durations', () => {
-  test('uses seven days for uncivil and thirty days for banned/scam enforcement', async () => {
+  test('uses 28 days for temporary sanctions and omits duration for native permanent mutes', async () => {
     const forms: URLSearchParams[] = [];
     const fetcher: RedditMutationFetch = async (input, init) => {
       const url = new URL(String(input));
@@ -31,7 +31,7 @@ describe('Reddit reputation mute durations', () => {
     await client.muteUser('catgirlcoin', 'banned-user', 'Mae permanent reputation enforcement');
     await client.muteUser('catgirlcoin', 'manual-user', 'Mae canonical moderation state');
 
-    expect(forms.map(form => form.get('duration'))).toEqual(['7', '30', '28']);
+    expect(forms.map(form => form.get('duration'))).toEqual(['28', null, '28']);
     expect(forms.every(form => form.get('type') === 'muted')).toBe(true);
   });
 });
