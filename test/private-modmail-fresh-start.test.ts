@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModerationClassification, ModerationItem } from '../src/mod/classifier.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 import { PrivateModmailRuntime, type PrivateModerationReputation } from '../src/mod/privateRuntime.ts';
 import { ModmailAuditStore } from '../src/modmail/auditStore.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
@@ -29,7 +30,7 @@ const message = (id: string, bodyMarkdown: string, createdAt: number): ModmailMe
   conversationId: 'abc',
   author: participant,
   bodyMarkdown,
-  createdAt,
+  createdAt: CONTRIBUTION_MODERATION_CUTOFF_UTC + createdAt,
   isInternal: false,
   participatingAs: 'participant_user',
 });
