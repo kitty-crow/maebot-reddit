@@ -155,6 +155,29 @@ const responder = (
 };
 
 describe('Reddit direct-message runtime', () => {
+  test('a pre-September DM discovered after activation never triggers semantic moderation', async () => {
+    const dmStore = await store();
+    await dmStore.seed([], 1);
+    const historical = { ...incoming('810'), createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC - 1 };
+    const source: ReaderState = { inbox: [historical], sent: [] };
+    const writes: WriterState = { replies: [], reads: [] };
+    const runtime = new RedditDmRuntime(
+      'catgirlcoin', 'this_is_the_mae', cfg, cfg, 'Mae persona',
+      reader(source), writer(writes), dmStore, reputation(user()),
+      null,
+      () => { throw new Error('historical moderation must not start'); },
+      () => { throw new Error('historical response generation must not start'); },
+      { classify: async () => { throw new Error('historical apology review must not start'); } },
+    );
+
+    const result = await runtime.tick();
+    expect(result).toMatchObject({ moderated: 0, replies: 0, failed: 0 });
+    expect(writes.replies).toEqual([]);
+    expect(writes.reads).toContain(historical.fullname);
+    expect((await dmStore.state(historical.fullname))?.delivery).toBe('no-reply');
+  });
+
+
   test('first activation seeds inbox history without retroactive moderation or replies, then processes a new DM exactly once', async () => {
     const dmStore = await store();
     const old = incoming('100');
