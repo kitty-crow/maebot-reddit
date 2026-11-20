@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { resolve } from 'node:path';
+import { eligibleForContributionModeration } from '../src/mod/contributionAge.ts';
 import { redditModerationConfig } from '../src/env.ts';
 import {
   RedditModerationClassifier,
@@ -75,6 +76,7 @@ console.log('='.repeat(90));
 
 const assessed: MemberCommentAssessment[] = [];
 for (const [offset, comment] of [...comments].reverse().entries()) {
+  if (!eligibleForContributionModeration(comment.createdUtc)) continue;
   const classification: ModerationClassification = await classifier.classify(moderationItem(comment));
   assessed.push({ comment, classification });
 
