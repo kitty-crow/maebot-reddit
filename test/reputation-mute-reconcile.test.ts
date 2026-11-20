@@ -6,10 +6,10 @@ import {
 } from '../src/reputation/mutePolicy.ts';
 
 const day = 24 * 60 * 60 * 1_000;
-const start = 1_000_000;
+const start = Date.parse('2026-11-20T12:00:00Z');
 
 describe('Reddit modmail mute reconciliation', () => {
-  test('a new seven-day Mae mute immediately applies one Reddit mute', () => {
+  test('a new 28-day Mae mute immediately applies one Reddit mute', () => {
     expect(redditMuteAction(
       { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false },
       { redditMuted: false, appliedAt: null },
@@ -17,15 +17,20 @@ describe('Reddit modmail mute reconciliation', () => {
     )).toBe('mute');
   });
 
-  test('a seven-day Mae mute is not renewed', () => {
+  test('a 28-day Mae mute is not renewed', () => {
     const desired = { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false };
     const applied = { redditMuted: true, appliedAt: start };
     expect(redditMuteAction(desired, applied, start + 6 * day)).toBeNull();
   });
 
-  test('Mae clears her application checkpoint when the canonical mute debt ends', () => {
+  test('native timed mutes expire without early unmute and explicit clearing still works', () => {
     expect(redditMuteAction(
       { muteUntil: start + UNCIVIL_MUTE_MS, permanent: false },
+      { redditMuted: true, appliedAt: start },
+      start + UNCIVIL_MUTE_MS,
+    )).toBeNull();
+    expect(redditMuteAction(
+      { muteUntil: null, permanent: false },
       { redditMuted: true, appliedAt: start },
       start + UNCIVIL_MUTE_MS,
     )).toBe('unmute');
@@ -65,6 +70,7 @@ describe('Reddit modmail mute reconciliation', () => {
           mutePermanent: false,
           redditMuted: false,
           muteAppliedAt: null,
+          muteTriggeredAt: start,
         },
       },
     };
@@ -76,7 +82,7 @@ describe('Reddit modmail mute reconciliation', () => {
     }]);
   });
 
-  test('bootstrap-seeded banned and scam users receive one initial mute', () => {
+  test('bootstrap-seeded banned and scam users never receive retroactive mutes', () => {
     const raw = {
       users: {
         banned: { username: 'BannedUser', status: 'banned' },
@@ -85,22 +91,17 @@ describe('Reddit modmail mute reconciliation', () => {
       discipline: {},
     };
 
-    expect(reputationMuteEffects(raw, start)).toEqual([
-      { username: 'BannedUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
-      { username: 'ScamUser', action: 'mute', note: 'Mae permanent reputation enforcement' },
-    ]);
+    expect(reputationMuteEffects(raw, start)).toEqual([]);
   });
 
-  test('bootstrap-seeded uncivil user receives one normal seven-day restriction', () => {
+  test('bootstrap-seeded uncivil user never receives a retrospective mute', () => {
     const initial = {
       users: {
         alice: { username: 'Alice', status: 'uncivil' },
       },
       discipline: {},
     };
-    expect(reputationMuteEffects(initial, start)).toEqual([{
-      username: 'Alice', action: 'mute', note: 'Mae uncivil reputation state',
-    }]);
+    expect(reputationMuteEffects(initial, start)).toEqual([]);
 
     const applied = {
       users: initial.users,
@@ -114,9 +115,7 @@ describe('Reddit modmail mute reconciliation', () => {
       },
     };
     expect(reputationMuteEffects(applied, start + 6 * day)).toEqual([]);
-    expect(reputationMuteEffects(applied, start + UNCIVIL_MUTE_MS)).toEqual([{
-      username: 'Alice', action: 'unmute', note: 'Mae reputation mute ended',
-    }]);
+    expect(reputationMuteEffects(applied, start + UNCIVIL_MUTE_MS)).toEqual([]);
   });
 
   test('persisted permanent runtime state never produces monthly renewal spam', () => {
