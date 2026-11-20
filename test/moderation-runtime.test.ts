@@ -197,6 +197,7 @@ class FixtureReader implements ModerationReader {
     username: 'HumanMod', templateId: 'mod-id', text: 'Moderator:kitty-business:', cssClass: 'm',
   }];
   public scoreRows: readonly RedditThingScore[] = [];
+  public mutedRows: { username: string; note: string | null; date: number | null }[] = [];
   public moderatorCalls = 0;
   public async me(): Promise<RedditAccount> {
     return { id: 'mae-id', name: 'this_is_the_mae', createdUtc: 1, linkKarma: 0, commentKarma: 0 };
@@ -208,7 +209,7 @@ class FixtureReader implements ModerationReader {
   public async newPosts(): Promise<readonly RedditPost[]> { return this.posts; }
   public async newComments(): Promise<readonly RedditComment[]> { return this.comments; }
   public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> { return this.assignments; }
-  public async mutedUsers(): Promise<readonly { username: string; note: string | null; date: number | null }[]> { return []; }
+  public async mutedUsers(): Promise<readonly { username: string; note: string | null; date: number | null }[]> { return this.mutedRows; }
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
     const wanted = new Set(fullnames);
     return this.scoreRows.filter(value => wanted.has(value.fullname));
@@ -254,6 +255,27 @@ const fixture = async () => {
 };
 
 describe('live Reddit moderation runtime', () => {
+  test('an already-muted user is not remuted, even after the original mute expires', async () => {
+    const f = await fixture();
+    f.reader.comments = [comment('already-muted-scam', 'AlreadyMuted', 'SCAMMER')];
+    f.reader.mutedRows = [{ username: 'AlreadyMuted', note: 'previous temporary mute', date: 1 }];
+
+    await f.runtime.tick();
+    expect(f.writer.mutes).toEqual([]);
+    expect(f.writer.bans).toContain('AlreadyMuted');
+
+    // Reddit's earlier temporary mute has now expired. The same stored
+    // sanction must not become a delayed new permanent mute.
+    f.reader.mutedRows = [];
+    await f.runtime.tick();
+    expect(f.writer.mutes).toEqual([]);
+    const state = await f.reputation.raw();
+    if (!isMap(state) || !isMap(state['discipline'])) throw new Error('Missing discipline state');
+    const record = state['discipline']['alreadymuted'];
+    if (!isMap(record)) throw new Error('Missing muted member record');
+    expect(record['muteSkipped']).toBe(true);
+  });
+
   test('never sends contributions older than 1 September 2026 to the LLM or scores them', async () => {
     const f = await fixture();
     f.reader.posts = [
