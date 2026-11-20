@@ -83,7 +83,9 @@ const desiredFrom = (value: JsonMap, username: string, now = Date.now()): Desire
   const triggeredAt = isMap(record) ? integer(record['muteTriggeredAt']) : null;
   const muteAllowed = triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
   const muteOwned = isMap(record) && bool(record['redditMuted']) && !bool(record['muteSkipped']);
-  const unmuteExplicit = isMap(record) && muteUntil === null && !bool(record['mutePermanent']) && !banned;
+  const unmuteRequestedAt = isMap(record) ? integer(record['unmuteRequestedAt']) : null;
+  const unmuteExplicit = unmuteRequestedAt !== null && unmuteRequestedAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS
+    && muteUntil === null && !bool(isMap(record) ? record['mutePermanent'] : undefined) && !banned;
   return {
     username: canonicalUsername,
     banned,
@@ -195,6 +197,7 @@ export class DashboardRedditReconciler {
         record['redditMuted'] = false;
         record['muteAppliedAt'] = null;
         record['muteSkipped'] = false;
+        record['unmuteRequestedAt'] = null;
       }
       return value;
     });
