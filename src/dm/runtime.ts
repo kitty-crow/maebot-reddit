@@ -4,6 +4,7 @@ import type {
   ModerationClassification,
 } from '../mod/classifier.ts';
 import { RedditModerationClassifier } from '../mod/classifier.ts';
+import { eligibleForContributionModeration } from '../mod/contributionAge.ts';
 import type { ModerationPrivilegeSource } from '../mod/privileges.ts';
 import type { PrivateResolutionClassifier } from '../mod/privateResolution.ts';
 import { RedditPrivateResolutionClassifier } from '../mod/privateResolution.ts';
@@ -278,6 +279,13 @@ export class RedditDmRuntime {
     }
 
     let state = await this.store.begin(message);
+    if (state.delivery === 'pending' && !eligibleForContributionModeration(message.createdUtc)) {
+      // An old DM discovered after a restart must not generate new LLM work,
+      // reputation changes or replies. Persist the skip before acknowledging.
+      await this.store.markNoReply(message.fullname, Math.floor(Date.now() / 1_000));
+      await this.writer.markPrivateMessageRead(message.fullname);
+      return { moderated: false, reply: false, noReply: true, apology: false, skipped: true };
+    }
     if (state.delivery === 'seeded') {
       return { moderated: false, reply: false, noReply: false, apology: false, skipped: true };
     }
