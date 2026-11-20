@@ -468,6 +468,9 @@ const applyDiscipline = (
   if (!transition.muteChanged) return;
   record['muteUntil'] = transition.mute.muteUntil;
   record['mutePermanent'] = transition.mute.permanent;
+  if (!violation && !transition.mute.permanent && transition.mute.muteUntil === null) {
+    record['unmuteRequestedAt'] = atMs;
+  }
   if (violation) {
     // Only a fresh negative contribution may authorise another mute. Preserve
     // the existing checkpoint while its native mute could still be active.
@@ -1006,6 +1009,7 @@ export class ReputationStore {
       if (!transition.muteChanged) return value;
       record['muteUntil'] = transition.mute.muteUntil;
       record['mutePermanent'] = transition.mute.permanent;
+      record['unmuteRequestedAt'] = Date.now();
       changed = true;
       journal(value, `constructive-resolution:${username.toLowerCase()}:${at}`, {
         kind: 'constructive-resolution',
@@ -1103,7 +1107,8 @@ export class ReputationStore {
           action: 'mute',
           note: permanent ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
         });
-      } else if (action === 'unmute') {
+      } else if (action === 'unmute' && integerOrNull(mute['unmuteRequestedAt']) !== null
+        && (integerOrNull(mute['unmuteRequestedAt']) ?? 0) >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS) {
         mutes.push({ username: user.username, action: 'unmute', note: 'Mae reputation mute ended' });
       }
     }
@@ -1189,6 +1194,7 @@ export class ReputationStore {
       record['redditMuted'] = action === 'mute';
       record['muteAppliedAt'] = action === 'mute' ? atMs : null;
       record['muteSkipped'] = false;
+      if (action === 'unmute') record['unmuteRequestedAt'] = null;
       return value;
     });
   }
