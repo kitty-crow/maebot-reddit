@@ -1,5 +1,6 @@
 import type { RedditModerationCfg } from '../env.ts';
 import { RedditModerationClassifier, type ModerationItem } from '../mod/classifier.ts';
+import { eligibleForContributionModeration } from '../mod/contributionAge.ts';
 import type { RedditReadClient } from '../reddit/client.ts';
 import { safeError } from '../reddit/error.ts';
 import type { RedditComment, RedditPost } from '../reddit/types.ts';
@@ -177,6 +178,11 @@ export class MemberModNoteWatchRuntime {
 
     for (const item of items) {
       if (seen.has(item.fullname)) continue;
+      if (!eligibleForContributionModeration(item.createdAt)) {
+        await this.store.mark([item.fullname]);
+        skipped += 1;
+        continue;
+      }
       if (item.author === null) {
         await this.store.mark([item.fullname]);
         skipped += 1;
