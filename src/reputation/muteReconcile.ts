@@ -32,10 +32,14 @@ const disciplineMap = (raw: JsonMap): JsonMap => {
 
 // Historical status and mute records cannot authorise a new mute. Only a
 // fresh sanction event created under the new policy can issue one.
-export const reputationMuteIssuanceAllowed = (raw: Json, username: string): boolean => {
+export const reputationMuteTriggeredAt = (raw: Json, username: string): number | null => {
   if (!isMap(raw)) throw new Error('Reputation mute issuance root must be an object');
   const record = disciplineMap(raw)[username.trim().toLowerCase()];
-  const triggeredAt = isMap(record) ? integerOrNull(record['muteTriggeredAt']) : null;
+  return isMap(record) ? integerOrNull(record['muteTriggeredAt']) : null;
+};
+
+export const reputationMuteIssuanceAllowed = (raw: Json, username: string): boolean => {
+  const triggeredAt = reputationMuteTriggeredAt(raw, username);
   return triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
 };
 
