@@ -9,7 +9,7 @@ import {
 } from './communityProjection.ts';
 import type { CommunityProjectionStore } from './communityProjectionStore.ts';
 import { redditMuteAction } from './mutePolicy.ts';
-import { reputationDesiredMutes, reputationMuteIssuanceAllowed } from './muteReconcile.ts';
+import { reputationDesiredMutes, reputationMuteIssuanceAllowed, reputationMuteUnmuteRequested } from './muteReconcile.ts';
 import type { ReputationStore } from './store.ts';
 
 export type CommunityProjectionReader = Pick<
@@ -114,7 +114,9 @@ export class CommunityProjectionRuntime {
         current,
         now,
       );
-      if (action === null || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))) continue;
+      if (action === null
+        || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))
+        || (action === 'unmute' && !reputationMuteUnmuteRequested(raw, desired.username))) continue;
 
       if (action === 'mute' && live && !current.redditMuted) {
         // A human-owned live mute already provides the immediate restriction.
