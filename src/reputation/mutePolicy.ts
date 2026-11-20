@@ -1,4 +1,8 @@
-export const UNCIVIL_MUTE_DAYS = 7;
+export const UNCIVIL_MUTE_DAYS = 28;
+export const MAX_NATIVE_MUTE_MS = 28 * 24 * 60 * 60 * 1_000;
+// Pre-existing mutes must expire naturally. Only newly issued sanctions are
+// eligible for Reddit's native permanent mute after this policy took effect.
+export const NATIVE_PERMANENT_MUTE_POLICY_FROM_MS = Date.parse('2026-11-20T00:00:00Z');
 export const UNCIVIL_MUTE_MS = UNCIVIL_MUTE_DAYS * 24 * 60 * 60 * 1_000;
 
 export type ReputationMuteState = {
@@ -54,7 +58,9 @@ export const redditMuteAction = (
 ): RedditMuteAction => {
   if (!Number.isSafeInteger(now) || now < 0) throw new Error('Mute reconciliation timestamp must be a non-negative safe integer');
   const shouldMute = desired.permanent || (desired.muteUntil !== null && desired.muteUntil > now);
-  if (!shouldMute) return applied.redditMuted ? 'unmute' : null;
+  // A timed mute expiring in Mae's ledger must never shorten or renew Reddit's
+  // native mute. An explicit redemption/unmute clears muteUntil to null.
+  if (!shouldMute) return desired.muteUntil === null && applied.redditMuted ? 'unmute' : null;
 
   // Reddit sends a user-visible moderation message whenever a subreddit mute is
   // applied. Mae therefore projects each canonical mute sanction to Reddit at
