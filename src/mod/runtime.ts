@@ -25,7 +25,7 @@ import type { ModerationReviewStore } from './review.ts';
 
 export type ModerationReader = Pick<
   RedditReadClient,
-  'me' | 'moderators' | 'newPosts' | 'newComments' | 'scores' | 'userFlairAssignments'
+  'me' | 'moderators' | 'newPosts' | 'newComments' | 'scores' | 'userFlairAssignments' | 'mutedUsers'
 >;
 export type ModerationWriter = Pick<
   RedditMutationClient,
@@ -299,6 +299,8 @@ export class RedditModerationRuntime {
     const effects = await this.reputation.pendingEffects();
     const snapshot = await this.reputation.raw();
     const mutes = reputationMuteEffects(snapshot);
+    const liveMuted = new Set((mutes.length === 0 ? [] : await this.reader.mutedUsers(this.flairSubreddit))
+      .map(value => value.username.trim().toLowerCase()));
     const contributionMap = isMap(snapshot) && isMap(snapshot['contributions']) ? snapshot['contributions'] : null;
     const skipped = async (username: string): Promise<boolean> =>
       this.reachability !== null && await this.reachability.isUnreachable(username);
@@ -339,6 +341,12 @@ export class RedditModerationRuntime {
     for (const mute of mutes) {
       if (await skipped(mute.username)) continue;
       try {
+        if (mute.action === 'mute' && liveMuted.has(mute.username.trim().toLowerCase())) {
+          // A current Reddit mute, whether human-owned or an old timed mute,
+          // must never be overwritten, extended or converted to permanent.
+          await this.reputation.markMuteSkipped(mute.username, Date.now());
+          continue;
+        }
         if (mute.action === 'mute') await this.writer.muteUser(this.flairSubreddit, mute.username, mute.note);
         else await this.writer.unmuteUser(this.flairSubreddit, mute.username);
         if (await skipped(mute.username)) continue;
