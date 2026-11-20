@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ModerationClassification } from '../src/mod/classifier.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 import type { RedditFlairTemplate } from '../src/reddit/types.ts';
 import { PAWSOME_FLAIR_TEXT, REPUTATION_FLOOR } from '../src/reputation/policy.ts';
 import { isMap } from '../src/types/json.ts';
@@ -207,7 +208,7 @@ describe('reputation store', () => {
       fullname: 't1_severe',
       kind: 'comment',
       author: 'Alice',
-      createdAt: 400,
+      createdAt: CONTRIBUTION_MODERATION_CUTOFF_UTC + 400,
       score: 1,
       ...contributionFields('t1_severe'),
       classification: classification('severe'),
@@ -223,7 +224,7 @@ describe('reputation store', () => {
       fullname: 't1_scam',
       kind: 'comment',
       author: 'Scammer',
-      createdAt: 500,
+      createdAt: CONTRIBUTION_MODERATION_CUTOFF_UTC + 500,
       score: 1,
       ...contributionFields('t1_scam'),
       classification: classification('scam'),
@@ -238,6 +239,24 @@ describe('reputation store', () => {
     if (!isMap(scammer)) throw new Error('Scammer user missing');
     expect(scammer['points']).toBe(REPUTATION_FLOOR);
     expect(scammer['status']).toBe('scam');
+  });
+
+  test('queued legacy removal, ban and violation notices never enforce pre-September contributions', async () => {
+    const { store } = await openStore();
+    await store.applyModeration({
+      fullname: 't1_historical-scam',
+      kind: 'comment',
+      author: 'HistoricalScammer',
+      createdAt: CONTRIBUTION_MODERATION_CUTOFF_UTC - 1,
+      score: 1,
+      ...contributionFields('t1_historical-scam'),
+      classification: classification('scam'),
+      moderatedAt: Math.floor(Date.now() / 1_000),
+    });
+    const effects = await store.pendingEffects();
+    expect(effects.removals).toEqual([]);
+    expect(effects.bans).toEqual([]);
+    expect(effects.notices).toEqual([]);
   });
 
   test('Reddit score credits use a confirmed high-water and never deduct points', async () => {
