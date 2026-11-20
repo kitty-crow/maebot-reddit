@@ -8,6 +8,7 @@ import type {
   ModerationItem,
 } from '../src/mod/classifier.ts';
 import type { PrivateResolutionClassifier } from '../src/mod/privateResolution.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 import { PrivateModmailRuntime, type PrivateModerationReputation } from '../src/mod/privateRuntime.ts';
 import { ModmailAuditStore } from '../src/modmail/auditStore.ts';
 import { ModmailStore } from '../src/modmail/store.ts';
@@ -50,7 +51,7 @@ const message = (
   conversationId: 'abc',
   author,
   bodyMarkdown,
-  createdAt,
+  createdAt: CONTRIBUTION_MODERATION_CUTOFF_UTC + createdAt,
   isInternal: false,
   participatingAs: author.isModerator ? 'moderator' : 'participant_user',
 });
