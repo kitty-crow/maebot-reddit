@@ -135,11 +135,8 @@ const permissionForm = (emoji: RedditEmoji): URLSearchParams => new URLSearchPar
   user_flair_allowed: String(emoji.userFlairAllowed),
 });
 
-const muteDurationDays = (note: string): number => {
-  if (note === 'Mae uncivil reputation state') return 7;
-  if (note === 'Mae permanent reputation enforcement') return 30;
-  return 28;
-};
+const muteDurationDays = (note: string): number | null =>
+  note === 'Mae permanent reputation enforcement' ? null : 28;
 
 export class RedditMutationClient {
   private readonly fetcher: RedditMutationFetch;
@@ -448,9 +445,12 @@ export class RedditMutationClient {
       api_type: 'json',
       name: username,
       type: 'muted',
-      duration: String(muteDurationDays(note)),
       note: note.slice(0, 300),
     });
+    // Omitting duration requests Reddit's native permanent mute. Temporary
+    // sanctions use Reddit's longest finite mute, 28 days.
+    const duration = muteDurationDays(note);
+    if (duration !== null) form.set('duration', String(duration));
     await this.userMutation(username, 'mute', pathFor(subreddit, '/api/friend'), form);
   }
 
