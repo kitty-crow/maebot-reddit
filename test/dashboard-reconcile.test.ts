@@ -36,8 +36,10 @@ const state = (status: string, muted: boolean, flair = true): JsonMap => ({
   reputationJournal: {},
   discipline: {
     alice: {
-      muteUntil: muted ? Date.now() + 60_000 : null,
-      mutePermanent: false,
+      muteUntil: muted && status !== 'banned' ? Date.now() + 60_000 : null,
+      mutePermanent: status === 'banned',
+      muteTriggeredAt: muted && status !== 'banned' ? Date.now() : null,
+      unmuteRequestedAt: !muted ? Date.now() : null,
       redditMuted: !muted,
       muteAppliedAt: null,
     },
@@ -141,6 +143,46 @@ describe('Dashboard Reddit canonical reconciliation', () => {
     const alice = discipline['alice'];
     if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad mute');
     expect(alice['redditMuted']).toBe(false);
-    expect(alice['muteAppliedAt']).toBe(null);
+    expect(typeof alice['muteAppliedAt']).toBe('number');
+    expect(alice['muteSkipped']).toBe(true);
+  });
+
+  test('does not convert an existing live timed mute to permanent after a fresh ban', async () => {
+    const canonical = state('banned', true, false);
+    const discipline = canonical['discipline'];
+    if (typeof discipline !== 'object' || discipline === null || Array.isArray(discipline)) throw new Error('bad discipline');
+    const alice = discipline['alice'];
+    if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad mute');
+    alice['muteTriggeredAt'] = Date.now();
+    const { runtime, live, calls, store } = await fixture(canonical);
+    live.muted.push({ username: 'alice', note: 'older temporary mute', date: 1 });
+    await runtime.reconcileAll();
+    expect(calls).toEqual(['ban:alice']);
+    const updated = await store.read();
+    if (typeof updated !== 'object' || updated === null || Array.isArray(updated)) throw new Error('bad root');
+    const records = updated['discipline'];
+    if (typeof records !== 'object' || records === null || Array.isArray(records)) throw new Error('bad discipline');
+    const record = records['alice'];
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) throw new Error('bad record');
+    expect(record['muteSkipped']).toBe(true);
+    live.muted = [];
+    await runtime.reconcileAll();
+    expect(calls.filter(call => call.startsWith('mute:'))).toEqual([]);
+  });
+
+  test('lets historical timed mutes expire naturally', async () => {
+    const canonical = state('ordinary', true, false);
+    const discipline = canonical['discipline'];
+    if (typeof discipline !== 'object' || discipline === null || Array.isArray(discipline)) throw new Error('bad discipline');
+    const alice = discipline['alice'];
+    if (typeof alice !== 'object' || alice === null || Array.isArray(alice)) throw new Error('bad mute');
+    alice['muteUntil'] = Date.now() - 60_000;
+    alice['muteTriggeredAt'] = null;
+    alice['redditMuted'] = true;
+    alice['muteAppliedAt'] = Date.now() - 28 * 24 * 60 * 60 * 1_000;
+    const { runtime, live, calls } = await fixture(canonical);
+    live.muted.push({ username: 'alice', note: 'old timed mute', date: 1 });
+    await runtime.reconcileAll();
+    expect(calls).toEqual([]);
   });
 });
