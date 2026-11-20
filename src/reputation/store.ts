@@ -4,6 +4,7 @@ import type { RedditFlairTemplate } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { disciplineTransition, constructiveResolutionTransition } from './discipline.ts';
+import { MAX_NATIVE_MUTE_MS, NATIVE_PERMANENT_MUTE_POLICY_FROM_MS, redditMuteAction } from './mutePolicy.ts';
 import { violationNoticeText } from './notices.ts';
 import {
   BAN_TRIGGER_POINTS,
@@ -153,7 +154,6 @@ export type ReputationScoreObservation = {
   readonly suspicion: ReputationVoteSuspicion | null;
 };
 
-const MUTE_REFRESH_MS = 2 * 24 * 60 * 60 * 1_000;
 
 const initial = (): JsonMap => ({
   schema: 1,
@@ -468,6 +468,16 @@ const applyDiscipline = (
   if (!transition.muteChanged) return;
   record['muteUntil'] = transition.mute.muteUntil;
   record['mutePermanent'] = transition.mute.permanent;
+  if (violation) {
+    // Only a fresh negative contribution may authorise another mute. Preserve
+    // the existing checkpoint while its native mute could still be active.
+    record['muteTriggeredAt'] = atMs;
+    const appliedAt = integerOrNull(record['muteAppliedAt']);
+    if (appliedAt === null || atMs - appliedAt >= MAX_NATIVE_MUTE_MS) {
+      record['redditMuted'] = false;
+      record['muteAppliedAt'] = null;
+    }
+  }
 };
 
 const enqueueNotice = (
@@ -1084,14 +1094,15 @@ export class ReputationStore {
       const permanent = bool(mute['mutePermanent']);
       const redditMuted = bool(mute['redditMuted']);
       const appliedAt = integerOrNull(mute['muteAppliedAt']);
-      const shouldMute = permanent || (muteUntil !== null && muteUntil > nowMs);
-      if (shouldMute && (!redditMuted || appliedAt === null || nowMs - appliedAt >= MUTE_REFRESH_MS)) {
+      const action = redditMuteAction({ muteUntil, permanent }, { redditMuted, appliedAt }, nowMs);
+      const triggeredAt = integerOrNull(mute['muteTriggeredAt']);
+      if (action === 'mute' && triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS) {
         mutes.push({
           username: user.username,
           action: 'mute',
           note: permanent ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
         });
-      } else if (!shouldMute && redditMuted) {
+      } else if (action === 'unmute') {
         mutes.push({ username: user.username, action: 'unmute', note: 'Mae reputation mute ended' });
       }
     }
@@ -1154,6 +1165,17 @@ export class ReputationStore {
       const value = root(current);
       const notice = mapField(value, 'notices')[key];
       if (isMap(notice)) notice['sent'] = true;
+      return value;
+    });
+  }
+
+  /** Consume a fresh sanction without changing an existing Reddit/human mute. */
+  public async markMuteSkipped(username: string, atMs: number): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const record = disciplineFrom(value, username);
+      record['redditMuted'] = false;
+      record['muteAppliedAt'] = atMs;
       return value;
     });
   }
