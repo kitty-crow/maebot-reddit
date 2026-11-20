@@ -1,0 +1,95 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "this-is-the-mae",
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs",
+    "externalEndpoints": {
+      "maeHealth": {
+        "endpoint": "/external/mae/health",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadPosts": {
+        "endpoint": "/external/mae/read/posts",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadCommunity": {
+        "endpoint": "/external/mae/read/community",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadModmail": {
+        "endpoint": "/external/mae/read/modmail",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeWriteModmail": {
+        "endpoint": "/external/mae/write/modmail",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeWriteModeration": {
+        "endpoint": "/external/mae/write/moderation",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadFlair": {
+        "endpoint": "/external/mae/read/flair",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadModNotes": {
+        "endpoint": "/external/mae/read/modnotes",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeWriteModNotes": {
+        "endpoint": "/external/mae/write/modnotes",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeInspection": {
+        "endpoint": "/external/mae/read/inspection",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadActivity": {
+        "endpoint": "/external/mae/read/activity",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeReadMessages": {
+        "endpoint": "/external/mae/read/messages",
+        "scopes": [
+          "global"
+        ]
+      },
+      "maeWriteAuthored": {
+        "endpoint": "/external/mae/write/authored",
+        "scopes": [
+          "global"
+        ]
+      }
+    }
+  },
+  "permissions": {
+    "reddit": {
+      "enable": true,
+      "scope": "moderator"
+    },
+    "redis": true
+  }
+}
