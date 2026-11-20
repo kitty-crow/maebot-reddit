@@ -5,6 +5,7 @@ import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { DashboardRedditReconciler } from './dashboardReconcile.ts';
+import { MAX_NATIVE_MUTE_MS } from './mutePolicy.ts';
 import { withRedditStateAdoption } from './manualOverrideGate.ts';
 import { clampReputationPoints, tierForPoints } from './policy.ts';
 
@@ -338,6 +339,9 @@ export class ManualReputationModeration {
       user['status'] = afterStatus;
 
       const record = discipline(value, username);
+      // Adopted live state is not a fresh sanction.
+      record['muteTriggeredAt'] = null;
+      record['muteSkipped'] = false;
       if (liveMute === null) {
         record['muteUntil'] = null;
         record['mutePermanent'] = false;
@@ -444,6 +448,17 @@ export class ManualReputationModeration {
         assertMutableMember(user);
         const before = text(user['status']);
         user['status'] = 'banned';
+        const record = discipline(value, username);
+        const now = Date.now();
+        record['muteUntil'] = null;
+        record['mutePermanent'] = true;
+        record['muteTriggeredAt'] = now;
+        const appliedAt = integer(record['muteAppliedAt'], -1);
+        if (appliedAt < 0 || now - appliedAt >= MAX_NATIVE_MUTE_MS) {
+          record['redditMuted'] = false;
+          record['muteAppliedAt'] = null;
+          record['muteSkipped'] = false;
+        }
         journal(value, username, actor, 'ban', { beforeStatus: before, afterStatus: 'banned' });
         return value;
       });
@@ -459,6 +474,10 @@ export class ManualReputationModeration {
         const before = text(user['status']);
         const after = statusForPoints(integer(user['points']));
         user['status'] = after;
+        const record = discipline(value, username);
+        record['muteUntil'] = null;
+        record['mutePermanent'] = false;
+        record['muteTriggeredAt'] = null;
         cleared = clearHistoricalBanEffects(value, username);
         journal(value, username, actor, 'unban', {
           beforeStatus: before,
@@ -476,8 +495,15 @@ export class ManualReputationModeration {
         userMap(value, username);
         const record = discipline(value, username);
         const now = Date.now();
-        record['muteUntil'] = now + (28 * 24 * 60 * 60 * 1_000);
+        record['muteUntil'] = now + MAX_NATIVE_MUTE_MS;
         record['mutePermanent'] = false;
+        record['muteTriggeredAt'] = now;
+        const appliedAt = integer(record['muteAppliedAt'], -1);
+        if (appliedAt < 0 || now - appliedAt >= MAX_NATIVE_MUTE_MS) {
+          record['redditMuted'] = false;
+          record['muteAppliedAt'] = null;
+          record['muteSkipped'] = false;
+        }
         journal(value, username, actor, 'mute', { durationDays: 28 });
         return value;
       });
