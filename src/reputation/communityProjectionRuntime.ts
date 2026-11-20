@@ -8,8 +8,8 @@ import {
   communityProjectionReadyFromFile,
 } from './communityProjection.ts';
 import type { CommunityProjectionStore } from './communityProjectionStore.ts';
-import { redditMuteAction } from './mutePolicy.ts';
-import { reputationDesiredMutes, reputationMuteIssuanceAllowed, reputationMuteUnmuteRequested } from './muteReconcile.ts';
+import { MAX_NATIVE_MUTE_MS, NATIVE_PERMANENT_MUTE_POLICY_FROM_MS, redditMuteAction } from './mutePolicy.ts';
+import { reputationDesiredMutes, reputationMuteIssuanceAllowed, reputationMuteTriggeredAt, reputationMuteUnmuteRequested } from './muteReconcile.ts';
 import type { ReputationStore } from './store.ts';
 
 export type CommunityProjectionReader = Pick<
@@ -109,16 +109,25 @@ export class CommunityProjectionRuntime {
       // moderation. Never remove it merely because Mae currently wants no mute.
       if (!wanted && !current.redditMuted) continue;
 
+      const triggeredAt = reputationMuteTriggeredAt(raw, desired.username);
+      // A fresh, separate violation can authorise a new native mute after the
+      // preceding native mute's full 28-day window. Merely finding an expired
+      // mute or an old banned status must never authorise reapplication.
+      const freshAfterExpiry = triggeredAt !== null
+        && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS
+        && (current.appliedAt !== null
+          ? triggeredAt - current.appliedAt >= MAX_NATIVE_MUTE_MS
+          : triggeredAt - NATIVE_PERMANENT_MUTE_POLICY_FROM_MS >= MAX_NATIVE_MUTE_MS);
       const action = redditMuteAction(
         { muteUntil: desired.muteUntil, permanent: desired.permanent },
-        current,
+        freshAfterExpiry ? { redditMuted: false, appliedAt: null } : current,
         now,
       );
       if (action === null
         || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))
         || (action === 'unmute' && !reputationMuteUnmuteRequested(raw, desired.username))) continue;
 
-      if (action === 'mute' && live && !current.redditMuted) {
+      if (action === 'mute' && live) {
         // A human-owned live mute already provides the immediate restriction.
         // Do not re-mute, notify the user again, or claim ownership of it.
         // Consume this sanction so it cannot be issued when the live mute expires.
