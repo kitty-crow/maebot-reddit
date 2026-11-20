@@ -8,6 +8,8 @@ import { CommunityProjectionRuntime, type CommunityProjectionReader, type Commun
 import { CommunityProjectionStore } from '../src/reputation/communityProjectionStore.ts';
 import { REPUTATION_FLOOR } from '../src/reputation/policy.ts';
 import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
+import { Store } from '../src/store/store.ts';
+import { isMap } from '../src/types/json.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -118,11 +120,26 @@ class Writer implements CommunityProjectionWriter {
   }
 }
 
-const fixture = async () => {
+const fixture = async (freshSanction = false) => {
   const root = await mkdtemp(join(tmpdir(), 'mae-community-projection-'));
   roots.push(root);
-  const reputation = new ReputationStore(join(root, 'reputation.pb'));
+  const stateFile = join(root, 'reputation.pb');
+  const reputation = new ReputationStore(stateFile);
   await reputation.bootstrap(bootstrap());
+  if (freshSanction) {
+    const state = new Store(stateFile, {});
+    await state.edit(raw => {
+      if (!isMap(raw) || !isMap(raw['discipline'])) throw new Error('Expected discipline store');
+      raw['discipline']['banneduser'] = {
+        muteUntil: null,
+        mutePermanent: true,
+        redditMuted: false,
+        muteAppliedAt: null,
+        muteTriggeredAt: Date.parse('2026-11-20T12:00:00Z'),
+      };
+      return raw;
+    });
+  }
   const projection = new CommunityProjectionStore(join(root, 'projection.pb'));
   const reader = new Reader();
   const writer = new Writer();
@@ -141,8 +158,28 @@ const fixture = async () => {
 };
 
 describe('NyaOnEarth moderation projection', () => {
-  test('pre-bootstrap startup establishes live permanent communication restriction before cloning bans', async () => {
+  test('historical canonical bans never create new mutes', async () => {
     const f = await fixture();
+    await f.runtime.tick(1_000_000);
+    expect(f.writer.order).toEqual([]);
+  });
+
+  test('an existing 28-day mute is never upgraded to permanent, even after it expires', async () => {
+    const f = await fixture(true);
+    f.reader.mutes = [relationship('BannedUser')];
+    await f.runtime.tick(1_000_000);
+    expect(f.writer.order).toEqual([]);
+    expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
+      redditMuted: false,
+      appliedAt: 1_000_000,
+    });
+    f.reader.mutes = [];
+    await f.runtime.tick(1_030_000);
+    expect(f.writer.order).toEqual([]);
+  });
+
+  test('pre-bootstrap startup establishes a fresh permanent sanction before cloning bans', async () => {
+    const f = await fixture(true);
     const first = await f.runtime.tick(1_000_000);
     expect(first.skipped).toBe(true);
     expect(first.failed).toBe(0);
@@ -164,8 +201,8 @@ describe('NyaOnEarth moderation projection', () => {
     });
   });
 
-  test('a failed attempt to establish a missing permanent mute blocks the corresponding target ban', async () => {
-    const f = await fixture();
+  test('a failed attempt to establish a fresh permanent mute blocks the corresponding target ban', async () => {
+    const f = await fixture(true);
     await writeFile(f.catalogueFile, catalogue);
     f.writer.failMute = true;
 
@@ -193,7 +230,7 @@ describe('NyaOnEarth moderation projection', () => {
   });
 
   test('a live human mute not owned by Mae is never removed', async () => {
-    const f = await fixture();
+    const f = await fixture(true);
     f.reader.mutes = [relationship('OrdinaryUser')];
 
     const result = await f.runtime.tick(3_000_000);
@@ -202,7 +239,7 @@ describe('NyaOnEarth moderation projection', () => {
   });
 
   test('a legacy schema-1 flair catalogue does not activate target bans or block pre-bootstrap moderation', async () => {
-    const f = await fixture();
+    const f = await fixture(true);
     await writeFile(f.catalogueFile, JSON.stringify({ schema: 1 }));
 
     const result = await f.runtime.tick(4_000_000);
