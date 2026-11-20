@@ -19,6 +19,7 @@ import { applyModerationClassification, type ReputationSubject } from '../src/re
 import { ReputationStore } from '../src/reputation/store.ts';
 import { safeError } from '../src/reddit/error.ts';
 import type { RedditComment } from '../src/reddit/types.ts';
+import { eligibleForContributionModeration } from '../src/mod/contributionAge.ts';
 
 const canonicalCommunities = ['catgirlcoin', 'nyaonearth'] as const;
 const apply = process.argv.includes('--apply');
@@ -255,7 +256,7 @@ for (let index = 0; index < members.length; index += 1) {
 
     for (let commentOffset = 0; commentOffset < chronological.length; commentOffset += 1) {
       const comment = chronological[commentOffset];
-      if (comment === undefined) continue;
+      if (comment === undefined || !eligibleForContributionModeration(comment.createdUtc)) continue;
       const commentNumber = commentOffset + 1;
       console.log('');
       console.log(`${progressBar(overallFraction(index, members.length, commentOffset, chronological.length))}  user ${progress}: u/${member.username}`);
