@@ -60,6 +60,7 @@ const post = (overrides: Partial<ModerationItem> = {}): ModerationItem => ({
   title: 'uh so bridge thing, help',
   text: 'I have NYA on Ethereum and I am trying to get it onto Base but I am confused about the supported route.',
   permalink: '/r/nyaonearth/comments/new123/uh_so_bridge_thing_help/',
+  createdAt: Math.floor(Date.now() / 1_000) - 60,
   mediaUrls: [],
   history: null,
   ...overrides,
