@@ -12,6 +12,8 @@ import { Store } from '../src/store/store.ts';
 import { isMap } from '../src/types/json.ts';
 
 const roots: string[] = [];
+const simulatedNow = Date.parse('2026-11-20T12:00:01Z');
+const dayMs = 24 * 60 * 60 * 1_000;
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
@@ -160,27 +162,27 @@ const fixture = async (freshSanction = false) => {
 describe('NyaOnEarth moderation projection', () => {
   test('historical canonical bans never create new mutes', async () => {
     const f = await fixture();
-    await f.runtime.tick(1_000_000);
+    await f.runtime.tick(simulatedNow);
     expect(f.writer.order).toEqual([]);
   });
 
   test('an existing 28-day mute is never upgraded to permanent, even after it expires', async () => {
     const f = await fixture(true);
     f.reader.mutes = [relationship('BannedUser')];
-    await f.runtime.tick(1_000_000);
+    await f.runtime.tick(simulatedNow);
     expect(f.writer.order).toEqual([]);
     expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
       redditMuted: false,
-      appliedAt: 1_000_000,
+      appliedAt: simulatedNow,
     });
     f.reader.mutes = [];
-    await f.runtime.tick(1_030_000);
+    await f.runtime.tick(simulatedNow + 29 * dayMs);
     expect(f.writer.order).toEqual([]);
   });
 
   test('pre-bootstrap startup establishes a fresh permanent sanction before cloning bans', async () => {
     const f = await fixture(true);
-    const first = await f.runtime.tick(1_000_000);
+    const first = await f.runtime.tick(simulatedNow);
     expect(first.skipped).toBe(true);
     expect(first.failed).toBe(0);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
@@ -189,7 +191,7 @@ describe('NyaOnEarth moderation projection', () => {
     // subsequent relationship reconciliation must observe it before exposing bans.
     f.reader.mutes = [relationship('BannedUser')];
     await writeFile(f.catalogueFile, catalogue);
-    const second = await f.runtime.tick(1_030_000);
+    const second = await f.runtime.tick(simulatedNow + 29 * dayMs);
     expect(second.failed).toBe(0);
     expect(f.writer.order).toEqual([
       'mute:nyaonearth:BannedUser',
@@ -197,7 +199,7 @@ describe('NyaOnEarth moderation projection', () => {
     ]);
     expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
       redditMuted: true,
-      appliedAt: 1_000_000,
+      appliedAt: simulatedNow,
     });
   });
 
@@ -206,7 +208,7 @@ describe('NyaOnEarth moderation projection', () => {
     await writeFile(f.catalogueFile, catalogue);
     f.writer.failMute = true;
 
-    const result = await f.runtime.tick(2_000_000);
+    const result = await f.runtime.tick(simulatedNow + 1_000_000);
     expect(result.failed).toBe(1);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
     expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
@@ -217,15 +219,15 @@ describe('NyaOnEarth moderation projection', () => {
 
   test('an already-applied permanent mute is not renewed after Reddit stops reporting it', async () => {
     const f = await fixture();
-    await f.projection.markMute('nyaonearth', 'BannedUser', 'mute', 1_000_000);
+    await f.projection.markMute('nyaonearth', 'BannedUser', 'mute', simulatedNow);
     await writeFile(f.catalogueFile, catalogue);
 
-    const result = await f.runtime.tick(2_000_000);
+    const result = await f.runtime.tick(simulatedNow + 1_000_000);
     expect(result.failed).toBe(0);
     expect(f.writer.order).toEqual(['ban:nyaonearth:BannedUser']);
     expect(await f.projection.muteState('nyaonearth', 'BannedUser')).toEqual({
       redditMuted: true,
-      appliedAt: 1_000_000,
+      appliedAt: simulatedNow,
     });
   });
 
@@ -233,7 +235,7 @@ describe('NyaOnEarth moderation projection', () => {
     const f = await fixture(true);
     f.reader.mutes = [relationship('OrdinaryUser')];
 
-    const result = await f.runtime.tick(3_000_000);
+    const result = await f.runtime.tick(simulatedNow + 2_000_000);
     expect(result.failed).toBe(0);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
   });
@@ -242,7 +244,7 @@ describe('NyaOnEarth moderation projection', () => {
     const f = await fixture(true);
     await writeFile(f.catalogueFile, JSON.stringify({ schema: 1 }));
 
-    const result = await f.runtime.tick(4_000_000);
+    const result = await f.runtime.tick(simulatedNow + 3_000_000);
     expect(result.skipped).toBe(true);
     expect(result.failed).toBe(0);
     expect(f.writer.order).toEqual(['mute:nyaonearth:BannedUser']);
