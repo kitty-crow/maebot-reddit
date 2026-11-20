@@ -476,6 +476,7 @@ const applyDiscipline = (
     if (appliedAt === null || atMs - appliedAt >= MAX_NATIVE_MUTE_MS) {
       record['redditMuted'] = false;
       record['muteAppliedAt'] = null;
+      record['muteSkipped'] = false;
     }
   }
 };
@@ -1176,6 +1177,7 @@ export class ReputationStore {
       const record = disciplineFrom(value, username);
       record['redditMuted'] = false;
       record['muteAppliedAt'] = atMs;
+      record['muteSkipped'] = true;
       return value;
     });
   }
@@ -1186,6 +1188,7 @@ export class ReputationStore {
       const record = disciplineFrom(value, username);
       record['redditMuted'] = action === 'mute';
       record['muteAppliedAt'] = action === 'mute' ? atMs : null;
+      record['muteSkipped'] = false;
       return value;
     });
   }
