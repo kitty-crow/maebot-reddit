@@ -5,7 +5,7 @@ import { UNCIVIL_MUTE_MS } from '../src/reputation/mutePolicy.ts';
 const now = 1_000_000;
 
 describe('reputation discipline transitions', () => {
-  test('jumping directly into uncivil creates one seven-day mute', () => {
+  test('jumping directly into uncivil creates one 28-day mute', () => {
     const result = disciplineTransition({
       beforeStatus: 'ordinary',
       afterStatus: 'uncivil',
@@ -30,7 +30,7 @@ describe('reputation discipline transitions', () => {
     expect(result.mute.muteUntil).toBe(now + UNCIVIL_MUTE_MS);
   });
 
-  test('another offending event while uncivil adds another seven days cumulatively', () => {
+  test('another offending event while uncivil adds a further 28 days internally', () => {
     const result = disciplineTransition({
       beforeStatus: 'uncivil',
       afterStatus: 'uncivil',
@@ -38,7 +38,7 @@ describe('reputation discipline transitions', () => {
       currentMute: { muteUntil: now + 4 * 24 * 60 * 60 * 1_000, permanent: false },
       atMs: now,
     });
-    expect(result.mute.muteUntil).toBe(now + 11 * 24 * 60 * 60 * 1_000);
+    expect(result.mute.muteUntil).toBe(now + 32 * 24 * 60 * 60 * 1_000);
   });
 
   test('clean uncivil redemption does not extend the mute and crossing back to warned clears it', () => {
