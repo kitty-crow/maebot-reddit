@@ -39,6 +39,13 @@ export const reputationMuteIssuanceAllowed = (raw: Json, username: string): bool
   return triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
 };
 
+export const reputationMuteUnmuteRequested = (raw: Json, username: string): boolean => {
+  if (!isMap(raw)) throw new Error('Reputation mute unmute root must be an object');
+  const record = disciplineMap(raw)[username.trim().toLowerCase()];
+  const requestedAt = isMap(record) ? integerOrNull(record['unmuteRequestedAt']) : null;
+  return requestedAt !== null && requestedAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
+};
+
 const desiredFor = (
   status: Json | undefined,
   muteUntil: number | null,
@@ -113,7 +120,9 @@ export const reputationMuteEffects = (
       { redditMuted, appliedAt },
       nowMs,
     );
-    if (action === null || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))) continue;
+    if (action === null
+      || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))
+      || (action === 'unmute' && !reputationMuteUnmuteRequested(raw, desired.username))) continue;
     effects.push({
       username: desired.username,
       action,
