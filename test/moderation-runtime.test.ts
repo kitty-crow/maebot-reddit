@@ -23,6 +23,7 @@ import type {
   RedditThingScore,
 } from '../src/reddit/types.ts';
 import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 import { PAWSOME_FLAIR_TEXT, MODERATOR_POINTS } from '../src/reputation/policy.ts';
 import { isMap } from '../src/types/json.ts';
 
@@ -114,7 +115,7 @@ const post = (id: string, author: string, text: string, score = 1): RedditPost =
   title: text,
   author,
   permalink: `/r/catgirlcoin/comments/${id}/post/`,
-  createdUtc: 200,
+  createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC + 200,
   selfText: text,
   url: '',
   flairTemplateId: null,
@@ -141,7 +142,7 @@ const comment = (
   author,
   body,
   permalink: `/r/catgirlcoin/comments/parent/post/${id}/`,
-  createdUtc: 201,
+  createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC + 201,
   distinguished: null,
   stickied: false,
   removedByCategory: null,
@@ -207,6 +208,7 @@ class FixtureReader implements ModerationReader {
   public async newPosts(): Promise<readonly RedditPost[]> { return this.posts; }
   public async newComments(): Promise<readonly RedditComment[]> { return this.comments; }
   public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> { return this.assignments; }
+  public async mutedUsers(): Promise<readonly { username: string; note: string | null; date: number | null }[]> { return []; }
   public async scores(fullnames: readonly string[]): Promise<readonly RedditThingScore[]> {
     const wanted = new Set(fullnames);
     return this.scoreRows.filter(value => wanted.has(value.fullname));
@@ -252,6 +254,25 @@ const fixture = async () => {
 };
 
 describe('live Reddit moderation runtime', () => {
+  test('never sends contributions older than 1 September 2026 to the LLM or scores them', async () => {
+    const f = await fixture();
+    f.reader.posts = [
+      { ...post('oldpost', 'OldPostAuthor', 'SCAMMER'), createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC - 1 },
+      { ...post('newpost', 'NewPostAuthor', 'clean'), createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC },
+    ];
+    f.reader.comments = [
+      { ...comment('oldcomment', 'OldCommentAuthor', 'SCAMMER'), createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC - 1 },
+      { ...comment('newcomment', 'NewCommentAuthor', 'clean'), createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC },
+    ];
+    const result = await f.runtime.tick();
+    expect(result.audited).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(f.classifier.items.map(item => item.author).sort()).toEqual(['NewCommentAuthor', 'NewPostAuthor']);
+    expect(await f.reputation.hasContribution('t3_oldpost')).toBe(false);
+    expect(await f.reputation.hasContribution('t1_oldcomment')).toBe(false);
+    expect(f.writer.bans).toEqual([]);
+  });
+
   test('Mae and moderators are excluded before classifier and severe minus ten respects ban threshold', async () => {
     const f = await fixture();
     f.reader.posts = [post('mae', 'this_is_the_mae', 'Mae announcement'), post('mod', 'HumanMod', 'Moderator announcement')];
