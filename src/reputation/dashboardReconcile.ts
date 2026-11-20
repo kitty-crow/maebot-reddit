@@ -258,7 +258,11 @@ export class DashboardRedditReconciler {
         // sanction so its expiry cannot trigger a delayed permanent mute.
         await this.markMuteSkipped(desired.username);
       } else if (!desired.muteApplied && desired.muteAllowed && !state.muted) {
-        await this.writer.muteUser(this.subreddit, desired.username, 'Mae canonical moderation state');
+        await this.writer.muteUser(
+          this.subreddit,
+          desired.username,
+          desired.banned ? 'Mae permanent reputation enforcement' : 'Mae uncivil reputation state',
+        );
         if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         await this.markMuteApplied(desired.username, true);
         console.log(`[Dashboard moderation] Reddit muted u/${desired.username}.`);
