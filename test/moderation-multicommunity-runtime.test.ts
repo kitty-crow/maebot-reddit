@@ -15,6 +15,7 @@ import type {
   RedditThingScore,
 } from '../src/reddit/types.ts';
 import { ReputationStore, type ReputationBootstrap } from '../src/reputation/store.ts';
+import { CONTRIBUTION_MODERATION_CUTOFF_UTC } from '../src/mod/contributionAge.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -78,7 +79,7 @@ const comment = (id: string, subreddit: string, author: string, body: string): R
   author,
   body,
   permalink: `/r/${subreddit}/comments/parent/post/${id}/`,
-  createdUtc: 200,
+  createdUtc: CONTRIBUTION_MODERATION_CUTOFF_UTC + 200,
   distinguished: null,
   stickied: false,
   removedByCategory: null,
@@ -105,6 +106,7 @@ class Reader implements ModerationReader {
   }
   public async scores(): Promise<readonly RedditThingScore[]> { return []; }
   public async userFlairAssignments(): Promise<readonly RedditFlairAssignment[]> { return []; }
+  public async mutedUsers(): Promise<readonly { username: string; note: string | null; date: number | null }[]> { return []; }
 }
 
 class Classifier implements ModerationClassifier {
