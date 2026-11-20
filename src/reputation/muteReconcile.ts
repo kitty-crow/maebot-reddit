@@ -1,5 +1,5 @@
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
-import { redditMuteAction, UNCIVIL_MUTE_MS } from './mutePolicy.ts';
+import { NATIVE_PERMANENT_MUTE_POLICY_FROM_MS, redditMuteAction, UNCIVIL_MUTE_MS } from './mutePolicy.ts';
 import type { ReputationPendingMute } from './store.ts';
 
 export type ReputationDesiredMute = {
@@ -28,6 +28,15 @@ const disciplineMap = (raw: JsonMap): JsonMap => {
   if (discipline === undefined) return {};
   if (!isMap(discipline)) throw new Error('Reputation mute reconciliation discipline map is invalid');
   return discipline;
+};
+
+// Historical status and mute records cannot authorise a new mute. Only a
+// fresh sanction event created under the new policy can issue one.
+export const reputationMuteIssuanceAllowed = (raw: Json, username: string): boolean => {
+  if (!isMap(raw)) throw new Error('Reputation mute issuance root must be an object');
+  const record = disciplineMap(raw)[username.trim().toLowerCase()];
+  const triggeredAt = isMap(record) ? integerOrNull(record['muteTriggeredAt']) : null;
+  return triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
 };
 
 const desiredFor = (
@@ -104,7 +113,7 @@ export const reputationMuteEffects = (
       { redditMuted, appliedAt },
       nowMs,
     );
-    if (action === null) continue;
+    if (action === null || (action === 'mute' && !reputationMuteIssuanceAllowed(raw, desired.username))) continue;
     effects.push({
       username: desired.username,
       action,
