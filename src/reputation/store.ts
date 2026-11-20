@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ModerationClassification } from '../mod/classifier.ts';
+import { eligibleForContributionModeration } from '../mod/contributionAge.ts';
 import type { RedditFlairTemplate } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
@@ -1117,6 +1118,12 @@ export class ReputationStore {
 
     for (const raw of Object.values(contributions)) {
       if (!isMap(raw) || bool(raw['exempt'])) continue;
+      // A stored legacy result cannot turn into delayed enforcement of a
+      // historical post or comment when Mae restarts or reconciles effects.
+      const kind = textOrNull(raw['kind']);
+      const createdAt = integerOrNull(raw['createdAt']);
+      if ((kind === 'post' || kind === 'comment')
+        && !eligibleForContributionModeration(createdAt ?? Number.NaN)) continue;
       const contributionFullname = textOrNull(raw['fullname']);
       const author = textOrNull(raw['author']);
       if (contributionFullname === null || author === null) continue;
@@ -1133,6 +1140,15 @@ export class ReputationStore {
       const subject = textOrNull(raw['subject']);
       const body = textOrNull(raw['body']);
       if (key === null || username === null || subject === null || body === null) continue;
+      if (key.startsWith('moderation:')) {
+        const contribution = contributions[key.slice('moderation:'.length)];
+        if (isMap(contribution)) {
+          const kind = textOrNull(contribution['kind']);
+          const createdAt = integerOrNull(contribution['createdAt']);
+          if ((kind === 'post' || kind === 'comment')
+            && !eligibleForContributionModeration(createdAt ?? Number.NaN)) continue;
+        }
+      }
       if (userFrom(users[username.trim().toLowerCase()])?.unreachable != null) continue;
       notices.push({ key, username, subject, body });
     }
