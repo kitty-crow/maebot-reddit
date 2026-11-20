@@ -3,6 +3,7 @@ import type {
   ModerationAiCfg,
 } from './classifier.ts';
 import { RedditModerationClassifier } from './classifier.ts';
+import { eligibleForContributionModeration } from './contributionAge.ts';
 import type { ModerationPrivilegeSource } from './privileges.ts';
 import type { PrivateResolutionClassifier } from './privateResolution.ts';
 import { RedditPrivateResolutionClassifier } from './privateResolution.ts';
@@ -108,6 +109,11 @@ export class PrivateModmailRuntime {
   private async process(event: ModmailRelayEvent): Promise<'audited' | 'apology' | 'skipped'> {
     const auditState = await this.audit.conversation(event.conversationId);
     const openaiConversationId = auditState?.openaiConversationId ?? null;
+    if (!eligibleForContributionModeration(event.createdAt)) {
+      // Advance the audit cursor without classifying historical modmail.
+      await this.advance(event, openaiConversationId);
+      return 'skipped';
+    }
     if (!participantMessage(event) || event.author === null) {
       await this.advance(event, openaiConversationId);
       return 'skipped';
