@@ -7,6 +7,7 @@ import type { RedditFlairAssignment } from '../reddit/types.ts';
 import { Store } from '../store/store.ts';
 import { isMap, type Json, type JsonMap } from '../types/json.ts';
 import { redditStateAdoptionInProgress } from './manualOverrideGate.ts';
+import { NATIVE_PERMANENT_MUTE_POLICY_FROM_MS } from './mutePolicy.ts';
 
 export type DashboardRedditReader = Pick<
   RedditReadClient,
@@ -28,6 +29,9 @@ type Desired = {
   readonly banned: boolean;
   readonly muted: boolean;
   readonly muteApplied: boolean;
+  readonly muteAllowed: boolean;
+  readonly muteOwned: boolean;
+  readonly unmuteExplicit: boolean;
   readonly desiredFlairId: string | null;
   readonly desiredFlairText: string | null;
   readonly currentFlairId: string | null;
@@ -76,11 +80,18 @@ const desiredFrom = (value: JsonMap, username: string, now = Date.now()): Desire
   const muteUntil = isMap(record) ? integer(record['muteUntil']) : null;
   const muted = isMap(record) && (bool(record['mutePermanent']) || (muteUntil !== null && muteUntil > now));
   const muteApplied = isMap(record) && (bool(record['redditMuted']) || integer(record['muteAppliedAt']) !== null);
+  const triggeredAt = isMap(record) ? integer(record['muteTriggeredAt']) : null;
+  const muteAllowed = triggeredAt !== null && triggeredAt >= NATIVE_PERMANENT_MUTE_POLICY_FROM_MS;
+  const muteOwned = isMap(record) && bool(record['redditMuted']) && !bool(record['muteSkipped']);
+  const unmuteExplicit = isMap(record) && muteUntil === null && !bool(record['mutePermanent']) && !banned;
   return {
     username: canonicalUsername,
     banned,
     muted,
     muteApplied,
+    muteAllowed,
+    muteOwned,
+    unmuteExplicit,
     desiredFlairId: text(raw['desiredFlairTemplateId']),
     desiredFlairText: text(raw['desiredFlairText']),
     currentFlairId: text(raw['currentFlairTemplateId']),
@@ -179,10 +190,26 @@ export class DashboardRedditReconciler {
         if (bool(record['redditMuted']) || integer(record['muteAppliedAt']) !== null) return value;
         record['redditMuted'] = true;
         record['muteAppliedAt'] = Date.now();
+        record['muteSkipped'] = false;
       } else {
         record['redditMuted'] = false;
         record['muteAppliedAt'] = null;
+        record['muteSkipped'] = false;
       }
+      return value;
+    });
+  }
+
+  private async markMuteSkipped(username: string): Promise<void> {
+    await this.store.edit(current => {
+      const value = root(current);
+      const discipline = value['discipline'];
+      if (!isMap(discipline)) return value;
+      const record = discipline[key(username)];
+      if (!isMap(record)) return value;
+      record['redditMuted'] = false;
+      record['muteAppliedAt'] = Date.now();
+      record['muteSkipped'] = true;
       return value;
     });
   }
@@ -222,10 +249,12 @@ export class DashboardRedditReconciler {
         console.log(`[Dashboard moderation] Reddit unbanned u/${desired.username}.`);
       }
     }
-    if (desired.banned) return;
-
     if (desired.muted) {
-      if (!desired.muteApplied && !state.muted) {
+      if (!desired.muteApplied && desired.muteAllowed && state.muted) {
+        // Never convert or extend an existing native/human mute. Consume the
+        // sanction so its expiry cannot trigger a delayed permanent mute.
+        await this.markMuteSkipped(desired.username);
+      } else if (!desired.muteApplied && desired.muteAllowed && !state.muted) {
         await this.writer.muteUser(this.subreddit, desired.username, 'Mae canonical moderation state');
         if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         await this.markMuteApplied(desired.username, true);
@@ -234,14 +263,16 @@ export class DashboardRedditReconciler {
       // If Reddit already has a human-owned mute, leave it untouched and do
       // not claim it. If Mae already applied this sanction once, do not renew
       // it after Reddit's native mute expires or a moderator removes it.
-    } else if (desired.muteApplied) {
-      if (state.muted) {
+    } else if (desired.muteApplied && desired.unmuteExplicit) {
+      if (state.muted && desired.muteOwned) {
         await this.writer.unmuteUser(this.subreddit, desired.username);
         if (this.reachability !== null && await this.reachability.isUnreachable(desired.username)) return;
         console.log(`[Dashboard moderation] Reddit unmuted u/${desired.username}.`);
       }
       await this.markMuteApplied(desired.username, false);
     }
+
+    if (desired.banned) return;
 
     if (desired.desiredFlairId !== null && !sameFlair(state.flair, desired)) {
       await this.writer.setUserFlairTemplate(
